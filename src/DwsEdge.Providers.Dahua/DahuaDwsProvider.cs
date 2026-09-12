@@ -1,0 +1,900 @@
+﻿using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using System.Threading;
+using DwsEdge.Core.Abstractions;
+using DwsEdge.Core.Model;
+using LogisticsBaseCSharp;
+
+namespace DwsEdge.Providers.Dahua
+{
+    /// <summary>
+    /// 大华 DWS SDK 适配器（方案 B 里的"采集宿主"核心）。
+    ///
+    /// 职责边界（很重要）：
+    ///   1. 只做"设备域"：加载 SDK、挂回调、把图落盘、把结果翻译成规范事件；
+    ///   2. 回调线程只做深拷贝 + 入队，绝不写业务、绝不写磁盘；
+    ///   3. 所有厂商概念（LogisticsWrapper、OutputResult、VslbImage...）都被关在本文件内，
+    ///      外面看到的是 ParcelEvent / CameraReadEvent / CameraStatusEvent。
+    /// </summary>
+    public sealed class DahuaDwsProvider : IAcquisitionProvider, ITriggerControl
+    {
+        private const string ProviderName = "dahua-dws";
+        private const string NoRead = "noread";
+
+        private readonly IEventSink _sink;
+        private readonly string _cfgPath;
+        private readonly string _imageRoot;
+        private readonly bool _saveOriginal;
+        private readonly bool _saveWaybill;
+        private readonly bool _savePerCamera;
+        private readonly bool _attachAllCameraCodeInfo;
+        private readonly int _queueCapacity;
+
+        private BlockingCollection<WorkItem> _queue;
+        private Thread _worker;
+        private LogisticsWrapper _dws;
+        private volatile bool _running;
+        private volatile bool _started;
+        private bool _stopped;
+        private long _eventSeq;
+
+        private bool _cameraDisconnectCbAttached;
+        private bool _allCameraCbAttached;
+        private bool _statusHandlerAttached;
+        private bool _codeHandlerAttached;
+        private bool _allCameraHandlerAttached;
+
+        #region 内部工作项
+
+        private sealed class PendingImage
+        {
+            public CapturedImage Image;
+            public ImageKind Kind;
+            public string DeviceId;
+            public string Suffix;
+        }
+
+        /// <summary>一个待处理的工作项：要么是包裹事件，要么是单相机读码事件。</summary>
+        private sealed class WorkItem
+        {
+            public ParcelEvent Parcel;
+            public CameraReadEvent CameraRead;
+            public List<PendingImage> Images = new List<PendingImage>();
+
+            public void ReleaseImages()
+            {
+                for (int i = 0; i < Images.Count; i++)
+                {
+                    if (Images[i].Image != null)
+                    {
+                        Images[i].Image.Dispose();
+                    }
+                }
+                Images.Clear();
+            }
+        }
+
+        #endregion
+
+        public DahuaDwsProvider(ProviderSettings settings, IEventSink sink)
+        {
+            if (settings == null)
+            {
+                throw new ArgumentNullException("settings");
+            }
+            if (sink == null)
+            {
+                throw new ArgumentNullException("sink");
+            }
+
+            _sink = sink;
+            _cfgPath = settings.ResolvePath(settings.Get("cfgPath", @"Cfg\LogisticsBase.cfg"));
+            _imageRoot = settings.ResolvePath(settings.Get("imageDir", "images"));
+            _saveOriginal = settings.GetBool("saveOriginal", true);
+            _saveWaybill = settings.GetBool("saveWaybill", true);
+            _savePerCamera = settings.GetBool("savePerCamera", false);
+            _attachAllCameraCodeInfo = settings.GetBool("attachAllCameraCodeInfo", _savePerCamera);
+            _queueCapacity = Math.Max(8, settings.GetInt("queueCapacity", 256));
+        }
+
+        public string ProviderId
+        {
+            get { return ProviderName; }
+        }
+
+        public ProviderCapabilities Capabilities
+        {
+            get
+            {
+                return ProviderCapabilities.ParcelAggregation
+                     | ProviderCapabilities.CrossCameraDedup
+                     | ProviderCapabilities.WaybillCrop
+                     | ProviderCapabilities.PerCameraImage
+                     | ProviderCapabilities.Weight
+                     | ProviderCapabilities.Volume
+                     | ProviderCapabilities.SoftTrigger
+                     | ProviderCapabilities.ComplementCode
+                     | ProviderCapabilities.ConfigWrite
+                     | ProviderCapabilities.RequiresDongle;
+            }
+        }
+
+        #region 生命周期
+
+        public void Start()
+        {
+            if (!File.Exists(_cfgPath))
+            {
+                throw new ProviderException("找不到 SDK 配置文件：" + _cfgPath);
+            }
+
+            // 先读 cfg 判断触发模式，这样即使后面相机没连上，也能看到"软触发能不能用"的提示
+            WarnIfNotSoftTriggerMode();
+
+            _queue = new BlockingCollection<WorkItem>(_queueCapacity);
+            _running = true;
+            _worker = new Thread(WorkerLoop);
+            _worker.IsBackground = true;
+            _worker.Name = "dahua-image-worker";
+            _worker.Start();
+
+            _dws = LogisticsWrapper.Instance;
+
+            _sink.Log(LogLevel.Info, "Initialization(" + _cfgPath + ")");
+            int status = _dws.Initialization(_cfgPath);
+            if (status != 0)
+            {
+                throw new ProviderException("Initialization 失败：返回 " + status + "；" + DahuaErrorCodes.Describe(status));
+            }
+
+            // 先打开底层回调开关，再注册托管事件（顺序与官方 Demo 一致）
+            _cameraDisconnectCbAttached = _dws.AttachCameraDisconnectCB();
+            if (_attachAllCameraCodeInfo)
+            {
+                _allCameraCbAttached = _dws.AttachAllCameraCodeinfoCB();
+            }
+
+            _dws.CameraDisconnectEventHandler += OnCameraDisconnect;
+            _statusHandlerAttached = true;
+
+            _sink.Log(LogLevel.Info, "Start() —— 底层开始初始化相机/称重/体积等模块");
+            status = _dws.Start();
+            if (status != 0)
+            {
+                DetachCallbacks();
+                throw new ProviderException("Start 失败：返回 " + status + "；" + DahuaErrorCodes.Describe(status));
+            }
+
+            _dws.CodeHandle += OnCodeHandle;
+            _codeHandlerAttached = true;
+
+            if (_allCameraCbAttached)
+            {
+                _dws.AllCameraCodeInfoEventHandler += OnAllCameraCodeInfo;
+                _allCameraHandlerAttached = true;
+            }
+
+            LogCameraInventory();
+            _started = true;
+            _sink.Log(LogLevel.Info, "采集已启动，图片目录：" + _imageRoot);
+        }
+
+        public void Stop()
+        {
+            if (_stopped)
+            {
+                return;
+            }
+            _stopped = true;
+
+            _running = false;
+            _started = false;
+
+            // 先摘回调，保证不再有新数据进入队列
+            DetachCallbacks();
+
+            if (_dws != null)
+            {
+                try
+                {
+                    _sink.Log(LogLevel.Info, "StopApp()");
+                    bool ok = _dws.StopApp();
+                    _sink.Log(LogLevel.Info, "StopApp -> " + ok);
+                }
+                catch (Exception ex)
+                {
+                    _sink.LogError("StopApp 异常", ex);
+                }
+            }
+
+            // 让工作线程把队列里剩下的图片写完再退出
+            if (_queue != null)
+            {
+                try
+                {
+                    _queue.CompleteAdding();
+                }
+                catch (Exception)
+                {
+                }
+            }
+
+            if (_worker != null && _worker.IsAlive)
+            {
+                _worker.Join(10000);
+            }
+        }
+
+        public void Dispose()
+        {
+            Stop();
+        }
+
+        #endregion
+
+        #region SDK 回调
+
+        /// <summary>
+        /// 包裹结果回调（一个包裹来两次：先条码，再条码+重量+体积）。
+        /// 这里只做最轻的事：规范化 + 深拷贝图像 + 入队，绝不阻塞。
+        /// </summary>
+        private void OnCodeHandle(object sender, LogisticsCodeEventArgs e)
+        {
+            try
+            {
+                ParcelEvent evt = new ParcelEvent();
+                evt.EventId = Interlocked.Increment(ref _eventSeq);
+                evt.ProviderId = ProviderName;
+                evt.DeviceId = e.CameraID;
+                evt.Stage = e.OutputResult == 0 ? ParcelStage.Detected : ParcelStage.Enriched;
+                evt.CapturedAtMs = e.CodeTimeStamp;
+                evt.ReceivedAtMs = NowMs();
+
+                FillCodes(evt, e);
+                FillWeightAndVolume(evt, e);
+                evt.TraceId = BuildTraceId(evt);
+
+                WorkItem item = new WorkItem();
+                item.Parcel = evt;
+
+                if (_saveOriginal)
+                {
+                    CapturedImage original = CapturedImage.From(e.OriginalImage);
+                    if (original != null)
+                    {
+                        PendingImage pi = new PendingImage();
+                        pi.Image = original;
+                        pi.Kind = ImageKind.Original;
+                        pi.DeviceId = e.CameraID;
+                        pi.Suffix = "ori";
+                        item.Images.Add(pi);
+                    }
+                }
+
+                if (_saveWaybill)
+                {
+                    CapturedImage waybill = CapturedImage.From(e.WaybillImage);
+                    if (waybill != null)
+                    {
+                        PendingImage pi = new PendingImage();
+                        pi.Image = waybill;
+                        pi.Kind = ImageKind.Waybill;
+                        pi.DeviceId = e.CameraID;
+                        pi.Suffix = "way";
+                        item.Images.Add(pi);
+                    }
+                }
+
+                Enqueue(item);
+            }
+            catch (Exception ex)
+            {
+                _sink.LogError("OnCodeHandle 异常", ex);
+            }
+        }
+
+        /// <summary>所有相机的读码信息回调（可选）。</summary>
+        private void OnAllCameraCodeInfo(object sender, AllCameraCodeInfoArgs e)
+        {
+            try
+            {
+                if (e == null || e.SingleCameraCodeInfoList == null)
+                {
+                    return;
+                }
+
+                foreach (SingleCameraCodeInfo info in e.SingleCameraCodeInfoList)
+                {
+                    CameraReadEvent read = new CameraReadEvent();
+                    read.ProviderId = ProviderName;
+                    read.DeviceId = info.Key;
+                    read.CameraIp = info.CameraIP;
+                    read.CapturedAtMs = info.CodeTimeStamp;
+                    read.ReceivedAtMs = NowMs();
+
+                    if (info.CodeList != null)
+                    {
+                        for (int i = 0; i < info.CodeList.Count; i++)
+                        {
+                            string value = info.CodeList[i];
+                            if (!IsNoRead(value))
+                            {
+                                read.Codes.Add(new CodeItem(value, CodeKind.Unknown, null));
+                            }
+                        }
+                    }
+
+                    WorkItem item = new WorkItem();
+                    item.CameraRead = read;
+
+                    if (_savePerCamera)
+                    {
+                        CapturedImage image = CapturedImage.From(info.OriginalImage);
+                        if (image != null)
+                        {
+                            PendingImage pi = new PendingImage();
+                            pi.Image = image;
+                            pi.Kind = ImageKind.PerCamera;
+                            pi.DeviceId = info.Key;
+                            pi.Suffix = "cam";
+                            item.Images.Add(pi);
+                        }
+                    }
+
+                    Enqueue(item);
+                }
+            }
+            catch (Exception ex)
+            {
+                _sink.LogError("OnAllCameraCodeInfo 异常", ex);
+            }
+        }
+
+        /// <summary>相机上下线回调。</summary>
+        private void OnCameraDisconnect(object sender, CameraStatusArgs e)
+        {
+            try
+            {
+                CameraStatusEvent status = new CameraStatusEvent();
+                status.ProviderId = ProviderName;
+                status.DeviceId = e.CameraKey;
+                status.UserId = e.CameraUserID;
+                status.Online = e.IsOnline;
+                status.AtMs = NowMs();
+                _sink.OnCameraStatus(status);
+            }
+            catch (Exception ex)
+            {
+                _sink.LogError("OnCameraDisconnect 异常", ex);
+            }
+        }
+
+        #endregion
+
+        #region 命令接口（软触发 / 补码）
+
+        /// <summary>
+        /// 软件触发一次相机拍照/拉流（对应大华 CameraSoftTrigger / 原生 vslbSoftTrigger）。
+        ///
+        /// 前提：cfg 里 &lt;ReadCodeMode triggerMode="2"&gt;（软触发模式）。
+        /// 如果还是 1（硬触发）或 0（自由拉流），本命令可能不生效——启动时会打 WARN 提示。
+        /// </summary>
+        public int SoftTrigger()
+        {
+            if (!_started || _dws == null)
+            {
+                _sink.Log(LogLevel.Warn, "软触发失败：采集尚未启动（先 Start 成功再触发）");
+                return -1;
+            }
+
+            try
+            {
+                int ret = _dws.CameraSoftTrigger();
+                if (ret == 0)
+                {
+                    _sink.Log(LogLevel.Info, "软触发成功：CameraSoftTrigger() -> 0");
+                }
+                else
+                {
+                    _sink.Log(LogLevel.Warn, "软触发失败：CameraSoftTrigger() -> " + ret + "；" + DahuaErrorCodes.Describe(ret));
+                }
+                return ret;
+            }
+            catch (Exception ex)
+            {
+                _sink.LogError("软触发异常", ex);
+                return -1;
+            }
+        }
+
+        /// <summary>
+        /// 人工补码（对应大华 ComplementCode）。
+        /// </summary>
+        public int ComplementCode(string code, long timeMs)
+        {
+            if (!_started || _dws == null)
+            {
+                _sink.Log(LogLevel.Warn, "补码失败：采集尚未启动");
+                return -1;
+            }
+            if (string.IsNullOrEmpty(code))
+            {
+                _sink.Log(LogLevel.Warn, "补码失败：条码为空");
+                return -1;
+            }
+
+            try
+            {
+                ComplementInfo info = new ComplementInfo();
+                info.Code = code;
+                info.time = timeMs > 0 ? timeMs : NowMs();
+
+                int ret = _dws.ComplementCode(info);
+                if (ret == 0)
+                {
+                    _sink.Log(LogLevel.Info, "补码成功：" + code + "（时间戳 " + info.time + "）");
+                }
+                else
+                {
+                    _sink.Log(LogLevel.Warn, "补码失败：" + code + " -> " + ret + "；" + DahuaErrorCodes.Describe(ret));
+                }
+                return ret;
+            }
+            catch (Exception ex)
+            {
+                _sink.LogError("补码异常", ex);
+                return -1;
+            }
+        }
+
+        #endregion
+
+        #region 工作线程
+
+        private void Enqueue(WorkItem item)
+        {
+            bool added = false;
+            try
+            {
+                added = _queue.TryAdd(item);
+            }
+            catch (Exception ex)
+            {
+                _sink.LogError("入队异常", ex);
+            }
+
+            if (!added)
+            {
+                // 队列满：宁可丢事件也不反压 SDK 回调（丢多少必须有告警，方便现场发现）
+                _sink.Log(LogLevel.Warn, "采集队列已满（容量 " + _queueCapacity + "），丢弃一个事件");
+                item.ReleaseImages();
+            }
+        }
+
+        private void WorkerLoop()
+        {
+            while (true)
+            {
+                WorkItem item = null;
+                try
+                {
+                    if (!_queue.TryTake(out item, 200))
+                    {
+                        if (!_running && _queue.IsCompleted)
+                        {
+                            break;
+                        }
+                        continue;
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    break;
+                }
+                catch (InvalidOperationException)
+                {
+                    break;
+                }
+
+                try
+                {
+                    ProcessOne(item);
+                }
+                catch (Exception ex)
+                {
+                    _sink.LogError("处理事件异常", ex);
+                }
+                finally
+                {
+                    item.ReleaseImages();
+                }
+            }
+        }
+
+        private void ProcessOne(WorkItem item)
+        {
+            if (item.Parcel != null)
+            {
+                string directory = Path.Combine(_imageRoot, DateTime.Now.ToString("yyyyMMdd"), SafeName(item.Parcel.DeviceId));
+                for (int i = 0; i < item.Images.Count; i++)
+                {
+                    SaveOne(item.Images[i], item.Parcel, null, directory);
+                }
+                _sink.OnParcel(item.Parcel);
+                return;
+            }
+
+            if (item.CameraRead != null)
+            {
+                string directory = Path.Combine(_imageRoot, DateTime.Now.ToString("yyyyMMdd"), SafeName(item.CameraRead.DeviceId));
+                for (int i = 0; i < item.Images.Count; i++)
+                {
+                    SaveOne(item.Images[i], null, item.CameraRead, directory);
+                }
+                _sink.OnCameraRead(item.CameraRead);
+            }
+        }
+
+        private void SaveOne(PendingImage pending, ParcelEvent parcel, CameraReadEvent cameraRead, string directory)
+        {
+            if (pending == null || pending.Image == null)
+            {
+                return;
+            }
+
+            string baseName = BuildFileBaseName(parcel, cameraRead, pending.Suffix);
+
+            try
+            {
+                bool isJpeg = pending.Image.Type == (int)LogisticsAPIStruct.EImageType.eImageTypeJpeg;
+                int channels = pending.Image.Type == (int)LogisticsAPIStruct.EImageType.eImageTypeBGR ? 3 : 1;
+
+                ImageRef imageRef = ImageWriter.Write(pending.Image, isJpeg, channels, directory, baseName, pending.Kind, pending.DeviceId);
+                if (imageRef == null)
+                {
+                    return;
+                }
+
+                if (parcel != null)
+                {
+                    parcel.Images.Add(imageRef);
+                }
+                if (cameraRead != null)
+                {
+                    cameraRead.Images.Add(imageRef);
+                }
+
+                _sink.OnImageSaved(imageRef);
+            }
+            catch (Exception ex)
+            {
+                _sink.LogError("保存图片失败：" + baseName, ex);
+            }
+        }
+
+        #endregion
+
+        #region 辅助
+
+        private void DetachCallbacks()
+        {
+            if (_dws == null)
+            {
+                return;
+            }
+
+            try
+            {
+                if (_codeHandlerAttached)
+                {
+                    _dws.CodeHandle -= OnCodeHandle;
+                    _codeHandlerAttached = false;
+                }
+                if (_allCameraHandlerAttached)
+                {
+                    _dws.AllCameraCodeInfoEventHandler -= OnAllCameraCodeInfo;
+                    _allCameraHandlerAttached = false;
+                }
+                if (_statusHandlerAttached)
+                {
+                    _dws.CameraDisconnectEventHandler -= OnCameraDisconnect;
+                    _statusHandlerAttached = false;
+                }
+                if (_allCameraCbAttached)
+                {
+                    _dws.DetachAllCameraCodeinfoCB();
+                    _allCameraCbAttached = false;
+                }
+                if (_cameraDisconnectCbAttached)
+                {
+                    _dws.DetachCameraDisconnectCB();
+                    _cameraDisconnectCbAttached = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                _sink.LogError("卸载回调异常", ex);
+            }
+        }
+
+        private void LogCameraInventory()
+        {
+            try
+            {
+                int count = 0;
+                IEnumerable<CameraInfo> infos = _dws.GetWorkCameraInfo();
+                if (infos != null)
+                {
+                    foreach (CameraInfo info in infos)
+                    {
+                        count++;
+                        _sink.Log(LogLevel.Info, string.Format(CultureInfo.InvariantCulture,
+                            "相机[{0}] ID={1} Model={2} SN={3} Vendor={4} FW={5} Extra={6}",
+                            count, info.camDevID, info.camDevModelName, info.camDevSerialNumber,
+                            info.camDevVendor, info.camDevFirewareVersion, info.camDevExtraInfo));
+                    }
+                }
+                _sink.Log(LogLevel.Info, "工作相机数量：" + count);
+
+                IEnumerable<CameraTags> statusList = _dws.GetCamerasStatus();
+                if (statusList != null)
+                {
+                    foreach (CameraTags st in statusList)
+                    {
+                        _sink.Log(LogLevel.Info, string.Format(CultureInfo.InvariantCulture,
+                            "相机状态 Key={0} UserID={1} Online={2}", st.key, st.deviceUserID, st.isOnline));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _sink.LogError("读取相机信息失败", ex);
+            }
+        }
+
+        private static void FillCodes(ParcelEvent evt, LogisticsCodeEventArgs e)
+        {
+            // CodesInfo 带方位和类型，优先用它
+            if (e.CodesInfo != null && e.CodesInfo.Length > 0)
+            {
+                for (int i = 0; i < e.CodesInfo.Length; i++)
+                {
+                    SingleCodeInfo info = e.CodesInfo[i];
+                    if (info == null || IsNoRead(info.Code))
+                    {
+                        continue;
+                    }
+
+                    CodeKind kind = info.CodeTypeP == SingleCodeInfo.CodeType.Barcode ? CodeKind.OneD : CodeKind.TwoD;
+                    evt.Codes.Add(new CodeItem(info.Code, kind, info.Position));
+                }
+                return;
+            }
+
+            if (e.CodeList != null)
+            {
+                for (int i = 0; i < e.CodeList.Count; i++)
+                {
+                    string value = e.CodeList[i];
+                    if (!IsNoRead(value))
+                    {
+                        evt.Codes.Add(new CodeItem(value, CodeKind.Unknown, null));
+                    }
+                }
+            }
+        }
+
+        private static void FillWeightAndVolume(ParcelEvent evt, LogisticsCodeEventArgs e)
+        {
+            if (e.OutputResult == 0)
+            {
+                return;
+            }
+
+            if (e.Weight > 0)
+            {
+                evt.WeightGrams = e.Weight;
+            }
+
+            try
+            {
+                evt.LengthMm = e.VolumeInfo.length;
+                evt.WidthMm = e.VolumeInfo.width;
+                evt.HeightMm = e.VolumeInfo.height;
+                evt.VolumeMm3 = e.VolumeInfo.volume;
+            }
+            catch (Exception)
+            {
+                // 没有体积模块时忽略
+            }
+        }
+
+        private static string BuildTraceId(ParcelEvent evt)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append(evt.ProviderId).Append('|').Append(evt.DeviceId).Append('|')
+              .Append(evt.CapturedAtMs.ToString(CultureInfo.InvariantCulture)).Append('|');
+            for (int i = 0; i < evt.Codes.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(',');
+                }
+                sb.Append(evt.Codes[i].Value);
+            }
+            return sb.ToString();
+        }
+
+        private static string BuildFileBaseName(ParcelEvent parcel, CameraReadEvent cameraRead, string suffix)
+        {
+            StringBuilder sb = new StringBuilder();
+            if (parcel != null)
+            {
+                sb.Append(parcel.CapturedAtMs.ToString(CultureInfo.InvariantCulture));
+                if (parcel.Codes.Count > 0)
+                {
+                    sb.Append('_');
+                    int max = Math.Min(3, parcel.Codes.Count);
+                    for (int i = 0; i < max; i++)
+                    {
+                        if (i > 0)
+                        {
+                            sb.Append('-');
+                        }
+                        sb.Append(parcel.Codes[i].Value);
+                    }
+                }
+            }
+            else if (cameraRead != null)
+            {
+                sb.Append(cameraRead.CapturedAtMs.ToString(CultureInfo.InvariantCulture));
+                if (cameraRead.Codes.Count > 0)
+                {
+                    sb.Append('_').Append(cameraRead.Codes[0].Value);
+                }
+            }
+
+            sb.Append('_').Append(suffix);
+            string name = SafeName(sb.ToString());
+            if (name.Length > 120)
+            {
+                name = name.Substring(0, 120);
+            }
+            return name;
+        }
+
+        private static string SafeName(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return "unknown";
+            }
+
+            StringBuilder sb = new StringBuilder(value.Length);
+            char[] invalid = Path.GetInvalidFileNameChars();
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                bool bad = false;
+                for (int j = 0; j < invalid.Length; j++)
+                {
+                    if (c == invalid[j])
+                    {
+                        bad = true;
+                        break;
+                    }
+                }
+                sb.Append(bad ? '_' : c);
+            }
+
+            string result = sb.ToString().Trim();
+            return result.Length == 0 ? "unknown" : result;
+        }
+
+        private static bool IsNoRead(string value)
+        {
+            return !string.IsNullOrEmpty(value) && value.Trim().Equals(NoRead, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 启动时检查 cfg 的 ReadCodeMode.triggerMode：
+        ///   0 = 自由拉流，1 = 硬触发（默认），2 = 软触发。
+        /// 不是 2 就提示一次，避免现场"软触发没反应"。
+        /// </summary>
+        private void WarnIfNotSoftTriggerMode()
+        {
+            string mode = TryReadTriggerMode(_cfgPath);
+            if (mode == null)
+            {
+                return;
+            }
+
+            if (mode == "2")
+            {
+                _sink.Log(LogLevel.Info, "ReadCodeMode.triggerMode=2（软触发模式），可以使用 CameraSoftTrigger()");
+            }
+            else
+            {
+                _sink.Log(LogLevel.Warn, "ReadCodeMode.triggerMode=" + mode
+                    + "（0=自由拉流，1=硬触发，2=软触发）；当前不是软触发模式，CameraSoftTrigger() 可能不生效。"
+                    + "要测软触发请把 Cfg\\LogisticsBase.cfg 改成 triggerMode=\"2\" 后重启采集"
+                    + "（也可用 tools\\set-trigger-mode.ps1 -Mode soft）");
+            }
+        }
+
+        /// <summary>
+        /// 从 GB2312 编码的 cfg 里读出 ReadCodeMode 的 triggerMode 值。
+        /// 这里按字节找 ASCII 片段，完全绕开编码问题。
+        /// </summary>
+        private static string TryReadTriggerMode(string cfgPath)
+        {
+            try
+            {
+                byte[] bytes = File.ReadAllBytes(cfgPath);
+                byte[] anchor = Encoding.ASCII.GetBytes("<ReadCodeMode");
+                int anchorIndex = IndexOf(bytes, anchor, 0);
+                if (anchorIndex < 0)
+                {
+                    return null;
+                }
+
+                byte[] needle = Encoding.ASCII.GetBytes("triggerMode=\"");
+                int index = IndexOf(bytes, needle, anchorIndex);
+                if (index < 0)
+                {
+                    return null;
+                }
+
+                int start = index + needle.Length;
+                int end = start;
+                while (end < bytes.Length && bytes[end] != (byte)'"')
+                {
+                    end++;
+                }
+                if (end <= start)
+                {
+                    return null;
+                }
+
+                return Encoding.ASCII.GetString(bytes, start, end - start);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        private static int IndexOf(byte[] haystack, byte[] needle, int start)
+        {
+            int limit = haystack.Length - needle.Length;
+            for (int i = Math.Max(0, start); i <= limit; i++)
+            {
+                bool match = true;
+                for (int j = 0; j < needle.Length; j++)
+                {
+                    if (haystack[i + j] != needle[j])
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match)
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        private static long NowMs()
+        {
+            return (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
+        }
+
+        #endregion
+    }
+}

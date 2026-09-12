@@ -1,0 +1,11 @@
+runtime/images/
+runtime/spool/
+runtime/logs/
+runtime/Log/
+runtime/CamLog/
+runtime/*.dmp
+bin/
+obj/
+*.user
+*.suo
+.vs/

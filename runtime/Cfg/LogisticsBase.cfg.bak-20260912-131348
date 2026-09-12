@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="GB2312" standalone="yes" ?>
+<Cfgs>
+    <!--图像源获取部分配置-->
+    <ImageAcqCfg>
+        <!--工作模式 mod: 0=条码优先 1=仅体积 2 快手模式  bindMode:汇总模式  0= 扫码优先  1：ai相机独立运行 -->
+        <WorkMode mode="0" bindMode="0" />
+        <!--图像源获取方式，mode值：1=自动发现所有扫码相机 2=根据IP/KEY发现相机 3=发现所有智能相机 4=发现所有工业相机 randWorkMode:0 按照相机个数工作 1有任意一个相机即可工作  waitBindType:汇总等待模式 0基于触发开始 1基于触发结束  lineDelay:线扫相机光电位置延时（正代表在后，负代表在前）-->
+        <ImageAcq mode="2" num="1" randWorkMode="1" interPacketTimeout="50" cameraTimeout="260" waitBindType="0" handleResultDelayTime="1500" firstFrameTimeDiff="100" packageTimeDiff="300" bufferCnt="6" reConnectCnt="100000" lineDelay="0" MaxPayloadSize="5000" enableCollectQuick="0" firstCodeCollectDelay="10" />
+        <!--读码模式，triggerMode值: 2=软触发模式 1=硬触发模式 0=自由拉流模式，mode值：0=区分包裹模式 1 =狂扫模式， cacheSize: N个条码不能重复，MaxframeProcessCache: 单个相机处理单个包裹的最大图片个数，默认40张, doubleFrameMode 相机先条码后图片双帧模式 enableFrameRate 帧率配置开关 frameRate 相机帧率"-->
+        <ReadCodeMode triggerMode="1" mode="0" cacheSize="3" maxFrameProcessCache="40" lineDebounceAbsTime="30000" constantNoread="0" positionFiltering="0" doubleFrameMode="0" enableFrameRate="0" frameRate="6" minCollectCount="0" />
+        <!--工业相机配置项，ip：GigE网口相机使用，key：U3V相机使用，enable：1-使用 0-不使用，禁止多余配置重复配置等非法配置-->
+        <Camera ip="100.100.100.11" enable="1" />
+        <Camera key="2F0444FPAK00012" enable="0" />
+        <Camera id="Dahua Technology:2F0444FPAK00012" enable="0" />
+        <!--智能相机配置项，timeSyncMode：0=NTP模式 1=Manual手动设置模式，timeSyncNum：设置相机时间间隔 默认10s，参考SVS发现相机后的属性 MultiFrameGroup: 0 默认CombineResults模式 other值使用相机已有配置 outImgType:0 使用现有类型 1 jpeg  2  1/4模式 jpegQuality:jpeg输出方式下图片质量因子 enablePhaseTimeout:定时出流开关-->
+        <SmartCamera timeSyncMode="1" timeSyncNum="10" scpdEnable="1" scpdDelay="8000" inputIODebounceEnable="1" inputIODebounceFilter="10000" MultiFrameGroup="0" customMode="0" outImgType="0" jpegQuality="70" enablePhaseTimeout="0" PhaseTimeout="1000" />
+        <!--客户合作模式-->
+        <CustomerMode mode="0" />
+        <!--相机匹配规则， iraypleCamRule：当前sdk支持的相机key值的规则  smartCamRule：智能相机型号支持的规则   linearCamRule：线阵相机型号支持的规则  volCamRule：3D相机型号支持的规则-->
+        <CameraRegexRule iraypleCamRule="" smartCamRule="(?=(^(DH-MV-ES)).*)(.*)" linearCamRule="(?=(^(DH-MV-ESL)).*)(.*)" volCamRule="" />
+        <!--其他设置，针对下降沿触发的相机，如果下降沿相机型号为老款S5相机，TDownModel = 1，其他 TDownModel = 0-->
+        <OtherCfg TDownModel="0" />
+        <!--快手狂扫配置，enableMutilCode 使能多条码上报 ，enableMutilFrame 使能多帧上报  MutilFrameMinTimeDiff多帧汇总最早时间差 waitTimeOut多帧汇总超时 enableVolumeFirst:先体积后重量使能 ratio:非JEPG图0回调采样倍率 默认10  quickHandBindMode重量体积绑定模式:0 同步绑定 1先体积后重量  2先重量后体积 -->
+        <RapidScanCfg enableMutilCode="0" enableMutilFrame="0" MutilFrameMinTimeDiff="-300" waitTimeOut="200" ratio="10" quickHandBindMode="0" />
+        <!--自定义相机汇总模式 enableCameraCollectMode：功能使能  CameraInfo:自定义相机信息 id/ip/key:相机信息  mode: 0-Tup 1-Tdown 2-TupTdown -->
+        <CameraCollectMode enableCameraCollectMode="0">
+            <CameraInfo id="Huaray Technology:DC38378AAK00039" mode="0" />
+            <CameraInfo ip="100.100.11.11" mode="0" />
+            <CameraInfo key="2F0444FPAK00012" mode="0" />
+        </CameraCollectMode>
+        <!--多工位模式 enable：多工位模式开关  mode:工作模式 0：独立工作模式 1：汇总模式 （开启汇总模式，需要指定主相机 MainCam ip/key/id信息） -->
+        <MutilStationCfg enable="0" mode="0">
+            <MainCam key="DC38378AAK00039" />
+        </MutilStationCfg>
+    </ImageAcqCfg>
+    <!--条码过滤部分配置-->
+    <CodeFilterCfg>
+        <!--条码过滤说明：可配置多条规则，单个rule内多条件间关系为"与"，多个rule间关系为"或"-->
+        <!--条码过滤规则，rule值可或，0 = 无，1 = 乱码基础过滤，2 = 全数字通过，4 = 全字母通过，8 = 字母数字混合通过，16 = 条码长度范围在[minCodeSize, maxCodeSize]通过-->
+        <!--条码过滤规则，rule值可或，32=以[vecPrefisx]开头条码通过，64=以[vecSuffix]结尾条码通过，128=不以[vecNotPrefixs]开头条码通过，256=不以vecNotSufix结尾条码通过-->
+        <!--条码过滤规则，rule值可或，512=符合正则表达式的条码通过 -->
+        <Rules>
+            <Rule val="1">
+                <!--16-规则[条码长度范围最短]参数-->
+                <MinCodeSizeParam val="13" />
+                <!--16-规则[条码长度范围最长]参数-->
+                <MaxCodeSizeParam val="21" />
+                <!--32-规则以[vecPrefisx]开头参数-->
+                <CodeBeginWithParam>
+                    <val>bw11111</val>
+                    <val>bwaaaaa</val>
+                </CodeBeginWithParam>
+                <!--64-规则[以vecSuffix结尾]参数-->
+                <CodeEndWithParam>
+                    <val>22222ew</val>
+                </CodeEndWithParam>
+                <!--128-规则[不以vecNotPrefixs开头]参数-->
+                <CodeNotBeginWithParam>
+                    <val>nbw33333</val>
+                </CodeNotBeginWithParam>
+                <!--256-规则[不以vecNotSufix结尾]参数-->
+                <CodeNotEndWithParam>
+                    <val>new4444</val>
+                </CodeNotEndWithParam>
+                <!--512-正则表达式过滤-->
+                <CodeRegexParam>
+                    <val>(?=.*)(.*)</val>
+                </CodeRegexParam>
+            </Rule>
+        </Rules>
+        <PlatformRules>
+            <Rule Enable="1" Name="Rule 1" Type="3" Priority="0" RegexStr="(?=.*)(.*)">
+                <CharType Enable="0" Type="0" />
+                <CodeLength Enable="0" MinLength="0" MaxLength="0" />
+                <StartString Enable="0" Value="" />
+                <StartStringNot Enable="0" Value="" />
+                <EndString Enable="0" Value="" />
+                <EndStringNot Enable="0" Value="" />
+                <Content Enable="0" Value="" />
+                <ContentNot Enable="0" Value="" />
+                <Regex Enable="0" Value="(?=.*)(.*)" />
+            </Rule>
+        </PlatformRules>
+        <!--重复过滤配置，cacheSize:重复条码个数 enableTimerSwitch 定时过滤开关 0:不开启，按照cacheSize个数重复过滤  1:开启，按照时间cacheTime重复过滤   cacheTime:定时过滤时间ms enableRepeatCollect:多次重复扫描上报开关 repeatTime:重复扫描时间 repeatCount:重复扫描次数 enableCompleteCollect:完全汇总所有条码，允许单次识别多个重复条码-->
+        <RepeatRules cacheSize="3" enableTimerSwitch="0" cacheTime="1000" enableRepeatCollect="0" repeatTime="1000" repeatCount="1" enableCompleteCollect="0" />
+    </CodeFilterCfg>
+    <!--称部分配置-->
+    <WeightCfg>
+        <!--称接入模式，0=无称，2=串口独占称模式-->
+        <WeightMode val="0" />
+        <!--称协议，7=串口称(通用)，其他模式配置请与研发对接-->
+        <WeightProtocol val="7" />
+        <!--串口配置-->
+        <CommCfg portNum="COM6" baudRate="9600" dataBit="8" dataParity="None" stopBit="1" />
+        <!--Tcp配置-->
+        <TcpCfg ip="100.100.11.11" port="0" />
+        <!--是否启用异步等待称结果，1=启用，0=不启用-->
+        <AsynchWait val="1" />
+        <!-- 快手模式 val 是否启用先重量后条码功能, sumBarcode 是否汇总重量附近所有条码-->
+        <QuickHand val="0" sumBarcode="0" />
+        <!--采用数据个数-->
+        <SampleNum val="5" />
+        <!--称精度，单位为克-->
+        <Precision val="20" />
+        <!--等待称稳定最晚超时，单位ms-->
+        <Timeout val="600" />
+        <!--等待称稳定最早超时，单位ms-->
+        <ForeTimeout val="-200" />
+        <!--重量范围，min:最小重量  max:最大重量 单位g -->
+        <WeightRange min="10" max="100000" />
+        <!--外部解析库路径-->
+        <ExtraDll val="" />
+        <!--通用秤配置  dataLen:完整数据长度  startPos:有效数据起始位下标 validDataLen:有效数据长度 bReverseOrder:是否为倒序解析模式 0正常顺序解析 1 倒序解析模式   bRealWeightMode:是否为实时秤模式 0 稳定重量模式（默认） 1实时重量模式 bWeightfitting:是否实时拟合稳定重量  0 不拟合(默认) 1 拟合 startBit:包头（0x开头的16进制数据） stopBit:包尾（以0x开头的16位数据）units:重量单位 g:1  kg:1000 dataType:重量数据类型  0：ascil 类型 1：十进制值类型-->
+        <GeneralCfg dataLen="23" startPos="12" validDataLen="9" bReverseOrder="0" bRealWeightMode="0" bWeightfitting="0" startBit="0x02" stopBit="0x0d 0x0a" dataType="0" units="1000" />
+        <!--快手超时默认重量 enable使能  val默认重量(g)-->
+        <DefaultWeight enable="0" val="10" />
+        <!--重量绑定时间类型，0-Tup 1-Tdown -->
+        <BindTimeMode val="1" />
+        <!--重量变速配置，enableSS 变速开关 1-开启  distance：出重量距离偏差mm  minTol/maxTol: 绑定时间偏差范围ms-->
+        <weightSSCfg enableSS="0" distance="0" minTol="-200" maxTol="200" />
+    </WeightCfg>
+    <!--输出配置-->
+    <OutputCfg1>
+        <!--CameraIO输出配置 enable: 0:不开启  1:开启 -->
+        <CameraIOCfg enable="0" />
+        <!--IoCfg具体配置 ip:具体的相机IP  line:IO输出的线路  time:驱动时长  postion:哪一种IO方式 0 默认用以手动触发 1 获取条码后IO输出 2 获取重量后IO输出 4 获取体积后IO输出 可同时开启-->
+        <IOCfg ip="100.100.11.11" line="3" time="1000" position="0" />
+        <!--DbRecordCfg数据库记录模块配置 enable: 0:不开启  1:开启 -->
+        <DbRecordCfg enable="0" />
+    </OutputCfg1>
+    <!--其他配置信息-->
+    <OtherCfg>
+        <!--DUMP控制开关 -->
+        <DumpControl enable="1" />
+        <!--软加密控制开关 -->
+        <SoftDogControl enable="0" />
+        <!--实时异常日志上报配置控制开关 -->
+        <RealErrorInfo enable="0" />
+        <!--保存图像 enable：是否开启保存功能 enableBmp：1-保存图片格式为Bmp 0-保存图片格式为Jpg enableNormal:是否保存有码图片 enableNoread：保存noread图片 enableMulti：是否保存多条码图片 enableSmartNoread：是否保存智能机无码图片 带Path的参数表示对应保存图片路径  enableDeleteData:是否开启删除存图功能 deleteDays：删除时间 -->
+        <SaveImage enable="0" enableBmp="1" enableNormal="0" saveNormalPath="./SaveNormalImages/" enableNoread="0" saveNoreadPath="./SaveNoreadImages/" enableMulti="0" saveMultiPath="./SaveMultiImages/" enableSmartNoread="0" saveSmartNoreadPath="./SaveSmartNoreadImages/" enableDeleteData="1" deleteDays="2" />
+        <!--全景图 条码抠图和全景图拼接，全景相机自由拉流，enable使能，path路径，IP，delayTime延时拍摄时间，有抠图后面参数有效：wZoom宽方向缩放比，hZoom高方向缩放比，exUp上方向扩展比，exDown下方向扩展比，exLeft左方向扩展比，exRight右方向扩展比，enableJpeg:是否压缩全景图片为jpeg， quality:压缩质量因数 enableRotation：开启全景旋转功能 rotationAngle：旋转角度（逆时针）-->
+        <CombIPCAndBarcodes enable="0" enableSofttrigger="0" enableSampleImg="0" enableSaveImage="0" path="./MergedImages/" ip="" userId="para" delayTime="2000" wZoom="1" hZoom="1" exUp="0.6" exDown="0.7" exLeft="0.1" exRight="0.1" enableJpeg="0" quality="80" enableGrayInstrument="0" roiLeftUpX="150" roiLeftUpY="250" roiRightDownX="2430" roiRightDownY="1700" enableRotation="0" rotationAngle="0" triggerType="0" />
+        <!--指定顶扫相机 -->
+        <TopCamera enable="0" ip="100.100.11.11" path="./TopCameraImages/" />
+        <!--平整度 -->
+        <PlanenessImage enable="0" path="./PlanenessImages/" />
+        <!--实时回调相机图片信息功能，enable 用来开启此功能，realCamer列表用来添加、指定实时回调的相机 -->
+        <RealImage enable="0" />
+        <RealCamera ip="100.100.11.11" />
+        <!--定时回调包裹汇总结果，enable:开启此功能，delaySendTime:包裹过光电到发送的时间 type: 定时发送起始时间类型 0 Tup 1 Tdown-->
+        <TimingOutput enable="0" delaySendTime="2500" type="0" />
+        <!--所有相机扫码信息回调控制开关 enable: 是否开启上报功能 enableJpeg:是否压缩图片为jpeg格式 quality:图片压缩质量因子  enableNoread ： 0：包裹扫到任何信息都回调 1：包裹noread时才执行回调 allCameraStoragePolicy: 上报规则 1：有条码上报 2 noread上报 4多条码上报 三者可叠加-->
+        <AllCameraCodeInfo enable="1" enableJpeg="0" quality="80" enableNoread="0" allCameraStoragePolicy="6" />
+        <!--主回调接口图配置项 enableJpeg:开启压缩图片为jpeg功能  quality：压缩质量因子 -->
+        <RealCallback enableJpeg="0" quality="80" />
+        <!--删除条码中的空格  enable:开启删除功能-->
+        <EraseSpace enable="1" />
+        <!--误码筛选算子 enable用来开启此功能-->
+        <BarCodeSummaryFilter enable="1" />
+        <!--外部过滤规则  enable:开启删除功能 -->
+        <ExtraFilterCfg enable="0" />
+        <!--补码配置  enable:开启补码功能  timeOut: 快手模式下 体积/重量绑定最大超时时间-->
+        <ComplementCfg enable="0" timeOut="2000" />
+        <!--变速配置  speed：默认速度(m/s)  linearCamSS：底扫变速使能开关 0 变速时行频不变化  1变速时行频变化  lineRateRatio行频/速度倍率：默认5200 行频=速度*倍率-->
+        <SpeedCfg speed="1.5" linearCamSS="0" lineRateRatio="5200" />
+        <!--底扫(线扫)相机图像采样配置  enable:是否启用底扫图像采样  ratio:采样比例(任意整数>=2，JPEG自动收敛到2/4/8)，底扫图像缩小到1/ratio-->
+        <LineScanSample enable="0" ratio="4" />
+    </OtherCfg>
+    <!--高级配置信息-->
+    <ExpertCfg>
+        <!--是否将相机的长/宽值作为初始化一维码二维码算法长宽的参数 -->
+        <AlgorithmSizeMode enable="1" />
+        <!--一维码算法配置 Type:(A=EAN13_CODE，B=Code128，C=CODE39_CODE，D=EAN8_CODE，E=UPCA_CODE，F=UPCE_CODE，G=CODE93_CODE，H=ITF25_CODE，I=CODABAR_CODE) enableScanline 开启获取线扫内容功能 saveScanlinePath 线扫图片存储地址-->
+        <BarCode enable="1" imgWidth="6500" imgHeight="4000" codeType="CB" elemMinWidth="3" elemMaxWidth="32" checkSumITF25="0" checkSumCode39="0" sizeMinWidth="50" sizeMaxWidth="5000" sizeMinHeight="10" sizeMaxHeight="5000" barcodeBalanceLevel="5" codeNum="10" max1DCodeNum="10" maxBarcodeWidth="1000" enableScanline="0" saveScanlinePath="./SaveScanlineImage/" />
+        <!--3D测体积算法配置  包裹触碰激光线时间跟触发光电时间戳差值 minValidTime:最小差值   maxValidTime：最大差值 timeOut:包裹经过激光线，等待体积时间  enableTDownBind：以包裹出体积时间做绑定，0 默认 以激光线时间跟扫码触发时间做比对 enableSS 变速开关 1-开启  distance：3D安装距离偏差mm  minTol/maxTol 绑定时间偏差范围ms  -->
+        <Volume enable="0" cameraNum="1" cfgDir="./3DCfg/" minValidTime="-200" maxValidTime="600" timeOut="200" speedVx="0" speedVy="0" enableTriggerCompensate="0" enableTDownBind="0" enableSS="0" distance="0" minTol="-200" maxTol="200" />
+        <!--静态3D测体积算法配置 realCallback 实时上报开关 validVolType有效体积类型: 0没强制要求 2必须要在测量区域内 3必须要稳定且在区域内-->
+        <StaticVolume enable="0" realCallback="0" validVolType="3" />
+        <!--清晰度、抠图算法配置-->
+        <ClarityMatting enableClarity="0" enableMatting="0" maxReConnect="3" threshold="20" compressQuality="80" imageWidth="6500" imageHeight="4000" enableMvpSmartMatting="0" imgChannel="3" offsetHorizonPercent="20" offsetVerticalPercent="20" withNoCodeMode="0" SmartModePath="./SmartMattingPlugin/MvpSmartMattingMode.smartdlxmodel" />
+        <!--DMCode算法配置 图片宽imageWidth 图片高imageHeight 二维码类型codeType DM 1 QR 2 QR&DM 3 极性标志signPolarity 镜像标志signMirror qr对比度阈值thContrast 得到多少个码后停止decodeNum 像素尺寸codeMinWidth 像素尺寸codeMaxWidth 最小单元尺寸elemMinWidth 最大单元尺寸elemMaxWidth QR定位符个数positionPatternMin 解码能力decoderCapacity 0:标准 1:增强 2:最强 增加超时退出timeOut 线扫相机二维码拼接缓存行数scanLines-->
+        <DMCode enable="0" imageWidth="6500" imageHeight="4000" codeType="2" signPolarity="2" signMirror="0" thContrast="20" decodeNum="1" versionMin="1" versionMax="24" codeMinWidth="10" codeMaxWidth="1200" elemMinWidth="3" elemMaxWidth="50" positionPatternMin="3" decoderCapacity="0" timeOut="200" scanLines="1000" />
+        <!--PackPoseShow算法配置 使能enable:0-关 1-开 图片最大高height:所有相机最大尺寸再加100 图片最大宽width:同高 输出图像通道数outputChannel:1-黑白 3-彩色 姿态图占全图比例scale:默认0.3 线条宽度lineWidth:暂时弃用(软件根据实时图像尺寸自适应) X轴翻转flipX:0-正常图片 1-X轴翻转 Y轴翻转flipY:0-正常图片 1-Y轴翻转-->
+        <PackPoseShow enable="0" height="7000" width="7000" outputChannel="3" scale="0.3" lineWidth="4" flipX="0" flipY="0" />
+        <!--包裹类型识别算法配置 使能开关enable 最小有效时间差minValidTime 最大有效时间差maxValidTime 绑定等待超时bindTimeout 相机触发模式triggerType(0 上升沿触发 1 下降沿触发)-->
+        <!--algMode 0-AI 1-扁平件 -->
+        <!--enableGearShift:变速使能0关 1开  distance:双目与读码器距离(mm)双目-读码  bindBias:绑定误差(必须小于1/2包间距)(ms)   变速使能开启的时候，使用计算后的绑定范围，弃用设置的绑定最小最大时间差-->
+        <AbnormalPackageDetect enable="0" algMode="0" minValidTime="-200" maxValidTime="600" bindTimeout="200" triggerType="0" enableGearShift="0" distance="0" bindBias="0" />
+    </ExpertCfg>
+</Cfgs>

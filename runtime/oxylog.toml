@@ -1,0 +1,63 @@
+[global]
+pattern = "%Y-%m-%d %T.%e [%n][%l][%t][%@] %v"
+level = "info"
+flush_level = "debug"
+create_parent_dir = true
+#dup_filter_duration = 0
+
+[[pattern]]
+name = "color_pattern"
+value = "%Y-%m-%d %T.%e [%n][%^%l%$][%t][%@] %v"
+
+[[sink]]
+name = "color_console_log"
+type = "color_stdout_sink_mt"
+pattern = "color_pattern"
+
+[[sink]]
+name = "StereoCameraLog"
+type = "rotating_file_sink_mt"
+filename = "{AppData}/log/StereoCamera.log"
+max_size = "20M"
+max_files = 10
+
+[[sink]]
+name = "AppLog"
+type = "rotating_file_sink_mt"
+filename = "{AppData}/log/App.log"
+max_size = "20M"
+max_files = 10
+
+[[sink]]
+name = "CalibLog"
+type = "rotating_file_sink_mt"
+filename = "{AppData}/log/Calib.log"
+max_size = "20M"
+max_files = 10
+
+[[sink]]
+name = "CameraPropertyLog"
+type = "rotating_file_sink_mt"
+filename = "{AppData}/log/Property.log"
+max_size = "20M"
+max_files = 10
+
+[[logger]]
+name = "StereoCamera"
+sinks = ["StereoCameraLog"]
+
+[[logger]]
+name = "CameraProperty"
+sinks = ["CameraPropertyLog"]
+
+[[logger]]
+name = "App"
+sinks = ["AppLog"]
+
+[[logger]]
+name = "Calib"
+sinks = ["CalibLog", "AppLog"]
+
+[[logger]]
+name = "Tools"
+sinks = ["AppLog"]

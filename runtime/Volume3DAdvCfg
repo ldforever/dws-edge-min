@@ -1,0 +1,36 @@
+# '#' indicates comments. To enable a configuration, first remove the '#', and then modify the value after '='
+
+# Encoder input port
+#EncoderLineInput = 2
+
+# Frame buffer size
+FrameBufferCount = 128
+
+# Gige camera model pattern
+ModelPatternGige=(?:MV-|DH-MV-)?D[a-zA-Z]{0,2}[0-9a-zA-Z]{4}[A-Z]G0\S*[\r\n]?
+
+# AI camera model pattern
+ModelPatternAI=(?:MV-|DH-MV-)?D[a-zA-Z]{0,2}[0-9a-zA-Z]{4}[A-Z]G1\S*[\r\n]?
+
+# Camera reconnection
+EnableCameraReconnect = 1
+CameraReconnectTimeout = 360000000
+
+# Backup smart camera laser image
+ImagePackMaxNum = 0
+ImageCountPerPack = 12000
+ImagePackStorageDir = ./LaserImages/
+
+# TimingOutput
+TimingOutputQueueSize = 32
+TimingOutputTimeout = 0
+TimingOutputBaseMode = 3
+
+# Auto exposure config
+AutoExposureDelta = 100
+AutoExposureRange = 500
+AutoExposureInterval = 30
+AutoExposureCorrection = 0
+
+# Backup laser points
+LaserGrayPackMaxNum = 0
