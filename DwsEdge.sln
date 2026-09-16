@@ -6,9 +6,11 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DwsEdge.Core", "src\DwsEdge
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DwsEdge.Providers.Dahua", "src\DwsEdge.Providers.Dahua\DwsEdge.Providers.Dahua.csproj", "{A1B2C3D4-0002-4000-8000-000000000002}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DwsEdge.Providers.Simulator", "src\DwsEdge.Providers.Simulator\DwsEdge.Providers.Simulator.csproj", "{A1B2C3D4-0004-4000-8000-000000000004}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DwsEdge.Host", "src\DwsEdge.Host\DwsEdge.Host.csproj", "{A1B2C3D4-0003-4000-8000-000000000003}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DwsEdge.Providers.Simulator", "src\DwsEdge.Providers.Simulator\DwsEdge.Providers.Simulator.csproj", "{A1B2C3D4-0004-4000-8000-000000000004}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DwsEdge.Platform", "src\DwsEdge.Platform\DwsEdge.Platform.csproj", "{A1B2C3D4-0005-4000-8000-000000000005}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -16,22 +18,26 @@ Global
 		Release|x64 = Release|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{A1B2C3D4-0001-4000-8000-000000000001}.Debug|x64.ActiveCfg = Debug|x64
-		{A1B2C3D4-0001-4000-8000-000000000001}.Debug|x64.Build.0 = Debug|x64
-		{A1B2C3D4-0001-4000-8000-000000000001}.Release|x64.ActiveCfg = Release|x64
-		{A1B2C3D4-0001-4000-8000-000000000001}.Release|x64.Build.0 = Release|x64
-		{A1B2C3D4-0002-4000-8000-000000000002}.Debug|x64.ActiveCfg = Debug|x64
-		{A1B2C3D4-0002-4000-8000-000000000002}.Debug|x64.Build.0 = Debug|x64
-		{A1B2C3D4-0002-4000-8000-000000000002}.Release|x64.ActiveCfg = Release|x64
-		{A1B2C3D4-0002-4000-8000-000000000002}.Release|x64.Build.0 = Release|x64
-		{A1B2C3D4-0003-4000-8000-000000000003}.Debug|x64.ActiveCfg = Debug|x64
-		{A1B2C3D4-0003-4000-8000-000000000003}.Debug|x64.Build.0 = Debug|x64
-		{A1B2C3D4-0003-4000-8000-000000000003}.Release|x64.ActiveCfg = Release|x64
-		{A1B2C3D4-0003-4000-8000-000000000003}.Release|x64.Build.0 = Release|x64
-		{A1B2C3D4-0004-4000-8000-000000000004}.Debug|x64.ActiveCfg = Debug|x64
-		{A1B2C3D4-0004-4000-8000-000000000004}.Debug|x64.Build.0 = Debug|x64
-		{A1B2C3D4-0004-4000-8000-000000000004}.Release|x64.ActiveCfg = Release|x64
-		{A1B2C3D4-0004-4000-8000-000000000004}.Release|x64.Build.0 = Release|x64
+		{A1B2C3D4-0001-4000-8000-000000000001}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-4000-8000-000000000001}.Debug|x64.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-4000-8000-000000000001}.Release|x64.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-4000-8000-000000000001}.Release|x64.Build.0 = Release|Any CPU
+		{A1B2C3D4-0002-4000-8000-000000000002}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0002-4000-8000-000000000002}.Debug|x64.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0002-4000-8000-000000000002}.Release|x64.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0002-4000-8000-000000000002}.Release|x64.Build.0 = Release|Any CPU
+		{A1B2C3D4-0004-4000-8000-000000000004}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0004-4000-8000-000000000004}.Debug|x64.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0004-4000-8000-000000000004}.Release|x64.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0004-4000-8000-000000000004}.Release|x64.Build.0 = Release|Any CPU
+		{A1B2C3D4-0003-4000-8000-000000000003}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0003-4000-8000-000000000003}.Debug|x64.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0003-4000-8000-000000000003}.Release|x64.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0003-4000-8000-000000000003}.Release|x64.Build.0 = Release|Any CPU
+		{A1B2C3D4-0005-4000-8000-000000000005}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0005-4000-8000-000000000005}.Debug|x64.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0005-4000-8000-000000000005}.Release|x64.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0005-4000-8000-000000000005}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

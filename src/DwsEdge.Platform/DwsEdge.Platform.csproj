@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!--
+    业务平台（方案 B 的 Platform 进程）。
+    net10.0 + ASP.NET Core：消费采集宿主的 spool 事件，提供 API、实时推送与图片服务，
+    并托管前端 SPA。不引用任何厂商 SDK。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>DwsEdge.Platform</RootNamespace>
+    <AssemblyName>DwsEdge.Platform</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DwsEdge.Core\DwsEdge.Core.csproj" />
+  </ItemGroup>
+</Project>

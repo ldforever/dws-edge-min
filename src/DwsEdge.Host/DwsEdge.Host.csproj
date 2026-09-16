@@ -1,47 +1,21 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    采集宿主（方案 B 的 Edge 进程）。
+    net48 + x64：因为要加载大华 SDK 与原生 DLL；本身不引用任何厂商程序集，
+    provider 通过 runtime\providers 目录反射加载。
+  -->
   <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">x64</Platform>
-    <ProjectGuid>{A1B2C3D4-0003-4000-8000-000000000003}</ProjectGuid>
     <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
     <RootNamespace>DwsEdge.Host</RootNamespace>
     <AssemblyName>DwsEdge.Host</AssemblyName>
-    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
-    <FileAlignment>512</FileAlignment>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x64' ">
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>..\..\runtime\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <PlatformTarget>x64</PlatformTarget>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x64' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>..\..\runtime\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
+    <ProjectReference Include="..\DwsEdge.Core\DwsEdge.Core.csproj" />
   </ItemGroup>
-  <ItemGroup>
-    <Compile Include="HostEventSink.cs" />
-    <Compile Include="Program.cs" />
-    <Compile Include="ProviderRegistry.cs" />
-    <Compile Include="SimpleConfig.cs" />
-    <Compile Include="TestConsole.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\DwsEdge.Core\DwsEdge.Core.csproj">
-      <Project>{A1B2C3D4-0001-4000-8000-000000000001}</Project>
-      <Name>DwsEdge.Core</Name>
-    </ProjectReference>
-  </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

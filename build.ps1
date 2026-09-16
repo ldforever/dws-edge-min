@@ -1,92 +1,120 @@
 ﻿<#
-    编译 DWS Edge Min。
+    编译 DWS Edge Min —— 一个解决方案、两个可执行进程
 
-    不依赖 Visual Studio，只用 .NET Framework 自带的 csc.exe（Win10/11 默认就有）。
-    输出：
-        runtime\DwsEdge.Core.dll
-        runtime\DwsEdge.Host.exe
-        runtime\providers\DwsEdge.Providers.Dahua.dll
+      采集宿主（Edge）  : DwsEdge.Host.exe        net48 / x64   ← 加载大华 SDK
+      业务平台（Platform）: DwsEdge.Platform.exe    net10.0       ← API + 实时推送 + 前端
+      插件               : providers\*.dll         net48
+      契约库             : DwsEdge.Core.dll        net48 + net10.0 两个目标
+
+    依赖：.NET SDK 10（dotnet 命令）+ .NET Framework 4.8 目标包
 
     用法：
         powershell -ExecutionPolicy Bypass -File .\build.ps1
+        powershell -ExecutionPolicy Bypass -File .\build.ps1 -Offline   # 无网络环境
 #>
 param(
-    [string]$RuntimeDir = (Join-Path $PSScriptRoot 'runtime')
+    [string]$Configuration = "Release",
+    [string]$RuntimeDir = (Join-Path $PSScriptRoot 'runtime'),
+    [switch]$Offline
 )
 
 $ErrorActionPreference = 'Stop'
 
-function Find-Csc {
+function Find-DotNet {
     $candidates = @(
-        "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
-        "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+        (Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'),
+        'C:\Program Files\dotnet\dotnet.exe'
     )
     foreach ($candidate in $candidates) {
-        if (Test-Path $candidate) { return $candidate }
+        if ($candidate -and (Test-Path $candidate)) { return $candidate }
     }
-    throw "找不到 csc.exe，请确认已安装 .NET Framework 4.x"
+    $cmd = Get-Command dotnet -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    throw "找不到 dotnet，请先安装 .NET SDK 10"
 }
 
-$csc      = Find-Csc
-$srcDir   = Join-Path $PSScriptRoot 'src'
-$coreDir  = Join-Path $srcDir 'DwsEdge.Core'
-$dahuaDir = Join-Path $srcDir 'DwsEdge.Providers.Dahua'
-$simDir   = Join-Path $srcDir 'DwsEdge.Providers.Simulator'
-$hostDir  = Join-Path $srcDir 'DwsEdge.Host'
+function Copy-Files {
+    param([string]$From, [string]$To, [string]$Filter = '*')
+    if (!(Test-Path $From)) { throw "找不到编译输出目录：$From" }
+    if (!(Test-Path $To)) { New-Item -ItemType Directory -Force -Path $To | Out-Null }
+    Get-ChildItem -Path $From -Filter $Filter -File | Copy-Item -Destination $To -Force
+}
+
+$dotnet = Find-DotNet
+$srcDir = Join-Path $PSScriptRoot 'src'
+
+$projCore     = Join-Path $srcDir 'DwsEdge.Core\DwsEdge.Core.csproj'
+$projHost     = Join-Path $srcDir 'DwsEdge.Host\DwsEdge.Host.csproj'
+$projDahua    = Join-Path $srcDir 'DwsEdge.Providers.Dahua\DwsEdge.Providers.Dahua.csproj'
+$projSim      = Join-Path $srcDir 'DwsEdge.Providers.Simulator\DwsEdge.Providers.Simulator.csproj'
+$projPlatform = Join-Path $srcDir 'DwsEdge.Platform\DwsEdge.Platform.csproj'
 
 if (!(Test-Path $RuntimeDir)) {
     throw "找不到 runtime 目录：$RuntimeDir`r`n请先把大华 SDK 的 bin\Release\x64 内容拷进 runtime\（详见 README.md）"
 }
 
+# 离线模式：清空 NuGet 源、把 CLI 的临时目录放到仓库内，避免访问用户目录
+$extraArgs = @()
+if ($Offline) {
+    $nugetConfig = Join-Path $PSScriptRoot 'NuGet.offline.config'
+    if (!(Test-Path $nugetConfig)) {
+        Set-Content -Path $nugetConfig -Encoding UTF8 -Value '<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><clear /></packageSources></configuration>'
+    }
+    $env:DOTNET_CLI_HOME = Join-Path $PSScriptRoot '.dotnet-home'
+    $env:NUGET_PACKAGES = Join-Path $PSScriptRoot '.packages'
+    New-Item -ItemType Directory -Force -Path $env:DOTNET_CLI_HOME | Out-Null
+    $extraArgs += @('--configfile', $nugetConfig)
+}
+
+function Build-Project {
+    param([string]$Project, [string]$Label)
+    Write-Host "  编译 $Label" -ForegroundColor DarkGray
+    & $dotnet build $Project -c $Configuration --nologo @extraArgs
+    if ($LASTEXITCODE -ne 0) { throw "编译失败：$Label" }
+}
+
+Write-Host "使用 dotnet: $dotnet"
+Build-Project -Project $projCore     -Label "DwsEdge.Core（net48 + net10.0）"
+Build-Project -Project $projDahua    -Label "DwsEdge.Providers.Dahua（net48/x64）"
+Build-Project -Project $projSim      -Label "DwsEdge.Providers.Simulator（net48）"
+Build-Project -Project $projHost     -Label "DwsEdge.Host 采集宿主（net48/x64）"
+Build-Project -Project $projPlatform -Label "DwsEdge.Platform 业务平台（net10.0）"
+
 $providerDir = Join-Path $RuntimeDir 'providers'
+$platformDir = Join-Path $RuntimeDir 'platform'
 New-Item -ItemType Directory -Force -Path $providerDir | Out-Null
+New-Item -ItemType Directory -Force -Path $platformDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $RuntimeDir 'config') | Out-Null
 
-Write-Host "使用编译器: $csc"
+Write-Host "  拷贝产物到 runtime" -ForegroundColor DarkGray
 
-function Get-SourceFiles {
-    param([string]$Root)
-    # 排除 obj/bin 里 MSBuild 自动生成的 .cs（例如 .NETFramework,Version=v4.8.AssemblyAttributes.cs）
-    return @(Get-ChildItem -Recurse -Path $Root -Filter *.cs |
-        Where-Object { $_.FullName -notmatch '\\obj\\' -and $_.FullName -notmatch '\\bin\\' } |
-        ForEach-Object { $_.FullName })
+# 采集宿主（含 net48 版 Core）
+Copy-Files -From (Join-Path $srcDir "DwsEdge.Host\bin\$Configuration\net48") -To $RuntimeDir
+Copy-Files -From (Join-Path $srcDir "DwsEdge.Core\bin\$Configuration\net48") -To $RuntimeDir
+
+# 插件
+Copy-Files -From (Join-Path $srcDir "DwsEdge.Providers.Dahua\bin\$Configuration\net48") -To $providerDir -Filter 'DwsEdge.Providers.Dahua.*'
+Copy-Files -From (Join-Path $srcDir "DwsEdge.Providers.Simulator\bin\$Configuration\net48") -To $providerDir -Filter 'DwsEdge.Providers.Simulator.*'
+
+# 业务平台（含 net10 版 Core，整目录拷贝）
+$platformOut = Join-Path $srcDir "DwsEdge.Platform\bin\$Configuration\net10.0"
+if (!(Test-Path $platformOut)) { throw "找不到平台输出目录：$platformOut" }
+Copy-Item -Path (Join-Path $platformOut '*') -Destination $platformDir -Recurse -Force
+
+# wwwroot 属于「静态 Web 资产」，不会出现在 bin 输出里，必须单独拷贝
+$wwwroot = Join-Path $srcDir 'DwsEdge.Platform\wwwroot'
+if (Test-Path $wwwroot) {
+    Copy-Item -Path $wwwroot -Destination $platformDir -Recurse -Force
 }
 
-# 1) 厂商无关核心
-$coreFiles = Get-SourceFiles -Root $coreDir
-& $csc /nologo /target:library /platform:anycpu /out:"$RuntimeDir\DwsEdge.Core.dll" /r:System.dll /r:System.Core.dll $coreFiles
-if ($LASTEXITCODE -ne 0) { throw "编译 DwsEdge.Core 失败" }
-Write-Host "  [1/4] DwsEdge.Core.dll" -ForegroundColor Green
-
-# 2) 大华 provider（唯一引用厂商 DLL 的程序集）
-$sdkDll = Join-Path $RuntimeDir 'LogisticsBaseCSharp.dll'
-if (!(Test-Path $sdkDll)) {
-    throw "runtime 目录里缺少 LogisticsBaseCSharp.dll（请确认已拷入大华 SDK 的 bin\Release\x64 内容）"
-}
-
-$dahuaFiles = Get-SourceFiles -Root $dahuaDir
-& $csc /nologo /target:library /platform:x64 /out:"$providerDir\DwsEdge.Providers.Dahua.dll" /r:System.dll /r:System.Core.dll /r:"$sdkDll" /r:"$RuntimeDir\DwsEdge.Core.dll" $dahuaFiles
-if ($LASTEXITCODE -ne 0) { throw "编译 DwsEdge.Providers.Dahua 失败" }
-Write-Host "  [2/4] providers\DwsEdge.Providers.Dahua.dll" -ForegroundColor Green
-
-# 3) 测试用模拟 provider（不依赖相机/加密狗）
-$simFiles = Get-SourceFiles -Root $simDir
-& $csc /nologo /target:library /platform:anycpu /out:"$providerDir\DwsEdge.Providers.Simulator.dll" /r:System.dll /r:System.Core.dll /r:"$RuntimeDir\DwsEdge.Core.dll" $simFiles
-if ($LASTEXITCODE -ne 0) { throw "编译 DwsEdge.Providers.Simulator 失败" }
-Write-Host "  [3/4] providers\DwsEdge.Providers.Simulator.dll" -ForegroundColor Green
-
-# 4) 宿主（只引用 Core，不引用任何厂商程序集）
-$hostFiles = Get-SourceFiles -Root $hostDir
-& $csc /nologo /target:exe /platform:x64 /out:"$RuntimeDir\DwsEdge.Host.exe" /r:System.dll /r:System.Core.dll /r:"$RuntimeDir\DwsEdge.Core.dll" $hostFiles
-if ($LASTEXITCODE -ne 0) { throw "编译 DwsEdge.Host 失败" }
-Write-Host "  [4/4] DwsEdge.Host.exe" -ForegroundColor Green
-
-# 4) 拷贝配置
+# 配置
 Copy-Item (Join-Path $PSScriptRoot 'config\gateway.ini') (Join-Path $RuntimeDir 'config\gateway.ini') -Force
 
 Write-Host ""
 Write-Host "编译完成。" -ForegroundColor Green
-Write-Host "  运行： .\run.ps1              （常驻，Ctrl+C 停止）"
-Write-Host "  冒烟： .\run.ps1 -Duration 30 （跑 30 秒自动退出）"
-Write-Host "  软触发： .\run.ps1 -TriggerOnce -Duration 8"
-Write-Host "  模拟器： provider 改成 simulator 后，.\run.ps1 -TriggerOnce -Duration 8"
+Write-Host "  采集宿主： runtime\DwsEdge.Host.exe"
+Write-Host "  业务平台： runtime\platform\DwsEdge.Platform.exe"
+Write-Host ""
+Write-Host "  只跑采集：   .\run.ps1 -TriggerOnce -Duration 8"
+Write-Host "  只跑平台：   .\run.ps1 -Platform"
+Write-Host "  两个一起跑： .\run.ps1 -Both -TriggerOnce"

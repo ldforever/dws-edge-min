@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DWS 物流解码平台 · 实时监控</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #12161c; color: #e6edf3; font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 16px 24px; border-bottom: 1px solid #263041; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .5px; }
+  header .sub { color: #8b98a9; font-size: 12px; }
+  .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8b98a9; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #6e7681; }
+  .dot.on { background: #3fb950; box-shadow: 0 0 8px #3fb95088; }
+  .dot.off { background: #f85149; }
+  main { padding: 20px 24px 32px; }
+  .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .card { background: #1a212b; border: 1px solid #263041; border-radius: 8px; padding: 14px 16px; }
+  .card .label { color: #8b98a9; font-size: 12px; margin-bottom: 6px; }
+  .card .value { font-size: 26px; font-weight: 600; }
+  .card .value.small { font-size: 20px; }
+  h2 { font-size: 14px; font-weight: 600; color: #c9d1d9; margin: 0 0 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #222b38; white-space: nowrap; }
+  th { color: #8b98a9; font-weight: 500; background: #161c25; position: sticky; top: 0; }
+  tr.new { animation: flash 1.2s ease-out; }
+  @keyframes flash { from { background: #1f3a2a; } to { background: transparent; } }
+  .code { color: #58a6ff; }
+  .noread { color: #f0883e; }
+  .muted { color: #6e7681; }
+  a.img { color: #3fb950; text-decoration: none; }
+  a.img:hover { text-decoration: underline; }
+  .empty { color: #6e7681; padding: 18px 0; }
+  footer { color: #6e7681; font-size: 12px; margin-top: 18px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>DWS 物流解码平台</h1>
+    <div class="sub">采集监控 · V1 骨架（数据来自采集宿主 spool）</div>
+  </div>
+  <div class="status"><span id="dot" class="dot"></span><span id="conn">连接中…</span></div>
+</header>
+
+<main>
+  <div class="cards">
+    <div class="card"><div class="label">包裹总数</div><div class="value" id="kpiParcels">0</div></div>
+    <div class="card"><div class="label">读码率</div><div class="value" id="kpiRate">0%</div></div>
+    <div class="card"><div class="label">无码包裹</div><div class="value" id="kpiNoread">0</div></div>
+    <div class="card"><div class="label">相机在线 / 总数</div><div class="value small" id="kpiCameras">0 / 0</div></div>
+  </div>
+
+  <h2>最新过包（实时）</h2>
+  <div id="emptyTip" class="empty">暂无数据：先用 run.ps1 -TriggerOnce 触发一次过包。</div>
+  <table>
+    <thead>
+      <tr><th>时间</th><th>条码</th><th>相机</th><th>阶段</th><th>图片</th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <footer id="foot">—</footer>
+</main>
+
+<script>
+const rowsEl = document.getElementById('rows');
+const emptyEl = document.getElementById('emptyTip');
+const MAX_ROWS = 120;
+const seen = new Set();
+
+function setStats(s) {
+  document.getElementById('kpiParcels').textContent = s.parcels ?? 0;
+  document.getElementById('kpiRate').textContent = ((s.readRate ?? 0) * 100).toFixed(1) + '%';
+  document.getElementById('kpiNoread').textContent = s.noread ?? 0;
+  document.getElementById('kpiCameras').textContent = (s.camerasOnline ?? 0) + ' / ' + (s.camerasTotal ?? 0);
+  document.getElementById('foot').textContent =
+    '事件 ' + (s.events ?? 0) + ' 条 · 图片 ' + (s.images ?? 0) + ' 张 · 解析失败 ' + (s.parseErrors ?? 0) + ' · 服务器时间 ' + (s.serverTime ?? '');
+}
+
+function imgUrl(path) { return '/api/images?path=' + encodeURIComponent(path); }
+
+function addRow(p, flash) {
+  emptyEl.style.display = 'none';
+  const tr = document.createElement('tr');
+  if (flash) tr.className = 'new';
+
+  const time = document.createElement('td');
+  time.textContent = p.time || '';
+
+  const code = document.createElement('td');
+  if (p.codes && p.codes.length) {
+    code.className = 'code';
+    code.textContent = p.codes.join(' , ');
+  } else {
+    code.className = 'noread';
+    code.textContent = 'NOREAD';
+  }
+
+  const cam = document.createElement('td');
+  cam.className = 'muted';
+  cam.textContent = p.deviceId || '';
+
+  const stage = document.createElement('td');
+  stage.className = 'muted';
+  stage.textContent = (p.stage || '') + (p.updates > 1 ? ' ×' + p.updates : '');
+
+  const img = document.createElement('td');
+  if (p.imageCount > 0 && p.firstImagePath) {
+    const a = document.createElement('a');
+    a.className = 'img';
+    a.href = imgUrl(p.firstImagePath);
+    a.target = '_blank';
+    a.textContent = '查看 (' + p.imageCount + ')';
+    img.appendChild(a);
+  } else {
+    img.className = 'muted';
+    img.textContent = '—';
+  }
+
+  tr.appendChild(time); tr.appendChild(code); tr.appendChild(cam); tr.appendChild(stage); tr.appendChild(img);
+  rowsEl.insertBefore(tr, rowsEl.firstChild);
+  while (rowsEl.children.length > MAX_ROWS) rowsEl.removeChild(rowsEl.lastChild);
+}
+
+function addInitial(list) {
+  if (!list || !list.length) return;
+  for (let i = list.length - 1; i >= 0; i--) addRow(list[i], false);
+}
+
+async function loadInitial() {
+  try {
+    const parcels = await (await fetch('/api/parcels?limit=50')).json();
+    addInitial(parcels);
+    const stats = await (await fetch('/api/stats')).json();
+    setStats(stats);
+  } catch (e) { /* 忽略 */ }
+}
+
+function connect() {
+  const dot = document.getElementById('dot');
+  const conn = document.getElementById('conn');
+  const es = new EventSource('/api/stream');
+  es.onopen = () => { dot.className = 'dot on'; conn.textContent = '已连接'; };
+  es.onerror = () => {
+    dot.className = 'dot off'; conn.textContent = '重连中…';
+    es.close();
+    setTimeout(connect, 2000);
+  };
+  es.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch (err) { return; }
+    if (msg.type === 'parcel') {
+      addRow(msg.data, true);
+      fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {});
+    } else if (msg.type === 'stats') {
+      setStats(msg.data);
+    }
+  };
+}
+
+loadInitial();
+connect();
+</script>
+</body>
+</html>

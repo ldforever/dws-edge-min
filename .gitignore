@@ -6,6 +6,9 @@ runtime/CamLog/
 runtime/*.dmp
 bin/
 obj/
+.dotnet-home/
+.packages/
+NuGet.offline.config
 *.user
 *.suo
 .vs/

@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "DwsEdge.Platform": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:27168;http://localhost:27169"
+    }
+  }
+}
