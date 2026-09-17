@@ -466,6 +466,8 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 | `GET /api/stats` | 事件数、包裹数、无码数、读码率、相机在线数、解析失败数，以及 `pendingParcels`（待补全包裹）、`missingTraceId`（缺追踪号事件）、`traceIdConflicts`（疑似追踪号冲突）、图片数与磁盘占用 |
 | `GET /api/parcels?limit=50` | 最新包裹（两次回调已合并成一条）；`codes` 是条码值数组，`codeDetails` 带每个码的类型（1d/2d）与方位 |
 | `GET /api/cameras` | 相机在线状态 |
+| `GET /api/dispatch/pending?limit=` | **B1** 待下发的包裹（一个 traceId 只会出现一次；下游模块从这里取） |
+| `POST /api/dispatch/ack` | **B1** 下游回报下发结果 `{traceId, success, error}`；幂等，重复 ack 不会重复计数 |
 | `GET /api/devices` | 设备信息页数据：相机清单（方位/清单标识/型号/序列号/在线/未发现）+ 汇总 + 六面聚合（A9） |
 | `GET /api/camera-positions` | 相机方位映射的当前内容（A9） |
 | `POST /api/camera-positions` | 保存方位映射（写 `config\camera-positions.ini`，自动备份） |
@@ -478,7 +480,48 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 实测结果示例：`{"events":4,"parcels":2,"noread":0,"images":2,"readRate":1,"parseErrors":0}` —— 两次触发共 4 条事件（detected + enriched），
 被平台合并成 2 个包裹，读码率 100%，图片按需可读。
 
-## 六、两个进程的边界
+## 六、包裹合并与去重（B1）
+
+这一节说明**包裹是怎么被合并成一条、重复上报是怎么被丢掉的**。
+
+### 合并规则
+
+一个包裹在采集侧会回调两次（先只有条码，再补重量体积）：
+
+| 事件 | 平台的处理 |
+|---|---|
+| 第一次回调（`detected`，只有条码） | 新建一条记录，`dispatchState=pending`（**只在这里置一次**） |
+| 第二次回调（`enriched`，同 traceId） | 合并进同一条：补重量/体积、`updates` 1→2、标记 `complete=true` |
+| 同一包裹又来一条**同样内容**的事件 | 判为重复：**不计数、不写历史、不推送、不重新入队下发** |
+
+判定重复用的是"内容指纹"：`阶段 + 条码集合 + 重量 + 体积尺寸 + 图片`。
+刻意不含时间戳、事件号这类"每次送达都会变"的字段 —— 所以第二次回调不会被误判成重复，
+而"同一条回调又送一遍"会被准确识别。
+
+指纹是**落盘**的（`data/applied-yyyyMMdd.jsonl`）。这一点很重要：平台异常退出后 spool 被整段重读时
+（位点回退、offsets.json 丢失），一样能把重复事件丢掉 —— 这是"重复上报不重复计数"最容易翻车的场景。
+
+### 幂等下发
+
+`dispatchState` 只在创建记录时置成 `pending`，之后无论合并多少次回调都不会再改变它的"入队资格"，
+所以同一个 traceId 在 `/api/dispatch/pending` 里只会出现一次。下游（B4/B5/B6）处理完回报
+`POST /api/dispatch/ack`，重复 ack 会返回 `alreadySent`，不重复计数；失败会记 `failed` 等重试。
+
+### 界面与自测
+
+实时页底栏显示 `重复事件 / 合并包裹 / 待下发`；过包表只在"已下发 / 下发失败"时加标签
+（全员都"待下发"就不显示，避免噪音）。
+
+离线回归测试（不需要相机和加密狗，自己造事件、自己起平台、跑完自动停）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\test-b1-dedup.ps1
+```
+
+脚本造 9 条事件（3 个包裹，含 3 条重复、1 组 eventId 重号），分三轮共 27 项断言：
+正常消费 → 下发幂等 → 模拟异常退出后重读整个 spool。
+
+## 七、两个进程的边界
 
 | | 采集宿主（Edge） | 业务平台（Platform） |
 |---|---|---|
@@ -491,7 +534,7 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 通信：V1 用文件 spool（`SpoolTailer` 增量读取，只处理完整行）；V2 换成 gRPC/命名管道时只需替换 `SpoolTailer`，
 `SpoolStore` 与平台 API 不动。
 
-## 七、代码导读
+## 八、代码导读
 
 **采集侧（net48）**
 
@@ -519,7 +562,7 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 - `frontend/src/realtime.ts` / `devices.ts` / `config.ts`：三个页签各自的渲染逻辑。
 - `frontend/src/sse.ts` / `dom.ts`：实时推送封装与 DOM 小工具。
 
-## 八、常见问题
+## 九、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -541,7 +584,7 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 | 配置页红字"找不到 apply-config.ps1" | 跑一次 `build.ps1`（会把 `tools\*.ps1` 拷到 `runtime\tools`），或手工把 tools 目录放到 runtime 旁边 |
 | 相机显示"未发现" | cfg 里 `enable="1"` 但 SDK 没报；查上电、网线、网段，或该相机被别的软件占用 |
 
-## 九、下一步（V1 完整版）
+## 十、下一步（V1 完整版）
 
 采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做），平台侧包裹合并 / 历史库 / 存图访问 /
 统计与实时推送 / 设备信息 / 一键应用配置也都打通了。接着按 V1 需求清单排：

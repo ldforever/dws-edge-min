@@ -31,6 +31,16 @@ export interface Stats {
   pendingParcels: number;
   missingTraceId: number;
   traceIdConflicts: number;
+  /** B1：被判定为重复、直接丢弃的事件数 */
+  duplicateEvents: number;
+  /** B1：发生过合并（收到 ≥2 次有效回调）的包裹数 */
+  mergedParcels: number;
+  /** B1：推送出去的包裹事件数（重复事件不推） */
+  publishedParcels: number;
+  /** B1：幂等下发状态统计 */
+  dispatchPending: number;
+  dispatchSent: number;
+  dispatchFailed: number;
   serverTime: string;
 }
 
@@ -66,6 +76,13 @@ export interface ParcelRecord {
   staged?: boolean;
   /** 是否已完整 */
   complete?: boolean;
+
+  // ---- B1 幂等下发 ----
+  /** pending / sent / failed */
+  dispatchState?: string;
+  dispatchAttempts?: number;
+  dispatchedAt?: string;
+  dispatchError?: string;
 }
 
 /** 一台相机的状态与设备信息（GET /api/cameras、GET /api/devices 的行） */

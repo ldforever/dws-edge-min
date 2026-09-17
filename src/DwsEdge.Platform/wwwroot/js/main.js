@@ -4,12 +4,12 @@
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
  * 也没有全局变量：模块之间只通过 import 通信，方便以后换壳（WebView2）或加页面。
  */
-import { api } from "./api.js?v=7fa00a80";
-import { connectStream } from "./sse.js?v=7fa00a80";
-import { $ } from "./dom.js?v=7fa00a80";
-import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=7fa00a80";
-import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=7fa00a80";
-import { initConfig, refreshConfig } from "./config.js?v=7fa00a80";
+import { api } from "./api.js?v=2f1f6302";
+import { connectStream } from "./sse.js?v=2f1f6302";
+import { $ } from "./dom.js?v=2f1f6302";
+import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=2f1f6302";
+import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=2f1f6302";
+import { initConfig, refreshConfig } from "./config.js?v=2f1f6302";
 const PAGES = ["realtime", "devices", "config"];
 function showPage(name) {
     for (const page of PAGES) {

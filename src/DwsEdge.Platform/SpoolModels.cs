@@ -6,6 +6,8 @@ namespace DwsEdge.Platform
     internal sealed class SpoolEvent
     {
         public string type { get; set; }
+        /// <summary>采集宿主内的自增事件号（同一次运行内唯一，用来识别"同一事件又送了一遍"）。</summary>
+        public long eventId { get; set; }
         public string providerId { get; set; }
         public string deviceId { get; set; }
         public string userId { get; set; }
@@ -95,6 +97,20 @@ namespace DwsEdge.Platform
 
         /// <summary>该包裹记录是否已完整（非分阶段 provider 首次事件即完整）。</summary>
         public bool complete { get; set; }
+
+        // ---- B1 幂等下发：一个 traceId 只允许下发一次 ----
+
+        /// <summary>下发状态：pending（待下发）/ sent（已下发）/ failed（下发失败待重试）。</summary>
+        public string dispatchState { get; set; }
+
+        /// <summary>下发尝试次数（由下游模块在失败重试时累加）。</summary>
+        public int dispatchAttempts { get; set; }
+
+        /// <summary>下发成功时间。</summary>
+        public string dispatchedAt { get; set; }
+
+        /// <summary>最近一次下发失败原因。</summary>
+        public string dispatchError { get; set; }
     }
 
     /// <summary>相机状态。</summary>
@@ -205,6 +221,18 @@ namespace DwsEdge.Platform
         public Dictionary<string, string> positions { get; set; }
     }
 
+    /// <summary>B1：下游回报下发结果的请求体。</summary>
+    public sealed class DispatchAckRequest
+    {
+        /// <summary>幂等键（包裹的 traceId）。</summary>
+        public string traceId { get; set; }
+
+        /// <summary>true = 下发成功；false = 失败（记录原因，等重试）。</summary>
+        public bool success { get; set; }
+
+        public string error { get; set; }
+    }
+
     /// <summary>平台统计。</summary>
     public sealed class PlatformStats
     {
@@ -234,6 +262,23 @@ namespace DwsEdge.Platform
 
         /// <summary>疑似追踪号冲突次数（同一追踪号下条码集合完全不相交）。</summary>
         public long traceIdConflicts { get; set; }
+
+        // ---- B1：回调合并与幂等 ----
+
+        /// <summary>被判定为重复、直接丢弃的事件数（同一包裹同一阶段同样内容又来一遍）。</summary>
+        public long duplicateEvents { get; set; }
+
+        /// <summary>发生过合并（收到 ≥2 次有效回调）的包裹数 —— 也就是"先条码后重量体积"合起来的数量。</summary>
+        public long mergedParcels { get; set; }
+
+        /// <summary>推送出去的包裹事件数（重复事件不推，所以它应该等于"有效更新次数"）。</summary>
+        public long publishedParcels { get; set; }
+
+        // ---- B1：幂等下发（一个 traceId 只下发一次；具体发送在 B4/B6 实现）----
+
+        public int dispatchPending { get; set; }
+        public int dispatchSent { get; set; }
+        public int dispatchFailed { get; set; }
 
         public string serverTime { get; set; }
     }

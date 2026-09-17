@@ -179,7 +179,9 @@ namespace DwsEdge.Platform
         /// <summary>把消费位点写盘（默认节流 5 秒；force=true 立即写）。</summary>
         private void PersistOffsets(bool force)
         {
-            if (!force && (DateTime.UtcNow - _lastOffsetSave).TotalSeconds < 5)
+            // 位点落盘间隔：1 秒。这个值越小，"平台异常退出后 spool 被重读"的窗口就越小
+            // （重读本身是安全的 —— B1 的内容去重会把重复事件丢掉，这里是少做无用功）。
+            if (!force && (DateTime.UtcNow - _lastOffsetSave).TotalSeconds < 1)
             {
                 return;
             }

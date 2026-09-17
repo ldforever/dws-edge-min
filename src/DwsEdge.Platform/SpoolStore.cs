@@ -31,6 +31,13 @@ namespace DwsEdge.Platform
         private readonly LinkedList<string> _order = new LinkedList<string>();
         private readonly Dictionary<string, CameraRecord> _cameras =
             new Dictionary<string, CameraRecord>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>
+        /// traceId → 已经处理过的事件指纹（B1 去重）。
+        /// 指纹两种形态：<c>id:&lt;eventId&gt;</c>（宿主的事件号）和
+        /// <c>fp:&lt;阶段|条码|重量|体积|图片&gt;</c>（内容指纹，宿主没给事件号时靠它）。
+        /// </summary>
+        private readonly Dictionary<string, HashSet<string>> _appliedByTrace =
+            new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         private readonly ConcurrentDictionary<Channel<string>, byte> _subscribers =
             new ConcurrentDictionary<Channel<string>, byte>();
         private readonly JsonSerializerOptions _json = new JsonSerializerOptions();
@@ -46,9 +53,16 @@ namespace DwsEdge.Platform
         private long _parseErrors;
         private long _missingTraceId;
         private long _traceIdConflicts;
+        private long _duplicateEvents;
+        private long _mergedParcels;
+        private long _publishedParcels;
         private int _pendingParcels;
+        private int _dispatchPending;
+        private int _dispatchSent;
+        private int _dispatchFailed;
         private long _cameraSessionId;
         private DateTime _lastMissingTraceLog = DateTime.MinValue;
+        private DateTime _lastDuplicateLog = DateTime.MinValue;
         private long _imageFileCount;
         private long _imageDiskBytes;
         private long _diskTotalBytes;
@@ -118,6 +132,45 @@ namespace DwsEdge.Platform
                     }
                 }
 
+                // ---- B1 去重：同一个包裹、同一个阶段、同样内容的事件又来一遍 ----
+                // 触发场景：provider 重发、spool 文件被重读（例如平台非正常退出后回退到上一个位点）、
+                // 人工补投同一条事件。判定重复后：不改任何计数、不写历史、不推送。
+                // 事件号带上阶段一起做键：宿主重启后事件号会从小数字重来，
+                // 只按数字比较有可能把"同一包裹的另一次回调"误判成重复。
+                string idKey = evt.eventId > 0
+                    ? "id:" + evt.eventId.ToString(CultureInfo.InvariantCulture) + "|" + (evt.stage ?? "")
+                    : null;
+                string fingerprint = Fingerprint(evt);
+
+                HashSet<string> applied;
+                if (!_appliedByTrace.TryGetValue(key, out applied))
+                {
+                    applied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    _appliedByTrace[key] = applied;
+                }
+
+                bool isDuplicate = applied.Contains(fingerprint)
+                    || (idKey != null && applied.Contains(idKey));
+                if (isDuplicate)
+                {
+                    _duplicateEvents++;
+                    if ((DateTime.UtcNow - _lastDuplicateLog).TotalSeconds > 30)
+                    {
+                        _lastDuplicateLog = DateTime.UtcNow;
+                        _logger.LogWarning("重复事件已丢弃（累计 {0} 条）：traceId={1} 阶段={2} 事件号={3}；同一包裹只会保留一条记录、只下发一次",
+                            _duplicateEvents, key, evt.stage, evt.eventId);
+                    }
+                    return;
+                }
+
+                applied.Add(fingerprint);
+                if (idKey != null)
+                {
+                    applied.Add(idKey);
+                }
+                // 落盘内容指纹：平台重启后重读 spool 时，靠它把同一条回调继续判成重复
+                _history.AppendApplied(key, fingerprint);
+
                 if (!_byTrace.TryGetValue(key, out record))
                 {
                     record = new ParcelRecord();
@@ -128,8 +181,12 @@ namespace DwsEdge.Platform
                     record.codes = new List<string>();
                     record.codeDetails = new List<CodeDetail>();
                     record.weightGrams = -1;
+                    // B1：下发状态只在这里置一次，后面无论合并多少次回调都不会再动它，
+                    // 所以同一个包裹在下游那边天然只会"入队一次"。
+                    record.dispatchState = DispatchPending;
                     _byTrace[key] = record;
                     _order.AddLast(key);
+                    _dispatchPending++;
                     isNew = true;
                 }
                 else
@@ -230,6 +287,12 @@ namespace DwsEdge.Platform
                 }
                 record.updates++;
 
+                // B1 观测：一个包裹收到第 2 次有效回调 = "先条码后重量体积"合并成功
+                if (record.updates == 2)
+                {
+                    _mergedParcels++;
+                }
+
                 // 维持顺序：更新过的包裹挪到队尾，列表永远按"最近一次更新"倒序展示
                 if (!isNew)
                 {
@@ -261,6 +324,7 @@ namespace DwsEdge.Platform
                 Trim();
             }
 
+            _publishedParcels++;
             Publish(new { type = "parcel", data = record });
         }
 
@@ -452,6 +516,204 @@ namespace DwsEdge.Platform
             }
         }
 
+        private const string DispatchPending = "pending";
+        private const string DispatchSent = "sent";
+        private const string DispatchFailed = "failed";
+
+        /// <summary>
+        /// 事件内容指纹（B1 去重的依据）。
+        /// 组成：阶段 + 条码集合 + 重量 + 体积/尺寸 + 图片数量与首图路径。
+        /// 刻意不含 receivedAtMs / eventId 这类"每次送达都会变"的字段 ——
+        /// 同一个包裹的第二次回调（enriched 带重量体积）阶段不同，指纹自然不同，不会被误判成重复。
+        /// </summary>
+        private static string Fingerprint(SpoolEvent evt)
+        {
+            StringBuilder sb = new StringBuilder("fp:");
+            sb.Append(evt.stage ?? string.Empty).Append('|');
+
+            if (evt.codes != null && evt.codes.Count > 0)
+            {
+                List<string> values = new List<string>();
+                for (int i = 0; i < evt.codes.Count; i++)
+                {
+                    if (evt.codes[i] != null && !string.IsNullOrEmpty(evt.codes[i].value))
+                    {
+                        values.Add(evt.codes[i].value);
+                    }
+                }
+                values.Sort(StringComparer.OrdinalIgnoreCase);
+                sb.Append(string.Join(",", values.ToArray()));
+            }
+
+            sb.Append('|').Append(evt.weightGrams)
+              .Append('|').Append(evt.lengthMm.ToString(CultureInfo.InvariantCulture))
+              .Append('x').Append(evt.widthMm.ToString(CultureInfo.InvariantCulture))
+              .Append('x').Append(evt.heightMm.ToString(CultureInfo.InvariantCulture))
+              .Append('|');
+
+            if (evt.images != null && evt.images.Count > 0)
+            {
+                List<string> paths = new List<string>();
+                for (int i = 0; i < evt.images.Count; i++)
+                {
+                    if (evt.images[i] != null && !string.IsNullOrEmpty(evt.images[i].path))
+                    {
+                        paths.Add(evt.images[i].path);
+                    }
+                }
+                paths.Sort(StringComparer.OrdinalIgnoreCase);
+                sb.Append(evt.images.Count).Append(':').Append(string.Join(",", paths.ToArray()));
+            }
+            else
+            {
+                sb.Append('0');
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// 从历史快照反推指纹（B1：重启后继续去重用）。
+        ///
+        /// asDetected = false：按记录当前状态还原（一般是第二次回调，带重量体积）；
+        /// asDetected = true ：按"第一次回调"的形态还原（只有条码 + 原图，没有重量体积）——
+        /// 这样平台重启后重读 spool，两条回调都能被判成重复。
+        ///
+        /// 注意：这是"能还原多少就还原多少"的近似，不是全量持久化指纹表。
+        /// 覆盖的是现场最常见的"一次条码 + 一次重量体积"两段式回调。
+        /// </summary>
+        private static string HistoryFingerprint(ParcelRecord record, bool asDetected)
+        {
+            SpoolEvent stub = new SpoolEvent();
+            stub.stage = asDetected ? "detected" : record.stage;
+            stub.weightGrams = asDetected ? -1 : record.weightGrams;
+            stub.lengthMm = asDetected ? 0 : record.lengthMm;
+            stub.widthMm = asDetected ? 0 : record.widthMm;
+            stub.heightMm = asDetected ? 0 : record.heightMm;
+            stub.codes = new List<SpoolCode>();
+            if (record.codes != null)
+            {
+                for (int i = 0; i < record.codes.Count; i++)
+                {
+                    SpoolCode code = new SpoolCode();
+                    code.value = record.codes[i];
+                    stub.codes.Add(code);
+                }
+            }
+            stub.images = new List<SpoolImage>();
+            if (!string.IsNullOrEmpty(record.firstImagePath))
+            {
+                SpoolImage image = new SpoolImage();
+                image.path = record.firstImagePath;
+                stub.images.Add(image);
+            }
+            return Fingerprint(stub);
+        }
+
+        /// <summary>
+        /// B1 幂等下发：取出"待下发"的包裹（下游 TCP/HTTP 模块从这里取）。
+        /// 一个 traceId 只会出现一次 —— 记录创建时就定了 dispatchState=pending，
+        /// 后面合并多少次回调都不会再改变它的入队资格。
+        /// </summary>
+        public List<ParcelRecord> PendingDispatch(int limit)
+        {
+            List<ParcelRecord> result = new List<ParcelRecord>();
+            lock (_sync)
+            {
+                LinkedListNode<string> node = _order.First;
+                while (node != null && result.Count < limit)
+                {
+                    ParcelRecord record;
+                    if (_byTrace.TryGetValue(node.Value, out record)
+                        && IsDispatchable(record))
+                    {
+                        result.Add(record);
+                    }
+                    node = node.Next;
+                }
+            }
+            return result;
+        }
+
+        /// <summary>待下发的包裹：状态是 pending/failed，并且已经"完整"（分阶段 provider 要等重量体积）。</summary>
+        private static bool IsDispatchable(ParcelRecord record)
+        {
+            if (record == null || record.complete != true)
+            {
+                return false;
+            }
+            return string.IsNullOrEmpty(record.dispatchState)
+                || string.Equals(record.dispatchState, DispatchPending, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(record.dispatchState, DispatchFailed, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 下游回报下发结果（B4/B6 调用）。幂等：
+        /// 同一个 traceId 重复 ack 不会重复计数，已经 sent 的不会被改回 pending。
+        /// </summary>
+        public object AckDispatch(string traceId, bool success, string error)
+        {
+            if (string.IsNullOrEmpty(traceId))
+            {
+                return new { ok = false, error = "traceId 不能为空" };
+            }
+
+            lock (_sync)
+            {
+                ParcelRecord record;
+                if (!_byTrace.TryGetValue(traceId, out record))
+                {
+                    return new { ok = false, error = "没有这个包裹：" + traceId };
+                }
+
+                if (string.Equals(record.dispatchState, DispatchSent, StringComparison.OrdinalIgnoreCase))
+                {
+                    // 已经下发成功过：直接返回 ok，不重复计数
+                    return new { ok = true, alreadySent = true, state = record.dispatchState };
+                }
+
+                // 先按"旧状态"把对应的计数减掉，再按"新状态"加回去 ——
+                // 状态之间的迁移（pending→failed、failed→sent…）才不会把计数弄乱。
+                DecrementDispatchCounter(record.dispatchState);
+
+                if (success)
+                {
+                    record.dispatchState = DispatchSent;
+                    record.dispatchedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                    record.dispatchError = null;
+                    _dispatchSent++;
+                }
+                else
+                {
+                    record.dispatchState = DispatchFailed;
+                    record.dispatchError = error;
+                    _dispatchFailed++;
+                }
+
+                record.dispatchAttempts++;
+                _history.Append(record);
+                return new { ok = true, state = record.dispatchState, attempts = record.dispatchAttempts };
+            }
+        }
+
+        /// <summary>把某个下发状态对应的计数减 1（状态迁移时用）。</summary>
+        private void DecrementDispatchCounter(string state)
+        {
+            if (string.IsNullOrEmpty(state)
+                || string.Equals(state, DispatchPending, StringComparison.OrdinalIgnoreCase))
+            {
+                _dispatchPending = Math.Max(0, _dispatchPending - 1);
+            }
+            else if (string.Equals(state, DispatchSent, StringComparison.OrdinalIgnoreCase))
+            {
+                _dispatchSent = Math.Max(0, _dispatchSent - 1);
+            }
+            else if (string.Equals(state, DispatchFailed, StringComparison.OrdinalIgnoreCase))
+            {
+                _dispatchFailed = Math.Max(0, _dispatchFailed - 1);
+            }
+        }
+
         /// <summary>按相机累计"出码包裹数"（调用方需持有 _sync 锁）。</summary>
         private void BumpCameraCodeCount(string deviceId, string time)
         {
@@ -556,6 +818,7 @@ namespace DwsEdge.Platform
                 }
                 _order.RemoveFirst();
                 _byTrace.Remove(first.Value);
+                _appliedByTrace.Remove(first.Value);
             }
         }
 
@@ -568,6 +831,19 @@ namespace DwsEdge.Platform
         {
             try
             {
+                // B1：先把"已处理事件指纹"读回来 —— 这是重启后还能识别重复上报的关键。
+                // 指纹文件比包裹历史多留 1 天，避免跨零点时刚好丢掉一天的指纹。
+                Dictionary<string, HashSet<string>> appliedHistory = _history.LoadApplied(days + 1);
+                if (appliedHistory.Count > 0)
+                {
+                    foreach (KeyValuePair<string, HashSet<string>> pair in appliedHistory)
+                    {
+                        _appliedByTrace[pair.Key] = pair.Value;
+                    }
+                    _logger.LogInformation("已恢复 {0} 个包裹的去重指纹（重复上报不会被重复计数）", appliedHistory.Count);
+                }
+                _history.CleanupApplied(days + 7);
+
                 List<ParcelRecord> recent = _history.LoadRecent(days, _maxRecords);
                 if (recent == null || recent.Count == 0)
                 {
@@ -588,6 +864,20 @@ namespace DwsEdge.Platform
 
                         _byTrace[record.traceId] = record;
                         _order.AddLast(record.traceId);
+
+                        // B1：把恢复出来的包裹登记成"已处理指纹"，这样平台重启后如果 spool 又被重读
+                        // （位点回退、offsets.json 丢失），已经处理过的回调不会被再算一次。
+                        // 注意是"合并"而不是覆盖 —— 上面已经从 applied-*.jsonl 读回了精确指纹，
+                        // 这里再补两种形态（当前状态 / 第一次回调）作为兜底。
+                        HashSet<string> applied;
+                        if (!_appliedByTrace.TryGetValue(record.traceId, out applied))
+                        {
+                            applied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            _appliedByTrace[record.traceId] = applied;
+                        }
+                        applied.Add(HistoryFingerprint(record, false));
+                        applied.Add(HistoryFingerprint(record, true));
+
                         _parcelCount++;
                         if (record.codeCount == 0)
                         {
@@ -596,6 +886,23 @@ namespace DwsEdge.Platform
                         if (!record.complete)
                         {
                             _pendingParcels++;
+                        }
+                        if (record.updates >= 2)
+                        {
+                            _mergedParcels++;
+                        }
+                        if (string.IsNullOrEmpty(record.dispatchState)
+                            || string.Equals(record.dispatchState, DispatchPending, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _dispatchPending++;
+                        }
+                        else if (string.Equals(record.dispatchState, DispatchSent, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _dispatchSent++;
+                        }
+                        else
+                        {
+                            _dispatchFailed++;
                         }
                         _imageCount += record.imageCount;
                         loaded++;
@@ -649,6 +956,12 @@ namespace DwsEdge.Platform
                 stats.pendingParcels = _pendingParcels;
                 stats.missingTraceId = _missingTraceId;
                 stats.traceIdConflicts = _traceIdConflicts;
+                stats.duplicateEvents = _duplicateEvents;
+                stats.mergedParcels = _mergedParcels;
+                stats.publishedParcels = _publishedParcels;
+                stats.dispatchPending = _dispatchPending;
+                stats.dispatchSent = _dispatchSent;
+                stats.dispatchFailed = _dispatchFailed;
                 long readable = Math.Max(0, _parcelCount - _noreadCount);
                 stats.readRate = _parcelCount == 0 ? 0 : Math.Round((double)readable / _parcelCount, 4);
                 stats.camerasTotal = _cameras.Count;

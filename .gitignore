@@ -17,3 +17,5 @@ NuGet.offline.config
 *.user
 *.suo
 .vs/
+# B1 回归测试脚本自己复制出来的测试运行时（tools\test-b1-dedup.ps1）
+work/

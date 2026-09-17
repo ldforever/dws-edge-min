@@ -71,6 +71,15 @@ namespace DwsEdge.Platform
             });
             app.MapGet("/api/cameras", (SpoolStore store) => Results.Json(store.Cameras()));
 
+            // B1：幂等下发 —— 下游从这里取"待下发"，处理完回报 ack（同一个 traceId 只会出现一次）
+            app.MapGet("/api/dispatch/pending", (SpoolStore store, int? limit) =>
+            {
+                int take = limit.HasValue ? Math.Clamp(limit.Value, 1, 500) : 100;
+                return Results.Json(store.PendingDispatch(take));
+            });
+            app.MapPost("/api/dispatch/ack", (SpoolStore store, DispatchAckRequest request) =>
+                store.AckDispatch(request?.traceId, request?.success ?? false, request?.error));
+
             // A9：设备信息（相机清单 + 方位 + 型号/序列号 + 在线状态）
             app.MapGet("/api/devices", (SpoolStore store, ConfigStore cfg) =>
                 Results.Json(store.DeviceList(cfg.PositionsPath)));
