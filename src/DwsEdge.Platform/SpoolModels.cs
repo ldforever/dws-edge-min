@@ -25,6 +25,11 @@ namespace DwsEdge.Platform
         public string serialNumber { get; set; }
         public string vendor { get; set; }
         public string firmware { get; set; }
+        public string declaredKind { get; set; }
+        public string declaredValue { get; set; }
+        public string position { get; set; }
+        public bool? discovered { get; set; }
+        public long sessionId { get; set; }
         public int offlineCount { get; set; }
         public int reconnectCount { get; set; }
         public long lastOfflineAtMs { get; set; }
@@ -106,6 +111,36 @@ namespace DwsEdge.Platform
         public string serialNumber { get; set; }
         public string vendor { get; set; }
         public string firmware { get; set; }
+
+        // ---- A9：设备信息（清单声明 / 方位 / 是否真的被 SDK 发现）----
+
+        /// <summary>cfg 里声明的接入方式：ip / key / id。</summary>
+        public string declaredKind { get; set; }
+
+        /// <summary>cfg 里声明的值（IP / 序列号 / 完整 id）。</summary>
+        public string declaredValue { get; set; }
+
+        /// <summary>清单标识显示文本，例如 "ip=172.20.10.11"；没匹配到清单时为空。</summary>
+        public string declaredLabel { get; set; }
+
+        /// <summary>安装方位代码（top/bottom/left/right/front/rear/line/spare）。</summary>
+        public string position { get; set; }
+
+        /// <summary>方位中文名（顶面/底面/…）。</summary>
+        public string positionLabel { get; set; }
+
+        /// <summary>方位排序权重，界面按它排。</summary>
+        public int positionOrder { get; set; }
+
+        /// <summary>方位刚在界面上改过、采集宿主还没重启（显示的是文件里的新值）。</summary>
+        public bool positionPending { get; set; }
+
+        /// <summary>SDK 是否真的发现了这台相机；false = 清单里声明了但设备没接入/没上电。</summary>
+        public bool discovered { get; set; } = true;
+
+        /// <summary>最近一次状态来自哪个采集宿主会话（换清单重启后，老会话的相机会被清掉）。</summary>
+        public long sessionId { get; set; }
+
         /// <summary>最近一次状态来自启动快照（true）还是上下线增量（false）。</summary>
         public bool fromSnapshot { get; set; }
 
@@ -121,6 +156,53 @@ namespace DwsEdge.Platform
 
         /// <summary>该相机最近一次出码的时间（出码包裹数见 codeCount）。</summary>
         public string lastCodeTime { get; set; }
+    }
+
+    /// <summary>按方位聚合的一行（设备信息页的"六面"概览）。</summary>
+    public sealed class CameraFaceSummary
+    {
+        public string position { get; set; }
+        public string label { get; set; }
+        public int total { get; set; }
+        public int online { get; set; }
+        public int offline { get; set; }
+        public List<string> cameras { get; set; }
+    }
+
+    /// <summary>设备信息页的完整视图：相机清单 + 汇总 + 方位聚合。</summary>
+    public sealed class CameraDeviceView
+    {
+        public int total { get; set; }
+        public int online { get; set; }
+        public int offline { get; set; }
+
+        /// <summary>SDK 真的发现了的台数。</summary>
+        public int discovered { get; set; }
+
+        /// <summary>cfg 里声明了 enable="1"、但 SDK 没发现的台数（离线或没接入）。</summary>
+        public int declaredMissing { get; set; }
+
+        /// <summary>还没标方位的台数（方位为空的相机，条码方位会不准）。</summary>
+        public int positionMissing { get; set; }
+
+        /// <summary>相机方位映射文件路径与是否存在。</summary>
+        public string positionsFile { get; set; }
+        public bool positionsFileExists { get; set; }
+
+        /// <summary>方位选项（界面下拉用）。</summary>
+        public List<string> positionOptions { get; set; }
+
+        /// <summary>按方位聚合：顶面几台、底面几台……</summary>
+        public List<CameraFaceSummary> faces { get; set; }
+
+        public List<CameraRecord> cameras { get; set; }
+    }
+
+    /// <summary>保存方位映射的请求体。</summary>
+    public sealed class CameraPositionsRequest
+    {
+        /// <summary>key = 相机 ip / 序列号 / 完整 id；value = 方位代码（空 = 删除这条）。</summary>
+        public Dictionary<string, string> positions { get; set; }
     }
 
     /// <summary>平台统计。</summary>

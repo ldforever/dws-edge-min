@@ -3,25 +3,36 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>DWS 物流解码平台 · 实时监控</title>
+<title>DWS 物流解码平台</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body { margin: 0; background: #12161c; color: #e6edf3; font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; }
-  header { display: flex; align-items: center; gap: 16px; padding: 16px 24px; border-bottom: 1px solid #263041; }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 24px; border-bottom: 1px solid #263041; flex-wrap: wrap; }
   header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .5px; }
   header .sub { color: #8b98a9; font-size: 12px; }
+  nav { display: flex; gap: 6px; margin-left: 12px; }
+  nav button { background: #1a212b; color: #c9d1d9; border: 1px solid #263041; border-radius: 6px; padding: 7px 14px; font-size: 13px; cursor: pointer; font-family: inherit; }
+  nav button:hover { border-color: #3d4b60; }
+  nav button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
   .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8b98a9; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #6e7681; }
   .dot.on { background: #3fb950; box-shadow: 0 0 8px #3fb95088; }
   .dot.off { background: #f85149; }
-  main { padding: 20px 24px 32px; }
+  main { padding: 20px 24px 40px; }
+  section.page { display: none; }
+  section.page.active { display: block; }
   .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .cards.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .card { background: #1a212b; border: 1px solid #263041; border-radius: 8px; padding: 14px 16px; }
   .card .label { color: #8b98a9; font-size: 12px; margin-bottom: 6px; }
   .card .value { font-size: 26px; font-weight: 600; }
   .card .value.small { font-size: 20px; }
+  .card.warn .value { color: #d29922; }
+  .card.bad .value { color: #f85149; }
+  .card.good .value { color: #3fb950; }
   h2 { font-size: 14px; font-weight: 600; color: #c9d1d9; margin: 0 0 10px; }
+  h3 { font-size: 13px; font-weight: 600; color: #c9d1d9; margin: 16px 0 8px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #222b38; white-space: nowrap; }
   th { color: #8b98a9; font-weight: 500; background: #161c25; position: sticky; top: 0; }
@@ -34,75 +45,186 @@
   .muted { color: #6e7681; }
   tr.offline { background: #2a1a17; }
   tr.offline td { color: #f0883e; }
+  tr.notfound { background: #2a2213; }
+  tr.notfound td { color: #d29922; }
   a.img { color: #3fb950; text-decoration: none; }
   a.img:hover { text-decoration: underline; }
   .empty { color: #6e7681; padding: 18px 0; }
   footer { color: #6e7681; font-size: 12px; margin-top: 18px; }
+  button.btn { background: #238636; border: 1px solid #2ea043; color: #fff; border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; font-family: inherit; }
+  button.btn:hover { background: #2ea043; }
+  button.btn:disabled { background: #21262d; border-color: #30363d; color: #6e7681; cursor: not-allowed; }
+  button.btn.secondary { background: #1a212b; border-color: #3d4b60; color: #c9d1d9; }
+  button.btn.secondary:hover { border-color: #58a6ff; color: #fff; }
+  select, input[type=text], textarea { background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 5px; padding: 5px 8px; font-size: 13px; font-family: inherit; }
+  textarea { width: 100%; min-height: 220px; font-family: Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.6; }
+  select.pos { padding: 4px 6px; font-size: 12px; }
+  select.pos.dirty { border-color: #d29922; color: #d29922; }
+  label.chk { display: inline-flex; align-items: center; gap: 6px; margin-right: 18px; font-size: 13px; color: #c9d1d9; cursor: pointer; }
+  .toolbar { display: flex; align-items: center; gap: 10px; margin: 12px 0 16px; flex-wrap: wrap; }
+  .panel { background: #161c25; border: 1px solid #263041; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; font-size: 13px; }
+  .kv .k { color: #8b98a9; }
+  pre.out { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; max-height: 420px; overflow: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; margin: 0; }
+  .faces { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .face { background: #1a212b; border: 1px solid #263041; border-radius: 8px; padding: 10px 12px; }
+  .face .name { font-size: 12px; color: #8b98a9; margin-bottom: 4px; }
+  .face .num { font-size: 20px; font-weight: 600; }
+  .face.on { border-color: #2ea043; }
+  .face.part { border-color: #d29922; }
+  .face.off { border-color: #f85149; }
+  .face .who { font-size: 11px; color: #6e7681; margin-top: 4px; word-break: break-all; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+  .badge.ok { background: #1f3a2a; color: #3fb950; }
+  .badge.warn { background: #3a3320; color: #d29922; }
+  .badge.err { background: #3a1f1c; color: #f85149; }
+  .facemap { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; max-width: 320px; margin: 8px 0 4px; border: 1px dashed #30363d; border-radius: 8px; overflow: hidden; }
+  .facemap div { padding: 8px 4px; text-align: center; font-size: 11px; color: #8b98a9; border: 1px solid #1c232e; }
+  .facemap div.has { color: #e6edf3; background: #1a212b; }
 </style>
 </head>
 <body>
 <header>
   <div>
     <h1>DWS 物流解码平台</h1>
-    <div class="sub">采集监控 · V1 骨架（数据来自采集宿主 spool）</div>
+    <div class="sub">采集监控 · 设备信息 · 配置管理（V1）</div>
   </div>
+  <nav>
+    <button id="tab-realtime" class="active" onclick="showPage('realtime')">实时监控</button>
+    <button id="tab-devices" onclick="showPage('devices')">设备信息</button>
+    <button id="tab-config" onclick="showPage('config')">配置</button>
+  </nav>
   <div class="status"><span id="dot" class="dot"></span><span id="conn">连接中…</span></div>
 </header>
 
 <main>
-  <div class="cards">
-    <div class="card"><div class="label">包裹总数</div><div class="value" id="kpiParcels">0</div></div>
-    <div class="card"><div class="label">读码率</div><div class="value" id="kpiRate">0%</div></div>
-    <div class="card"><div class="label">无码包裹</div><div class="value" id="kpiNoread">0</div></div>
-    <div class="card"><div class="label">相机在线 / 总数</div><div class="value small" id="kpiCameras">0 / 0</div></div>
-  </div>
+  <!-- ==================== 实时监控 ==================== -->
+  <section id="page-realtime" class="page active">
+    <div class="cards">
+      <div class="card"><div class="label">包裹总数</div><div class="value" id="kpiParcels">0</div></div>
+      <div class="card"><div class="label">读码率</div><div class="value" id="kpiRate">0%</div></div>
+      <div class="card"><div class="label">无码包裹</div><div class="value" id="kpiNoread">0</div></div>
+      <div class="card"><div class="label">相机在线 / 总数</div><div class="value small" id="kpiCameras">0 / 0</div></div>
+    </div>
 
-  <h2>最新过包（实时）</h2>
-  <div id="emptyTip" class="empty">暂无数据：先用 run.ps1 -TriggerOnce 触发一次过包。</div>
-  <table>
-    <thead>
-      <tr><th>时间</th><th>条码</th><th>相机</th><th>阶段</th><th>图片</th></tr>
-    </thead>
-    <tbody id="rows"></tbody>
-  </table>
+    <h2>最新过包（实时）</h2>
+    <div id="emptyTip" class="empty">暂无数据：先用 run.ps1 -TriggerOnce 触发一次过包。</div>
+    <table>
+      <thead>
+        <tr><th>时间</th><th>条码</th><th>相机</th><th>阶段</th><th>图片</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
 
-  <h2 style="margin-top:24px">相机状态</h2>
-  <div id="camEmpty" class="empty">暂无相机状态：采集宿主启动后会上报相机快照。</div>
-  <table>
-    <thead>
-      <tr>
-        <th>相机</th><th>状态</th><th>型号</th><th>序列号</th>
-        <th>掉线次数</th><th>恢复次数</th><th>最近离线</th><th>出码数</th><th>最近变化</th>
-      </tr>
-    </thead>
-    <tbody id="camRows"></tbody>
-  </table>
+    <h2 style="margin-top:24px">相机状态</h2>
+    <div id="camEmpty" class="empty">暂无相机状态：采集宿主启动后会上报相机快照。</div>
+    <table>
+      <thead>
+        <tr>
+          <th>方位</th><th>相机</th><th>状态</th><th>型号</th><th>序列号</th>
+          <th>掉线次数</th><th>恢复次数</th><th>最近离线</th><th>出码数</th><th>最近变化</th>
+        </tr>
+      </thead>
+      <tbody id="camRows"></tbody>
+    </table>
 
-  <footer id="foot">—</footer>
+    <footer id="foot">—</footer>
+  </section>
+
+  <!-- ==================== 设备信息（A9） ==================== -->
+  <section id="page-devices" class="page">
+    <div class="cards five">
+      <div class="card"><div class="label">相机总数（清单）</div><div class="value" id="devTotal">0</div></div>
+      <div class="card good"><div class="label">在线</div><div class="value" id="devOnline">0</div></div>
+      <div class="card bad"><div class="label">离线</div><div class="value" id="devOffline">0</div></div>
+      <div class="card warn"><div class="label">清单里声明但未发现</div><div class="value" id="devMissing">0</div></div>
+      <div class="card warn"><div class="label">未标方位</div><div class="value" id="devNoPos">0</div></div>
+    </div>
+
+    <h2>安装方位（六面扫 / 狂扫）</h2>
+    <div id="faceCards" class="faces"></div>
+    <div id="faceMap" class="facemap"></div>
+    <div class="muted" id="faceTip" style="font-size:12px;margin-bottom:16px"></div>
+
+    <h2>相机清单与设备信息</h2>
+    <div class="toolbar">
+      <button class="btn" id="btnSavePos" onclick="savePositions()">保存方位</button>
+      <button class="btn secondary" onclick="loadDevices()">刷新</button>
+      <button class="btn secondary" onclick="exportCsv()">导出 CSV</button>
+      <span id="posMsg" class="muted" style="font-size:12px"></span>
+    </div>
+    <div id="devEmpty" class="empty">暂无相机：采集宿主启动后会上报相机快照（模拟器用 provider=simulator 也能看到清单）。</div>
+    <table>
+      <thead>
+        <tr>
+          <th>方位</th><th>状态</th><th>清单标识（IP / Key）</th><th>相机标识（SDK）</th>
+          <th>型号</th><th>序列号</th><th>厂商</th><th>固件</th>
+          <th>掉线</th><th>恢复</th><th>出码数</th><th>最近变化</th>
+        </tr>
+      </thead>
+      <tbody id="devRows"></tbody>
+    </table>
+    <footer id="devFoot">—</footer>
+  </section>
+
+  <!-- ==================== 配置（A8） ==================== -->
+  <section id="page-config" class="page">
+    <div class="panel">
+      <h2>当前 SDK 配置</h2>
+      <div class="kv" id="cfgSummary"><div class="k">加载中…</div><div></div></div>
+    </div>
+
+    <div class="panel">
+      <h2>一键应用配置</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:12px">
+        写配置 → 启动 SDK 回读校验 → 不通过自动回滚。同一个按钮走的就是命令行
+        <span class="code">tools\apply-config.ps1</span> 那条路径。
+      </div>
+
+      <h3>触发模式</h3>
+      <select id="cfgTrigger">
+        <option value="">（不改）</option>
+        <option value="hard">硬触发（光电）triggerMode=1</option>
+        <option value="soft">软触发 triggerMode=2</option>
+        <option value="free">自由拉流（狂扫）triggerMode=0</option>
+      </select>
+
+      <h3>相机清单（每行一台：ip=... / key=... / id=...，可选 ,pos=top）</h3>
+      <textarea id="cfgCameras" spellcheck="false"></textarea>
+      <div class="toolbar">
+        <label class="chk"><input type="checkbox" id="cfgUseCameras" checked /> 应用上面的相机清单</label>
+        <button class="btn secondary" onclick="loadConfig()">重新读取</button>
+        <button class="btn secondary" onclick="fillCamerasFromConfig()">用当前清单填充</button>
+      </div>
+
+      <h3>校验选项</h3>
+      <div class="toolbar">
+        <label class="chk"><input type="checkbox" id="cfgStopHost" checked /> 校验前停止采集宿主（校验要独占 SDK）</label>
+        <label class="chk"><input type="checkbox" id="cfgRestartHost" checked /> 通过后自动重启采集宿主</label>
+        <label class="chk"><input type="checkbox" id="cfgSkipVerify" /> 只写配置，不做校验（-SkipVerify）</label>
+      </div>
+
+      <div class="toolbar">
+        <button class="btn" id="btnApply" onclick="applyConfig()">一键应用</button>
+        <span id="applyBadge"></span>
+      </div>
+
+      <pre class="out" id="applyOut">（还没执行过一键应用）</pre>
+    </div>
+  </section>
 </main>
 
 <script>
-const rowsEl = document.getElementById('rows');
-const emptyEl = document.getElementById('emptyTip');
-const camRowsEl = document.getElementById('camRows');
-const camEmptyEl = document.getElementById('camEmpty');
-const cameras = new Map();
-const MAX_ROWS = 120;
-const seen = new Set();
+// ---------------------------------------------------------------- 工具
+function $(id) { return document.getElementById(id); }
 
-function setStats(s) {
-  const gb = function (bytes) { return (Number(bytes || 0) / 1024 / 1024 / 1024).toFixed(1) + ' GB'; };
-  document.getElementById('kpiParcels').textContent = s.parcels ?? 0;
-  document.getElementById('kpiRate').textContent = ((s.readRate ?? 0) * 100).toFixed(1) + '%';
-  document.getElementById('kpiNoread').textContent = s.noread ?? 0;
-  document.getElementById('kpiCameras').textContent = (s.camerasOnline ?? 0) + ' / ' + (s.camerasTotal ?? 0);
-  document.getElementById('foot').textContent =
-    '事件 ' + (s.events ?? 0) + ' 条 · 落盘图片 ' + (s.imageFileCount ?? 0) + ' 张 / ' + gb(s.imageDiskBytes)
-    + ' · 磁盘 ' + (s.diskUsedPercent ?? 0) + '%（剩余 ' + gb(s.diskFreeBytes) + '）'
-    + ' · 解析失败 ' + (s.parseErrors ?? 0) + ' · 服务器时间 ' + (s.serverTime ?? '');
+async function getJson(url, options) {
+  const res = await fetch(url, options);
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) { data = { raw: text }; }
+  return { status: res.status, data: data };
 }
-
-function imgUrl(path) { return '/api/images?path=' + encodeURIComponent(path); }
 
 function cell(text, cls) {
   const td = document.createElement('td');
@@ -111,8 +233,46 @@ function cell(text, cls) {
   return td;
 }
 
+const POS_LABEL = { top: '顶面', bottom: '底面', left: '左侧', right: '右侧', front: '前侧', rear: '后侧', line: '线体', spare: '备用' };
+function posLabel(p) { return p ? (POS_LABEL[p] || p) : '未设置'; }
+
+function showPage(name) {
+  const pages = ['realtime', 'devices', 'config'];
+  for (const p of pages) {
+    $('page-' + p).classList.toggle('active', p === name);
+    $('tab-' + p).classList.toggle('active', p === name);
+  }
+  if (name === 'devices') loadDevices();
+  if (name === 'config') loadConfig();
+}
+
+// ---------------------------------------------------------------- 实时监控
+const rowsEl = $('rows');
+const emptyEl = $('emptyTip');
+const camRowsEl = $('camRows');
+const camEmptyEl = $('camEmpty');
+const cameras = new Map();
+const MAX_ROWS = 120;
+const rowByTrace = new Map();
+
+function setStats(s) {
+  const gb = function (bytes) { return (Number(bytes || 0) / 1024 / 1024 / 1024).toFixed(1) + ' GB'; };
+  $('kpiParcels').textContent = s.parcels ?? 0;
+  $('kpiRate').textContent = ((s.readRate ?? 0) * 100).toFixed(1) + '%';
+  $('kpiNoread').textContent = s.noread ?? 0;
+  $('kpiCameras').textContent = (s.camerasOnline ?? 0) + ' / ' + (s.camerasTotal ?? 0);
+  $('foot').textContent =
+    '事件 ' + (s.events ?? 0) + ' 条 · 落盘图片 ' + (s.imageFileCount ?? 0) + ' 张 / ' + gb(s.imageDiskBytes)
+    + ' · 磁盘 ' + (s.diskUsedPercent ?? 0) + '%（剩余 ' + gb(s.diskFreeBytes) + '）'
+    + ' · 解析失败 ' + (s.parseErrors ?? 0) + ' · 服务器时间 ' + (s.serverTime ?? '');
+}
+
+function imgUrl(path) { return '/api/images?path=' + encodeURIComponent(path); }
+
 function renderCameras() {
   const list = Array.from(cameras.values()).sort(function (a, b) {
+    const pa = a.positionOrder || 99, pb = b.positionOrder || 99;
+    if (pa !== pb) return pa - pb;
     return String(a.deviceId || '').localeCompare(String(b.deviceId || ''));
   });
   camRowsEl.innerHTML = '';
@@ -120,8 +280,9 @@ function renderCameras() {
   for (const c of list) {
     const tr = document.createElement('tr');
     if (!c.online) tr.className = 'offline';
-    tr.appendChild(cell(c.deviceId, 'code'));
-    tr.appendChild(cell(c.online ? '在线' : '离线', c.online ? '' : 'noread'));
+    tr.appendChild(cell(posLabel(c.position)));
+    tr.appendChild(cell(c.declaredLabel || c.deviceId, 'code'));
+    tr.appendChild(cell(c.online ? '在线' : (c.discovered === false ? '未发现' : '离线'), c.online ? '' : 'noread'));
     tr.appendChild(cell(c.model));
     tr.appendChild(cell(c.serialNumber));
     tr.appendChild(cell(c.offlineCount));
@@ -137,15 +298,25 @@ function upsertCamera(c) {
   if (!c || !c.deviceId) return;
   cameras.set(c.deviceId, c);
   renderCameras();
+  if ($('page-devices').classList.contains('active')) scheduleDevices();
 }
 
 function addRow(p, flash) {
   emptyEl.style.display = 'none';
+
+  // 同一个包裹只留一行：SSE 会把"补全后"的同一条记录再推一次，直接原地更新更清楚
+  const key = p.traceId || ((p.time || '') + '|' + ((p.codes || []).join(',')));
+  const old = rowByTrace.get(key);
+  if (old) {
+    old.remove();
+    rowByTrace.delete(key);
+  }
+
   const tr = document.createElement('tr');
+  tr.dataset.key = key;
   if (flash) tr.className = 'new';
 
-  const time = document.createElement('td');
-  time.textContent = p.time || '';
+  tr.appendChild(cell(p.time || ''));
 
   const code = document.createElement('td');
   const details = (p.codeDetails && p.codeDetails.length)
@@ -157,7 +328,7 @@ function addRow(p, flash) {
       if (i > 0) code.appendChild(document.createTextNode(' , '));
       code.appendChild(document.createTextNode(d.value));
       const tags = [];
-      if (d.position) tags.push(d.position);
+      if (d.position) tags.push(posLabel(d.position));
       if (d.kind && d.kind !== 'unknown') tags.push(String(d.kind).toUpperCase());
       if (tags.length) {
         const span = document.createElement('span');
@@ -170,10 +341,10 @@ function addRow(p, flash) {
     code.className = 'noread';
     code.textContent = 'NOREAD';
   }
+  tr.appendChild(code);
 
-  const cam = document.createElement('td');
-  cam.className = 'muted';
-  cam.textContent = p.deviceId || '';
+  const cam = cell(p.deviceId || '', 'muted');
+  tr.appendChild(cam);
 
   const stage = document.createElement('td');
   stage.className = 'muted';
@@ -187,6 +358,7 @@ function addRow(p, flash) {
     wait.textContent = ' 待补全';
     stage.appendChild(wait);
   }
+  tr.appendChild(stage);
 
   const img = document.createElement('td');
   if (p.imageCount > 0 && p.firstImagePath) {
@@ -200,45 +372,380 @@ function addRow(p, flash) {
     img.className = 'muted';
     img.textContent = '—';
   }
+  tr.appendChild(img);
 
-  tr.appendChild(time); tr.appendChild(code); tr.appendChild(cam); tr.appendChild(stage); tr.appendChild(img);
   rowsEl.insertBefore(tr, rowsEl.firstChild);
-  while (rowsEl.children.length > MAX_ROWS) rowsEl.removeChild(rowsEl.lastChild);
+  rowByTrace.set(key, tr);
+  while (rowsEl.children.length > MAX_ROWS) {
+    const last = rowsEl.lastChild;
+    if (last.dataset) rowByTrace.delete(last.dataset.key);
+    rowsEl.removeChild(last);
+  }
 }
 
-function addInitial(list) {
-  if (!list || !list.length) return;
-  for (let i = list.length - 1; i >= 0; i--) addRow(list[i], false);
+// ---------------------------------------------------------------- 设备信息（A9）
+let deviceView = null;
+const dirtyPositions = {};
+let devicesTimer = null;
+
+function scheduleDevices() {
+  if (devicesTimer) return;
+  devicesTimer = setTimeout(function () { devicesTimer = null; loadDevices(); }, 800);
+}
+
+async function loadDevices() {
+  const r = await getJson('/api/devices');
+  if (r.status !== 200 || !r.data) { return; }
+  deviceView = r.data;
+  renderDevices();
+}
+
+function renderDevices() {
+  const v = deviceView;
+  if (!v) return;
+
+  $('devTotal').textContent = v.total ?? 0;
+  $('devOnline').textContent = v.online ?? 0;
+  $('devOffline').textContent = v.offline ?? 0;
+  $('devMissing').textContent = v.declaredMissing ?? 0;
+  $('devNoPos').textContent = v.positionMissing ?? 0;
+
+  // 方位卡片
+  const facesEl = $('faceCards');
+  facesEl.innerHTML = '';
+  const allFaces = ['top', 'bottom', 'left', 'right', 'front', 'rear'];
+  for (const name of allFaces) {
+    const face = (v.faces || []).find(function (f) { return f.position === name; }) || { total: 0, online: 0, offline: 0, cameras: [] };
+    const div = document.createElement('div');
+    div.className = 'face ' + (face.total === 0 ? '' : (face.offline > 0 ? 'part' : 'on'));
+    div.innerHTML = '<div class="name">' + posLabel(name) + '</div><div class="num">' + face.total + '</div>'
+      + '<div class="who">' + (face.total ? ('在线 ' + face.online + (face.offline ? ' / 离线 ' + face.offline : '')) : '未使用') + '</div>'
+      + '<div class="who">' + (face.cameras || []).join('、') + '</div>';
+    facesEl.appendChild(div);
+  }
+
+  // 简易六面示意
+  const map = [['', 'top', 'front'], ['left', 'right', 'rear'], ['spare', 'bottom', 'line']];
+  const mapEl = $('faceMap');
+  mapEl.innerHTML = '';
+  for (const row of map) {
+    for (const name of row) {
+      const face = (v.faces || []).find(function (f) { return f.position === name; });
+      const div = document.createElement('div');
+      if (name) {
+        div.textContent = posLabel(name) + (face ? ' ' + face.total : ' 0');
+        if (face && face.total) div.className = 'has';
+      }
+      mapEl.appendChild(div);
+    }
+  }
+  $('faceTip').textContent = '方位来自 ' + (v.positionsFile || '') + (v.positionsFileExists ? '（已存在）' : '（文件还不存在，保存一次就会生成）');
+
+  // 表格
+  const rowsEl2 = $('devRows');
+  rowsEl2.innerHTML = '';
+  $('devEmpty').style.display = (v.cameras && v.cameras.length) ? 'none' : 'block';
+
+  const options = v.positionOptions || ['top', 'bottom', 'left', 'right', 'front', 'rear', 'line', 'spare'];
+  for (const c of (v.cameras || [])) {
+    const tr = document.createElement('tr');
+    if (c.discovered === false) tr.className = 'notfound';
+    else if (!c.online) tr.className = 'offline';
+
+    // 方位下拉（改动先存本地，点"保存方位"才写文件）
+    const posTd = document.createElement('td');
+    const sel = document.createElement('select');
+    sel.className = 'pos';
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = '未设置';
+    sel.appendChild(empty);
+    for (const o of options) {
+      const opt = document.createElement('option');
+      opt.value = o;
+      opt.textContent = posLabel(o);
+      sel.appendChild(opt);
+    }
+    sel.value = c.position || '';
+    const key = c.declaredValue || c.deviceId;
+    sel.dataset.key = key;
+    sel.dataset.original = c.position || '';
+    sel.onchange = function () {
+      if (sel.value === sel.dataset.original) {
+        delete dirtyPositions[key];
+        sel.classList.remove('dirty');
+      } else {
+        dirtyPositions[key] = sel.value;
+        sel.classList.add('dirty');
+      }
+    };
+    posTd.appendChild(sel);
+    if (c.positionPending) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = ' 待重启生效';
+      tag.style.color = '#d29922';
+      posTd.appendChild(tag);
+    }
+    tr.appendChild(posTd);
+
+    tr.appendChild(cell(c.discovered === false ? '未发现' : (c.online ? '在线' : '离线'), c.online ? '' : 'noread'));
+    tr.appendChild(cell(c.declaredLabel || '未在清单中', c.declaredLabel ? 'code' : 'muted'));
+    tr.appendChild(cell(c.deviceId, 'muted'));
+    tr.appendChild(cell(c.model));
+    tr.appendChild(cell(c.serialNumber));
+    tr.appendChild(cell(c.vendor));
+    tr.appendChild(cell(c.firmware));
+    tr.appendChild(cell(c.offlineCount));
+    tr.appendChild(cell(c.reconnectCount));
+    tr.appendChild(cell(c.codeCount));
+    tr.appendChild(cell(c.lastChangeTime, 'muted'));
+    rowsEl2.appendChild(tr);
+  }
+
+  $('devFoot').textContent = '相机 ' + (v.total ?? 0) + ' 台 · 在线 ' + (v.online ?? 0)
+    + ' · SDK 发现 ' + (v.discovered ?? 0) + ' · 清单未发现 ' + (v.declaredMissing ?? 0)
+    + ' · 方位文件 ' + (v.positionsFile || '');
+}
+
+async function savePositions() {
+  const keys = Object.keys(dirtyPositions);
+  if (!keys.length) {
+    $('posMsg').textContent = '没有改动';
+    return;
+  }
+
+  $('posMsg').textContent = '保存中…';
+  const body = { positions: dirtyPositions };
+  const r = await getJson('/api/camera-positions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  if (r.status === 200 && r.data && r.data.ok) {
+    for (const k of keys) delete dirtyPositions[k];
+    $('posMsg').textContent = '已保存 ' + (r.data.changed ?? 0) + ' 条（' + (r.data.count ?? 0) + ' 条方位）· '
+      + (r.data.note || '');
+    await loadDevices();
+  } else {
+    $('posMsg').textContent = '保存失败：' + ((r.data && (r.data.error || r.data.raw)) || r.status);
+  }
+}
+
+function exportCsv() {
+  const v = deviceView;
+  if (!v || !v.cameras) return;
+  const head = ['方位', '状态', '清单标识', '相机标识', '型号', '序列号', '厂商', '固件', '掉线次数', '恢复次数', '出码数', '最近变化'];
+  const lines = [head.join(',')];
+  for (const c of v.cameras) {
+    const row = [
+      posLabel(c.position),
+      c.discovered === false ? '未发现' : (c.online ? '在线' : '离线'),
+      c.declaredLabel || '',
+      c.deviceId || '',
+      c.model || '',
+      c.serialNumber || '',
+      c.vendor || '',
+      c.firmware || '',
+      c.offlineCount ?? 0,
+      c.reconnectCount ?? 0,
+      c.codeCount ?? 0,
+      c.lastChangeTime || ''
+    ].map(function (x) { return '"' + String(x).replace(/"/g, '""') + '"'; });
+    lines.push(row.join(','));
+  }
+
+  const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'dws-cameras-' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ---------------------------------------------------------------- 配置（A8）
+let cfgData = null;
+
+async function loadConfig() {
+  const r = await getJson('/api/config');
+  if (r.status !== 200 || !r.data) { return; }
+  cfgData = r.data;
+  renderConfig();
+}
+
+function renderConfig() {
+  const c = cfgData;
+  if (!c) return;
+
+  const kv = $('cfgSummary');
+  kv.innerHTML = '';
+  const rows = [
+    ['运行目录', c.runtimeRoot],
+    ['SDK 配置文件', c.cfgPath + (c.cfgExists ? '' : '（不存在）')],
+    ['provider', c.provider || '—'],
+    ['相机模式', 'mode=' + c.mode + ' num=' + c.num + ' randWorkMode=' + c.randWorkMode],
+    ['启用相机', (c.enabledCameras ?? 0) + ' 台（声明 ' + (c.declaredCameras ?? 0) + ' 条）'],
+    ['触发模式', (c.triggerName || '?') + '（triggerMode=' + (c.triggerMode || '?') + '）'],
+    ['方位映射', (c.positionsCount ?? 0) + ' 条 · ' + c.positionsFile],
+    ['一键应用脚本', (c.toolsReady ? '可用 ' : '未找到 ') + (c.applyScript || '')]
+  ];
+  for (const row of rows) {
+    const k = document.createElement('div');
+    k.className = 'k';
+    k.textContent = row[0];
+    const val = document.createElement('div');
+    val.textContent = row[1] ?? '';
+    kv.appendChild(k);
+    kv.appendChild(val);
+  }
+
+  if (!c.toolsReady) {
+    const warn = document.createElement('div');
+    warn.className = 'badge err';
+    warn.textContent = '找不到 apply-config.ps1：先跑一次 build.ps1（会把 tools 拷到 runtime\\tools）';
+    kv.appendChild(warn);
+  }
+
+  if ((c.problems || []).length) {
+    const p = document.createElement('div');
+    p.className = 'badge err';
+    p.textContent = '配置问题：' + c.problems.join('；');
+    kv.appendChild(p);
+  }
+  if ((c.warnings || []).length) {
+    const w = document.createElement('div');
+    w.className = 'badge warn';
+    w.textContent = '提醒：' + c.warnings.join('；');
+    kv.appendChild(w);
+  }
+
+  fillCamerasFromConfig();
+
+  if (c.lastApply) {
+    const la = c.lastApply;
+    $('applyOut').textContent = '（上次应用：' + (la.at || '') + ' · ' + (la.conclusion || '') + '）\n\n' + (la.output || '');
+    setApplyBadge(la.exitCode, la.conclusion);
+  }
+}
+
+function fillCamerasFromConfig() {
+  if (!cfgData || !cfgData.cameras) return;
+  $('cfgCameras').value = cfgData.cameras.map(function (x) { return x.line; }).join('\r\n');
+}
+
+function setApplyBadge(exitCode, conclusion) {
+  const badge = $('applyBadge');
+  let cls = 'warn';
+  if (exitCode === 0) cls = 'ok';
+  else if (exitCode === 2 || exitCode === 1) cls = 'warn';
+  else cls = 'err';
+  badge.innerHTML = '';
+  const span = document.createElement('span');
+  span.className = 'badge ' + cls;
+  span.textContent = '退出码 ' + exitCode + ' · ' + (conclusion || '');
+  badge.appendChild(span);
+}
+
+async function applyConfig() {
+  const triggerMode = $('cfgTrigger').value;
+  const useCameras = $('cfgUseCameras').checked;
+  const skipVerify = $('cfgSkipVerify').checked;
+
+  let cameras = null;
+  if (useCameras) {
+    cameras = $('cfgCameras').value.split(/\r?\n/)
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { return s.length > 0 && s[0] !== '#'; });
+    if (!cameras.length) {
+      alert('相机清单是空的：请先填写，或取消勾选"应用上面的相机清单"');
+      return;
+    }
+  }
+
+  if (!triggerMode && !cameras) {
+    alert('至少要改一项：触发模式 或 相机清单');
+    return;
+  }
+
+  const body = {
+    triggerMode: triggerMode,
+    cameras: cameras,
+    skipVerify: skipVerify,
+    stopHost: $('cfgStopHost').checked,
+    restartHost: $('cfgRestartHost').checked
+  };
+
+  const btn = $('btnApply');
+  btn.disabled = true;
+  btn.textContent = '应用中…（启动 SDK 校验，最长 4 分钟）';
+  $('applyOut').textContent = '正在执行：' + JSON.stringify(body, null, 2) + '\n\n（校验会真的启动一次 SDK，请稍等…）';
+  $('applyBadge').innerHTML = '';
+
+  try {
+    const r = await getJson('/api/config/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const d = r.data || {};
+    $('applyOut').textContent =
+      '结论：' + (d.conclusion || r.status) + '\n'
+      + '退出码：' + (d.exitCode ?? '?') + ' · 耗时 ' + ((d.durationMs ?? 0) / 1000).toFixed(1) + ' 秒\n'
+      + '命令：' + (d.commandLine || '') + '\n'
+      + (d.error ? '错误：' + d.error + '\n' : '')
+      + '----------------------------------------\n'
+      + (d.output || '（没有输出）');
+    setApplyBadge(d.exitCode ?? -1, d.conclusion);
+  } catch (e) {
+    $('applyOut').textContent = '调用失败：' + e;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '一键应用';
+    await loadConfig();
+    await loadDevices();
+    await loadCameras();
+  }
+}
+
+// ---------------------------------------------------------------- 加载与实时
+async function loadCameras() {
+  const r = await getJson('/api/cameras');
+  if (r.status !== 200 || !r.data) return;
+  cameras.clear();
+  for (const c of r.data) cameras.set(c.deviceId, c);
+  renderCameras();
 }
 
 async function loadInitial() {
   try {
     const parcels = await (await fetch('/api/parcels?limit=50')).json();
-    addInitial(parcels);
-    const stats = await (await fetch('/api/stats')).json();
-    setStats(stats);
-    const cams = await (await fetch('/api/cameras')).json();
-    for (const c of cams) cameras.set(c.deviceId, c);
-    renderCameras();
+    if (parcels && parcels.length) {
+      emptyEl.style.display = 'none';
+      for (let i = parcels.length - 1; i >= 0; i--) addRow(parcels[i], false);
+    }
+    setStats(await (await fetch('/api/stats')).json());
+    await loadCameras();
+    await loadDevices();
   } catch (e) { /* 忽略 */ }
 }
 
 function connect() {
-  const dot = document.getElementById('dot');
-  const conn = document.getElementById('conn');
+  const dot = $('dot');
+  const conn = $('conn');
   const es = new EventSource('/api/stream');
-  es.onopen = () => { dot.className = 'dot on'; conn.textContent = '已连接'; };
-  es.onerror = () => {
+  es.onopen = function () { dot.className = 'dot on'; conn.textContent = '已连接'; };
+  es.onerror = function () {
     dot.className = 'dot off'; conn.textContent = '重连中…';
     es.close();
     setTimeout(connect, 2000);
   };
-  es.onmessage = (e) => {
+  es.onmessage = function (e) {
     let msg;
     try { msg = JSON.parse(e.data); } catch (err) { return; }
     if (msg.type === 'parcel') {
       addRow(msg.data, true);
-      fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {});
+      fetch('/api/stats').then(function (r) { return r.json(); }).then(setStats).catch(function () { });
     } else if (msg.type === 'stats') {
       setStats(msg.data);
     } else if (msg.type === 'camera') {

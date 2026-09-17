@@ -45,7 +45,15 @@ namespace DwsEdge.Providers.Dahua
         private long _eventSeq;
 
         private readonly CameraRuntimeTracker _cameraTracker = new CameraRuntimeTracker();
-        private CameraPositionMap _cameraPositions;
+        private CameraPositions _cameraPositions;
+        private CameraPlan _cameraPlan;
+
+        /// <summary>相机标识（SDK 的 id/key）→ cfg 里的声明 + 方位，上下线增量事件靠它补身份。</summary>
+        private readonly Dictionary<string, CameraPlanEntry> _declaredByDevice =
+            new Dictionary<string, CameraPlanEntry>(StringComparer.OrdinalIgnoreCase);
+
+        private readonly Dictionary<string, string> _positionByDevice =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         private bool _cameraDisconnectCbAttached;
         private bool _allCameraCbAttached;
@@ -388,6 +396,24 @@ namespace DwsEdge.Providers.Dahua
                 status.UserId = e.CameraUserID;
                 status.Online = e.IsOnline;
                 status.AtMs = NowMs();
+
+                // 上下线增量事件也要带身份与方位：平台那边可能是在快照之后才启动的
+                CameraPlanEntry declared;
+                if (!string.IsNullOrEmpty(e.CameraKey) && _declaredByDevice.TryGetValue(e.CameraKey, out declared))
+                {
+                    status.DeclaredKind = declared.Kind;
+                    status.DeclaredValue = declared.Value;
+                }
+
+                string position;
+                if (!string.IsNullOrEmpty(e.CameraKey) && _positionByDevice.TryGetValue(e.CameraKey, out position))
+                {
+                    status.Position = position;
+                }
+                else if (_cameraPositions != null)
+                {
+                    status.Position = _cameraPositions.Resolve(e.CameraKey);
+                }
 
                 _cameraTracker.Apply(status, false);
                 _sink.OnCameraStatus(status);
@@ -783,8 +809,11 @@ namespace DwsEdge.Providers.Dahua
         /// </summary>
         private void LoadCameraPositions()
         {
+            // cfg 的相机声明（谁应该在线、按 ip 还是序列号接入）
+            _cameraPlan = CameraPlan.Read(_cfgPath);
+
             string path = _settings.ResolvePath(_settings.Get("cameraPositionsFile", @"config\camera-positions.ini"));
-            _cameraPositions = CameraPositionMap.Load(path);
+            _cameraPositions = CameraPositions.Load(path);
 
             if (_cameraPositions.Count > 0)
             {
@@ -837,6 +866,10 @@ namespace DwsEdge.Providers.Dahua
         /// <summary>
         /// 启动时把相机清单作为"快照事件"推给业务平台（IsSnapshot=true），
         /// 这样平台一启动就能显示完整的相机状态墙，而不是等到第一次掉线才有数据。
+        ///
+        /// A9：每台相机都带上 cfg 里的声明（ip/key/id）、方位、型号/序列号；
+        /// cfg 里 enable="1" 但 SDK 没发现的相机也会补一条"离线（未发现）"，
+        /// 保证界面上永远是清单的完整行数——少一台一眼就能看出来。
         /// </summary>
         private void EmitCameraSnapshot()
         {
@@ -858,6 +891,7 @@ namespace DwsEdge.Providers.Dahua
                 }
 
                 HashSet<string> sentKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                List<CameraPlanEntry> matched = new List<CameraPlanEntry>();
                 int sent = 0;
 
                 IEnumerable<CameraTags> statusList = _dws.GetCamerasStatus();
@@ -865,6 +899,9 @@ namespace DwsEdge.Providers.Dahua
                 {
                     foreach (CameraTags tag in statusList)
                     {
+                        CameraInfo info;
+                        infoByKey.TryGetValue(tag.key ?? string.Empty, out info);
+
                         CameraStatusEvent evt = new CameraStatusEvent();
                         evt.ProviderId = ProviderName;
                         evt.DeviceId = tag.key;
@@ -872,15 +909,7 @@ namespace DwsEdge.Providers.Dahua
                         evt.Online = tag.isOnline;
                         evt.AtMs = NowMs();
                         evt.IsSnapshot = true;
-
-                        CameraInfo info;
-                        if (!string.IsNullOrEmpty(tag.key) && infoByKey.TryGetValue(tag.key, out info))
-                        {
-                            evt.Model = info.camDevModelName;
-                            evt.SerialNumber = info.camDevSerialNumber;
-                            evt.Vendor = info.camDevVendor;
-                            evt.Firmware = info.camDevFirewareVersion;
-                        }
+                        FillDeviceIdentity(evt, tag.key, tag.deviceUserID, info, matched);
 
                         _cameraTracker.Apply(evt, true);
                         _sink.OnCameraStatus(evt);
@@ -907,21 +936,119 @@ namespace DwsEdge.Providers.Dahua
                     evt.Online = true;
                     evt.AtMs = NowMs();
                     evt.IsSnapshot = true;
-                    evt.Model = pair.Value.camDevModelName;
-                    evt.SerialNumber = pair.Value.camDevSerialNumber;
-                    evt.Vendor = pair.Value.camDevVendor;
-                    evt.Firmware = pair.Value.camDevFirewareVersion;
+                    FillDeviceIdentity(evt, pair.Key, pair.Value.camDevID, pair.Value, matched);
 
                     _cameraTracker.Apply(evt, true);
                     _sink.OnCameraStatus(evt);
                     sent++;
                 }
 
-                _sink.Log(LogLevel.Info, "已上报相机快照 " + sent + " 台");
+                int declaredMissing = 0;
+                List<CameraPlanEntry> declared = CameraIdentity.EnabledEntries(_cameraPlan);
+                for (int i = 0; i < declared.Count; i++)
+                {
+                    if (CameraIdentity.Contains(matched, declared[i]))
+                    {
+                        continue;
+                    }
+
+                    CameraPlanEntry entry = declared[i];
+                    CameraStatusEvent evt = new CameraStatusEvent();
+                    evt.ProviderId = ProviderName;
+                    evt.DeviceId = entry.Value;
+                    evt.Online = false;
+                    evt.IsSnapshot = true;
+                    evt.Discovered = false;
+                    evt.DeclaredKind = entry.Kind;
+                    evt.DeclaredValue = entry.Value;
+                    evt.Position = _cameraPositions != null ? _cameraPositions.Resolve(entry.Value) : null;
+                    evt.AtMs = NowMs();
+
+                    _declaredByDevice[entry.Value] = entry;
+                    if (!string.IsNullOrEmpty(evt.Position))
+                    {
+                        _positionByDevice[entry.Value] = evt.Position;
+                    }
+
+                    _cameraTracker.Apply(evt, true);
+                    _sink.OnCameraStatus(evt);
+                    declaredMissing++;
+                    sent++;
+                }
+
+                if (declaredMissing > 0)
+                {
+                    _sink.Log(LogLevel.Warn, "相机快照：" + declaredMissing
+                        + " 台在 cfg 里声明了 enable=\"1\" 但 SDK 没发现（已按离线上报，请检查上电/网线/网段）");
+                }
+
+                _sink.Log(LogLevel.Info, "已上报相机快照 " + sent + " 台"
+                    + (declared.Count > 0 ? "（cfg 声明 " + declared.Count + " 台）" : string.Empty));
             }
             catch (Exception ex)
             {
                 _sink.LogError("上报相机快照失败", ex);
+            }
+        }
+
+        /// <summary>
+        /// 给快照/状态事件补齐"设备身份"：型号、序列号、厂商、固件，加上 cfg 声明与方位。
+        /// 顺便把匹配结果记到 _declaredByDevice / _positionByDevice，供后续上下线事件复用。
+        /// </summary>
+        private void FillDeviceIdentity(CameraStatusEvent evt, string deviceId, string userId,
+            CameraInfo info, List<CameraPlanEntry> matched)
+        {
+            if (info != null)
+            {
+                evt.Model = info.camDevModelName;
+                evt.SerialNumber = info.camDevSerialNumber;
+                evt.Vendor = info.camDevVendor;
+                evt.Firmware = info.camDevFirewareVersion;
+            }
+
+            string[] candidates = new string[]
+            {
+                deviceId,
+                userId,
+                info != null ? info.camDevID : null,
+                info != null ? info.camDevSerialNumber : null,
+                info != null ? info.camDevExtraInfo : null
+            };
+
+            CameraPlanEntry entry = CameraIdentity.Match(_cameraPlan, candidates);
+            if (entry != null && matched != null)
+            {
+                matched.Add(entry);
+            }
+
+            CameraPlanEntry known;
+            if (entry == null && !string.IsNullOrEmpty(deviceId) && _declaredByDevice.TryGetValue(deviceId, out known))
+            {
+                entry = known;
+            }
+
+            if (entry != null)
+            {
+                evt.DeclaredKind = entry.Kind;
+                evt.DeclaredValue = entry.Value;
+                if (!string.IsNullOrEmpty(deviceId))
+                {
+                    _declaredByDevice[deviceId] = entry;
+                }
+            }
+
+            string position = _cameraPositions != null ? _cameraPositions.ResolveAny(candidates) : null;
+            if (string.IsNullOrEmpty(position) && entry != null && _cameraPositions != null)
+            {
+                position = _cameraPositions.Resolve(entry.Value);
+            }
+            if (!string.IsNullOrEmpty(position))
+            {
+                evt.Position = position;
+                if (!string.IsNullOrEmpty(deviceId))
+                {
+                    _positionByDevice[deviceId] = position;
+                }
             }
         }
 

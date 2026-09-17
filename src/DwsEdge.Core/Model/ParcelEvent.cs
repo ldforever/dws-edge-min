@@ -98,6 +98,31 @@ namespace DwsEdge.Core.Model
         public string Vendor;
         public string Firmware;
 
+        // ---- 相机身份（A9：设备信息展示用）----
+
+        /// <summary>cfg 里声明的接入方式：ip / key / id；来自 SDK 发现的相机可能没有声明。</summary>
+        public string DeclaredKind;
+
+        /// <summary>cfg 里声明的值，例如 172.20.10.11 或序列号。</summary>
+        public string DeclaredValue;
+
+        /// <summary>安装方位（top/bottom/left/right/front/rear/line/spare），来自相机方位映射。</summary>
+        public string Position;
+
+        /// <summary>
+        /// SDK 是否真的发现了这台相机。
+        /// false = cfg 里声明了 enable="1"，但 SDK 这次没报（没上电 / 没接网 / 被占用），
+        /// 这类相机会以"离线"形式出现在设备清单里，保证界面上是完整的 17 行，而不是少几行看不出来。
+        /// </summary>
+        public bool Discovered = true;
+
+        /// <summary>
+        /// 采集宿主的"会话号"（宿主进程启动时刻的毫秒时间戳）。
+        /// 平台用它区分"这次清单里的相机"和"上一次跑的时候的相机"：
+        /// 换清单重启后，上一轮的相机不会再出现在设备列表里。
+        /// </summary>
+        public long SessionId;
+
         // ---- 以下由采集宿主按相机累计（重启会从 0 重新计；平台侧取最大值，历史不丢）----
 
         /// <summary>累计掉线次数。</summary>

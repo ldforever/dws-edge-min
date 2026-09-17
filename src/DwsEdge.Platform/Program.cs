@@ -37,6 +37,7 @@ namespace DwsEdge.Platform
 
             builder.Services.AddSingleton<SpoolStore>();
             builder.Services.AddSingleton<HistoryStore>();
+            builder.Services.AddSingleton<ConfigStore>();
             builder.Services.AddHostedService<SpoolTailer>();
             builder.Services.AddHostedService<StorageProbe>();
 
@@ -53,6 +54,21 @@ namespace DwsEdge.Platform
                 return Results.Json(store.LatestParcels(take));
             });
             app.MapGet("/api/cameras", (SpoolStore store) => Results.Json(store.Cameras()));
+
+            // A9：设备信息（相机清单 + 方位 + 型号/序列号 + 在线状态）
+            app.MapGet("/api/devices", (SpoolStore store, ConfigStore cfg) =>
+                Results.Json(store.DeviceList(cfg.PositionsPath)));
+
+            // A9：相机方位映射的读取与保存（界面上改"哪台相机装在哪个面"）
+            app.MapGet("/api/camera-positions", (ConfigStore cfg) => Results.Json(cfg.ReadPositions()));
+            app.MapPost("/api/camera-positions", (ConfigStore cfg, CameraPositionsRequest request) =>
+                cfg.SavePositions(request));
+
+            // A8：一键应用配置（写配置 → 重启 SDK 校验 → 失败自动回滚）
+            app.MapGet("/api/config", (ConfigStore cfg) => Results.Json(cfg.Read()));
+            app.MapPost("/api/config/apply", (ConfigStore cfg, ConfigApplyRequest request) =>
+                cfg.Apply(request));
+
             app.MapGet("/api/history", (SpoolStore store, string from, string to, string code, string deviceId, bool? noread, int? limit) =>
             {
                 DateTime fromDay = ParseDay(from, DateTime.Today.AddDays(-1));

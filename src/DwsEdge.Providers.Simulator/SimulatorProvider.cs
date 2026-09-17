@@ -2,6 +2,7 @@
 using System.Globalization;
 using System.IO;
 using System.Threading;
+using System.Collections.Generic;
 using DwsEdge.Core.Abstractions;
 using DwsEdge.Core.Config;
 using DwsEdge.Core.Model;
@@ -68,6 +69,78 @@ namespace DwsEdge.Providers.Simulator
         {
             _running = true;
             _sink.Log(LogLevel.Info, "[simulator] 已启动（不需要相机/加密狗）。触发一次即可模拟一个包裹过包。");
+            EmitCameraSnapshot();
+        }
+
+        /// <summary>
+        /// 按 cfg 里的相机清单上报一条"快照"，让设备信息页在没有真机时也有完整的相机列表。
+        /// 型号/序列号是假数据（SIM- 前缀），但 ip/key/id、方位、在线状态与清单完全一致。
+        /// [simulator] offlineCameras=3,5 可以让第 3、5 台显示成离线（用来验证界面的离线行）。
+        /// </summary>
+        private void EmitCameraSnapshot()
+        {
+            try
+            {
+                string cfgPath = _settings.ResolvePath(_settings.Get("cfgPath", @"Cfg\LogisticsBase.cfg"));
+                CameraPlan plan = CameraPlan.Read(cfgPath);
+                CameraPositions positions = CameraPositions.Load(
+                    _settings.ResolvePath(_settings.Get("cameraPositionsFile", CameraPositions.DefaultRelativePath)));
+
+                List<CameraPlanEntry> declared = CameraIdentity.EnabledEntries(plan);
+                if (declared.Count == 0)
+                {
+                    _sink.Log(LogLevel.Info, "[simulator] cfg 里没有启用中的相机声明，跳过相机快照");
+                    return;
+                }
+
+                HashSet<string> offline = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                string offlineSetting = _settings.Get("offlineCameras", null);
+                if (!string.IsNullOrEmpty(offlineSetting))
+                {
+                    string[] parts = offlineSetting.Split(',');
+                    for (int i = 0; i < parts.Length; i++)
+                    {
+                        string item = parts[i].Trim();
+                        if (item.Length > 0)
+                        {
+                            offline.Add(item);
+                        }
+                    }
+                }
+
+                CameraRuntimeTracker tracker = new CameraRuntimeTracker();
+                for (int i = 0; i < declared.Count; i++)
+                {
+                    CameraPlanEntry entry = declared[i];
+                    string index = (i + 1).ToString(CultureInfo.InvariantCulture);
+                    bool isOffline = offline.Contains(index) || offline.Contains(entry.Value);
+
+                    CameraStatusEvent evt = new CameraStatusEvent();
+                    evt.ProviderId = ProviderId;
+                    evt.DeviceId = entry.Value;
+                    evt.UserId = entry.Value;
+                    evt.Online = !isOffline;
+                    evt.Discovered = !isOffline;
+                    evt.IsSnapshot = true;
+                    evt.AtMs = NowMs();
+                    evt.DeclaredKind = entry.Kind;
+                    evt.DeclaredValue = entry.Value;
+                    evt.Position = positions.Resolve(entry.Value);
+                    evt.Model = "SIM-CAM";
+                    evt.SerialNumber = "SIM" + index.PadLeft(3, '0');
+                    evt.Vendor = "DwsEdge Simulator";
+                    evt.Firmware = "sim-1.0";
+
+                    tracker.Apply(evt, true);
+                    _sink.OnCameraStatus(evt);
+                }
+
+                _sink.Log(LogLevel.Info, "[simulator] 已上报相机快照 " + declared.Count + " 台（来自 cfg 相机清单）");
+            }
+            catch (Exception ex)
+            {
+                _sink.Log(LogLevel.Warn, "[simulator] 上报相机快照失败：" + ex.Message);
+            }
         }
 
         public void Stop()

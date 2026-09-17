@@ -62,6 +62,10 @@ namespace DwsEdge.Platform
                 _logger.LogInformation("已恢复 {0} 个文件的消费位点（继续读新增事件）", saved.Count);
             }
 
+            // 相机状态是"当前值"语义：消费位点只保证包裹事件不重复处理，
+            // 平台单独重启时相机清单必须重新建立（否则要等下一次状态变化才有数据）。
+            _store.RebuildCameraState(_spoolDirectory);
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 try

@@ -29,11 +29,16 @@ namespace DwsEdge.Host
         private long _imageCount;
         private long _cameraReadCount;
 
+        /// <summary>本次采集宿主运行的"会话号"：给相机状态事件盖戳，平台据此丢弃上一轮的相机。</summary>
+        private readonly long _sessionId;
+
         /// <summary>当前 provider 是否分阶段上报包裹结果（宿主创建 provider 后设置，写进事件的 stagedResult 字段）。</summary>
         public bool StagedParcelResult { get; set; }
 
         public HostEventSink(string runtimeDirectory, bool spoolEnabled)
         {
+            _sessionId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
             string logDir = Path.Combine(runtimeDirectory, "logs");
             Directory.CreateDirectory(logDir);
             string logPath = Path.Combine(logDir, "host-" + DateTime.Now.ToString("yyyyMMdd") + ".log");
@@ -320,7 +325,7 @@ namespace DwsEdge.Host
             return sb.ToString();
         }
 
-        private static string JsonCameraStatus(CameraStatusEvent s)
+        private string JsonCameraStatus(CameraStatusEvent s)
         {
             StringBuilder sb = new StringBuilder();
             sb.Append('{');
@@ -335,6 +340,11 @@ namespace DwsEdge.Host
             sb.Append(",\"serialNumber\":").Append(Quote(s.SerialNumber));
             sb.Append(",\"vendor\":").Append(Quote(s.Vendor));
             sb.Append(",\"firmware\":").Append(Quote(s.Firmware));
+            sb.Append(",\"declaredKind\":").Append(Quote(s.DeclaredKind));
+            sb.Append(",\"declaredValue\":").Append(Quote(s.DeclaredValue));
+            sb.Append(",\"position\":").Append(Quote(s.Position));
+            sb.Append(",\"discovered\":").Append(s.Discovered ? "true" : "false");
+            sb.Append(",\"sessionId\":").Append(_sessionId.ToString(CultureInfo.InvariantCulture));
             sb.Append(",\"offlineCount\":").Append(s.OfflineCount.ToString(CultureInfo.InvariantCulture));
             sb.Append(",\"reconnectCount\":").Append(s.ReconnectCount.ToString(CultureInfo.InvariantCulture));
             sb.Append(",\"lastOfflineAtMs\":").Append(s.LastOfflineAtMs.ToString(CultureInfo.InvariantCulture));

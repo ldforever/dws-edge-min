@@ -3,10 +3,12 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using DwsEdge.Core.Config;
 using DwsEdge.Core.Model;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -45,6 +47,7 @@ namespace DwsEdge.Platform
         private long _missingTraceId;
         private long _traceIdConflicts;
         private int _pendingParcels;
+        private long _cameraSessionId;
         private DateTime _lastMissingTraceLog = DateTime.MinValue;
         private long _imageFileCount;
         private long _imageDiskBytes;
@@ -263,11 +266,121 @@ namespace DwsEdge.Platform
 
         private void ApplyCameraStatus(SpoolEvent evt)
         {
+            ApplyCameraStatus(evt, false);
+        }
+
+        /// <summary>按行读一个正在被别的进程追加写的文件（共享读）。</summary>
+        private static IEnumerable<string> ReadLinesShared(string path)
+        {
+            using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete))
+            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+            {
+                while (!reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null)
+                    {
+                        yield return line;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 平台启动时从 spool 回放相机状态（replay=true：不改"状态变化次数"，也不推 SSE）。
+        ///
+        /// 为什么要回放：相机状态在 spool 里是"当前值"语义，而消费位点保证的是"事件不重复处理"。
+        /// 如果只按位点续读，平台单独重启后相机清单会一直空着，直到下一次上下线。
+        /// 只扫最近两个事件文件，按出现顺序应用，结果就是每台相机的最终状态。
+        /// </summary>
+        public void RebuildCameraState(string spoolDirectory)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(spoolDirectory) || !Directory.Exists(spoolDirectory))
+                {
+                    return;
+                }
+
+                string[] files = Directory.GetFiles(spoolDirectory, "events-*.jsonl");
+                Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+                int from = Math.Max(0, files.Length - 2);
+
+                int applied = 0;
+                for (int i = from; i < files.Length; i++)
+                {
+                    // 必须用 FileShare.ReadWrite 打开：spool 文件此刻正被采集宿主追加写
+                    // （宿主用 FileShare.ReadWrite 打开，这里再用默认的 FileShare.Read 会直接 IOException）。
+                    foreach (string line in ReadLinesShared(files[i]))
+                    {
+                        if (line.Length == 0 || line.IndexOf("camera-status", StringComparison.Ordinal) < 0)
+                        {
+                            continue;
+                        }
+
+                        SpoolEvent evt;
+                        try
+                        {
+                            evt = JsonSerializer.Deserialize<SpoolEvent>(line, _json);
+                        }
+                        catch (JsonException)
+                        {
+                            continue;
+                        }
+
+                        if (evt != null && string.Equals(evt.type, "camera-status", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ApplyCameraStatus(evt, true);
+                            applied++;
+                        }
+                    }
+                }
+
+                if (applied > 0)
+                {
+                    _logger.LogInformation("已从 spool 回放相机状态 {0} 条（相机 {1} 台）", applied, _cameras.Count);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("回放相机状态失败：{0}", ex.Message);
+            }
+        }
+
+        private void ApplyCameraStatus(SpoolEvent evt, bool replay)
+        {
             CameraRecord camera;
             lock (_sync)
             {
                 string key = evt.deviceId ?? "unknown";
                 bool isSnapshot = evt.isSnapshot.GetValueOrDefault(false);
+
+                // 换了一轮采集宿主（会话号变了）就把上一轮的相机清掉：
+                // 改了相机清单重启后，设备列表应该只有新清单里的相机，而不是新旧混在一起。
+                if (evt.sessionId > 0 && evt.sessionId != _cameraSessionId)
+                {
+                    List<string> stale = new List<string>();
+                    foreach (KeyValuePair<string, CameraRecord> pair in _cameras)
+                    {
+                        if (pair.Value.sessionId != evt.sessionId)
+                        {
+                            stale.Add(pair.Key);
+                        }
+                    }
+
+                    for (int i = 0; i < stale.Count; i++)
+                    {
+                        _cameras.Remove(stale[i]);
+                    }
+
+                    if (stale.Count > 0)
+                    {
+                        _logger.LogInformation("采集宿主会话变更（{0} → {1}），已移除上一轮的相机 {2} 台",
+                            _cameraSessionId, evt.sessionId, stale.Count);
+                    }
+                    _cameraSessionId = evt.sessionId;
+                }
 
                 if (!_cameras.TryGetValue(key, out camera))
                 {
@@ -275,6 +388,8 @@ namespace DwsEdge.Platform
                     camera.deviceId = key;
                     _cameras[key] = camera;
                 }
+
+                camera.sessionId = evt.sessionId > 0 ? evt.sessionId : _cameraSessionId;
 
                 if (evt.online.HasValue)
                 {
@@ -289,6 +404,25 @@ namespace DwsEdge.Platform
                 if (!string.IsNullOrEmpty(evt.serialNumber)) { camera.serialNumber = evt.serialNumber; }
                 if (!string.IsNullOrEmpty(evt.vendor)) { camera.vendor = evt.vendor; }
                 if (!string.IsNullOrEmpty(evt.firmware)) { camera.firmware = evt.firmware; }
+
+                // A9：清单声明（ip/key/id）与安装方位。快照与增量事件都会带，
+                // 空值不覆盖已知值——这样平台先收到增量、后收到快照也不会把身份弄丢。
+                if (!string.IsNullOrEmpty(evt.declaredKind)) { camera.declaredKind = evt.declaredKind; }
+                if (!string.IsNullOrEmpty(evt.declaredValue)) { camera.declaredValue = evt.declaredValue; }
+                if (!string.IsNullOrEmpty(camera.declaredKind) && !string.IsNullOrEmpty(camera.declaredValue))
+                {
+                    camera.declaredLabel = camera.declaredKind + "=" + camera.declaredValue;
+                }
+                if (!string.IsNullOrEmpty(evt.position))
+                {
+                    camera.position = evt.position;
+                    camera.positionLabel = CameraPositions.Label(evt.position);
+                    camera.positionOrder = CameraPositions.Order(evt.position);
+                }
+                if (evt.discovered.HasValue)
+                {
+                    camera.discovered = evt.discovered.Value;
+                }
 
                 // 掉线/恢复计数取最大值：采集宿主重启后计数会从 0 开始，平台保留历史峰值
                 if (evt.offlineCount > camera.offlineCount) { camera.offlineCount = evt.offlineCount; }
@@ -306,13 +440,16 @@ namespace DwsEdge.Platform
                 }
 
                 // 启动快照是基线，不计入"状态变化次数"
-                if (!isSnapshot)
+                if (!isSnapshot && !replay)
                 {
                     camera.statusChanges++;
                 }
             }
 
-            Publish(new { type = "camera", data = camera });
+            if (!replay)
+            {
+                Publish(new { type = "camera", data = camera });
+            }
         }
 
         /// <summary>按相机累计"出码包裹数"（调用方需持有 _sync 锁）。</summary>
@@ -566,6 +703,162 @@ namespace DwsEdge.Platform
             }
         }
 
+        /// <summary>
+        /// A9 设备信息页：相机清单 + 汇总 + 按方位聚合。
+        ///
+        /// 方位以磁盘上的 camera-positions.ini 为准（界面刚改过、采集宿主还没重启时，
+        /// 这里显示的就是新方位；采集宿主重启后事件里也会带同样的值）。
+        /// </summary>
+        public CameraDeviceView DeviceList(string positionsPath)
+        {
+            CameraPositions fromFile = CameraPositions.Load(positionsPath);
+            CameraDeviceView view = new CameraDeviceView();
+            view.positionsFile = positionsPath;
+            view.positionsFileExists = !string.IsNullOrEmpty(positionsPath) && File.Exists(positionsPath);
+            view.positionOptions = new List<string>(CameraPositions.Options());
+            view.cameras = new List<CameraRecord>();
+            view.faces = new List<CameraFaceSummary>();
+
+            List<CameraRecord> rows;
+            lock (_sync)
+            {
+                rows = new List<CameraRecord>(_cameras.Values);
+            }
+
+            for (int i = 0; i < rows.Count; i++)
+            {
+                CameraRecord camera = rows[i];
+
+                if (string.IsNullOrEmpty(camera.position))
+                {
+                    string fromMap = fromFile.ResolveAny(new string[]
+                    {
+                        camera.declaredValue, camera.deviceId, camera.serialNumber, camera.userId
+                    });
+                    if (!string.IsNullOrEmpty(fromMap))
+                    {
+                        camera.position = fromMap;
+                        camera.positionLabel = CameraPositions.Label(fromMap);
+                        camera.positionOrder = CameraPositions.Order(fromMap);
+                    }
+                }
+                else
+                {
+                    // 界面上刚改过方位、采集宿主还没重启：以文件为准显示，并标记"待重启生效"
+                    string fromMap = fromFile.ResolveAny(new string[]
+                    {
+                        camera.declaredValue, camera.deviceId, camera.serialNumber, camera.userId
+                    });
+                    if (!string.IsNullOrEmpty(fromMap)
+                        && !string.Equals(fromMap, camera.position, StringComparison.OrdinalIgnoreCase))
+                    {
+                        camera.position = fromMap;
+                        camera.positionLabel = CameraPositions.Label(fromMap);
+                        camera.positionOrder = CameraPositions.Order(fromMap);
+                        camera.positionPending = true;
+                    }
+                }
+                if (string.IsNullOrEmpty(camera.positionLabel))
+                {
+                    camera.positionLabel = CameraPositions.Label(camera.position);
+                }
+                if (camera.positionOrder <= 0)
+                {
+                    camera.positionOrder = CameraPositions.Order(camera.position);
+                }
+                if (string.IsNullOrEmpty(camera.declaredLabel) && !string.IsNullOrEmpty(camera.declaredValue))
+                {
+                    camera.declaredLabel = camera.declaredKind + "=" + camera.declaredValue;
+                }
+
+                view.total++;
+                if (camera.online)
+                {
+                    view.online++;
+                }
+                else
+                {
+                    view.offline++;
+                }
+                if (camera.discovered)
+                {
+                    view.discovered++;
+                }
+                else
+                {
+                    view.declaredMissing++;
+                }
+                if (string.IsNullOrEmpty(camera.position))
+                {
+                    view.positionMissing++;
+                }
+            }
+
+            view.cameras.AddRange(rows);
+
+            // 排序：先按方位（顶→底→左→右→前→后→线体→备用→未设置），同方位再按标识
+            view.cameras.Sort(delegate(CameraRecord a, CameraRecord b)
+            {
+                int byPosition = a.positionOrder.CompareTo(b.positionOrder);
+                if (byPosition != 0)
+                {
+                    return byPosition;
+                }
+                return string.Compare(a.deviceId, b.deviceId, StringComparison.OrdinalIgnoreCase);
+            });
+
+            // 按方位聚合
+            Dictionary<string, CameraFaceSummary> faces =
+                new Dictionary<string, CameraFaceSummary>(StringComparer.OrdinalIgnoreCase);
+            string[] options = CameraPositions.Options();
+            for (int i = 0; i < options.Length; i++)
+            {
+                CameraFaceSummary face = new CameraFaceSummary();
+                face.position = options[i];
+                face.label = CameraPositions.Label(options[i]);
+                face.cameras = new List<string>();
+                faces[options[i]] = face;
+            }
+
+            for (int i = 0; i < view.cameras.Count; i++)
+            {
+                CameraRecord camera = view.cameras[i];
+                string key = CameraPositions.Normalize(camera.position);
+                if (string.IsNullOrEmpty(key))
+                {
+                    continue;
+                }
+
+                CameraFaceSummary face;
+                if (!faces.TryGetValue(key, out face))
+                {
+                    continue; // 非标准方位（厂商自定义值）不参与六面概览，但仍在清单里显示
+                }
+
+                face.total++;
+                if (camera.online)
+                {
+                    face.online++;
+                }
+                else
+                {
+                    face.offline++;
+                }
+                face.cameras.Add(string.IsNullOrEmpty(camera.declaredValue) ? camera.deviceId : camera.declaredValue);
+            }
+
+            for (int i = 0; i < options.Length; i++)
+            {
+                CameraFaceSummary face = faces[options[i]];
+                if (face.total > 0)
+                {
+                    view.faces.Add(face);
+                }
+            }
+
+            return view;
+        }
+
         /// <summary>按需读取本地图片；只允许读取配置的图片根目录下的文件。</summary>
         public IResult OpenImage(string path)
         {
@@ -642,6 +935,15 @@ namespace DwsEdge.Platform
                 }
                 string stats = JsonSerializer.Serialize(new { type = "stats", data = Stats() }, _json);
                 await context.Response.WriteAsync("data: " + stats + "\n\n", token);
+
+                // 相机状态也补发一次：前端可能是"页面刚打开、相机状态早就上报过"的情况，
+                // 只靠增量事件会一直空着（尤其是平台刚重启、宿主没重启的时候）。
+                List<CameraRecord> cameras = Cameras();
+                for (int i = 0; i < cameras.Count; i++)
+                {
+                    string camera = JsonSerializer.Serialize(new { type = "camera", data = cameras[i] }, _json);
+                    await context.Response.WriteAsync("data: " + camera + "\n\n", token);
+                }
                 await context.Response.Body.FlushAsync(token);
 
                 while (!token.IsCancellationRequested)

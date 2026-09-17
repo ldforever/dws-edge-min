@@ -108,6 +108,12 @@ if (Test-Path $wwwroot) {
     Copy-Item -Path $wwwroot -Destination $platformDir -Recurse -Force
 }
 
+# 运维/配置脚本：拷进 runtime\tools，这样 runtime 目录单独交付到现场也能用"一键应用"
+$toolsOut = Join-Path $RuntimeDir 'tools'
+New-Item -ItemType Directory -Force -Path $toolsOut | Out-Null
+Copy-Item -Path (Join-Path $PSScriptRoot 'tools\*.ps1') -Destination $toolsOut -Force
+Write-Host "  已拷贝运维脚本到 runtime\tools（一键应用配置用）" -ForegroundColor DarkGray
+
 # 配置：runtime\config\gateway.ini 是"现场配置"（provider、存图策略、软触发开关都在里面），
 # 已经被改过时不能默默覆盖，否则一键应用/现场调试的设置会被一次编译冲掉。
 $configSource = Join-Path $PSScriptRoot 'config\gateway.ini'
