@@ -130,6 +130,7 @@ namespace DwsEdge.Providers.Dahua
                      | ProviderCapabilities.SoftTrigger
                      | ProviderCapabilities.ComplementCode
                      | ProviderCapabilities.ConfigWrite
+                     | ProviderCapabilities.StagedParcelResult
                      | ProviderCapabilities.RequiresDongle;
             }
         }
@@ -927,18 +928,8 @@ namespace DwsEdge.Providers.Dahua
 
         private static string BuildTraceId(ParcelEvent evt)
         {
-            StringBuilder sb = new StringBuilder();
-            sb.Append(evt.ProviderId).Append('|').Append(evt.DeviceId).Append('|')
-              .Append(evt.CapturedAtMs.ToString(CultureInfo.InvariantCulture)).Append('|');
-            for (int i = 0; i < evt.Codes.Count; i++)
-            {
-                if (i > 0)
-                {
-                    sb.Append(',');
-                }
-                sb.Append(evt.Codes[i].Value);
-            }
-            return sb.ToString();
+            // 统一走 Core 的规则，保证所有 provider 生成的追踪号格式一致
+            return ParcelTrace.Build(evt.ProviderId, evt.DeviceId, evt.CapturedAtMs, evt.Codes);
         }
 
         private static string BuildFileBaseName(ParcelEvent parcel, CameraReadEvent cameraRead, string suffix)

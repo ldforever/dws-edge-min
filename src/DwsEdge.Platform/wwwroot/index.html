@@ -29,6 +29,7 @@
   @keyframes flash { from { background: #1f3a2a; } to { background: transparent; } }
   .code { color: #58a6ff; }
   .tag { color: #8b98a9; font-size: 11px; }
+  .pending { color: #d29922; font-size: 11px; }
   .noread { color: #f0883e; }
   .muted { color: #6e7681; }
   tr.offline { background: #2a1a17; }
@@ -177,6 +178,15 @@ function addRow(p, flash) {
   const stage = document.createElement('td');
   stage.className = 'muted';
   stage.textContent = (p.stage || '') + (p.updates > 1 ? ' ×' + p.updates : '');
+  if (p.lengthMm > 0) {
+    stage.textContent += ' · ' + Math.round(p.lengthMm) + '×' + Math.round(p.widthMm) + '×' + Math.round(p.heightMm);
+  }
+  if (p.complete === false) {
+    const wait = document.createElement('span');
+    wait.className = 'pending';
+    wait.textContent = ' 待补全';
+    stage.appendChild(wait);
+  }
 
   const img = document.createElement('td');
   if (p.imageCount > 0 && p.firstImagePath) {

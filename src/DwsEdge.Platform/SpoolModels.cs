@@ -30,6 +30,8 @@ namespace DwsEdge.Platform
         public long lastOfflineAtMs { get; set; }
         public long lastOfflineDurationMs { get; set; }
         public long firstSeenAtMs { get; set; }
+        /// <summary>该 provider 是否分阶段上报包裹结果（由事件带的 stagedResult 决定）。</summary>
+        public bool? stagedResult { get; set; }
         public List<SpoolCode> codes { get; set; }
         public List<SpoolImage> images { get; set; }
     }
@@ -76,9 +78,18 @@ namespace DwsEdge.Platform
         public int codeCount { get; set; }
         public int weightGrams { get; set; }
         public double volumeMm3 { get; set; }
+        public double lengthMm { get; set; }
+        public double widthMm { get; set; }
+        public double heightMm { get; set; }
         public int imageCount { get; set; }
         public string firstImagePath { get; set; }
         public int updates { get; set; }
+
+        /// <summary>provider 是否分阶段上报（true 时"看到 enriched 才算完整"）。</summary>
+        public bool staged { get; set; }
+
+        /// <summary>该包裹记录是否已完整（非分阶段 provider 首次事件即完整）。</summary>
+        public bool complete { get; set; }
     }
 
     /// <summary>相机状态。</summary>
@@ -132,6 +143,15 @@ namespace DwsEdge.Platform
         public long diskTotalBytes { get; set; }
         public long diskFreeBytes { get; set; }
         public int diskUsedPercent { get; set; }
+
+        /// <summary>尚未补全的包裹数（分阶段 provider 只收到条码、还没收到重量体积）。</summary>
+        public int pendingParcels { get; set; }
+
+        /// <summary>缺少追踪号的事件数（用了兜底键，可追溯性较弱）。</summary>
+        public long missingTraceId { get; set; }
+
+        /// <summary>疑似追踪号冲突次数（同一追踪号下条码集合完全不相交）。</summary>
+        public long traceIdConflicts { get; set; }
 
         public string serverTime { get; set; }
     }

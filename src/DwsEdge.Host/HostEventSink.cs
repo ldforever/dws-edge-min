@@ -29,6 +29,9 @@ namespace DwsEdge.Host
         private long _imageCount;
         private long _cameraReadCount;
 
+        /// <summary>当前 provider 是否分阶段上报包裹结果（宿主创建 provider 后设置，写进事件的 stagedResult 字段）。</summary>
+        public bool StagedParcelResult { get; set; }
+
         public HostEventSink(string runtimeDirectory, bool spoolEnabled)
         {
             string logDir = Path.Combine(runtimeDirectory, "logs");
@@ -253,7 +256,7 @@ namespace DwsEdge.Host
 
         #region JSON（手写，避免引入序列化库；正式版建议换 protobuf/MessagePack）
 
-        private static string JsonParcel(ParcelEvent p)
+        private string JsonParcel(ParcelEvent p)
         {
             StringBuilder sb = new StringBuilder();
             sb.Append('{');
@@ -266,6 +269,7 @@ namespace DwsEdge.Host
             sb.Append(",\"capturedAtMs\":").Append(p.CapturedAtMs.ToString(CultureInfo.InvariantCulture));
             sb.Append(",\"receivedAtMs\":").Append(p.ReceivedAtMs.ToString(CultureInfo.InvariantCulture));
             sb.Append(",\"traceId\":").Append(Quote(p.TraceId));
+            sb.Append(",\"stagedResult\":").Append(StagedParcelResult ? "true" : "false");
             sb.Append(",\"weightGrams\":").Append(p.WeightGrams.ToString(CultureInfo.InvariantCulture));
             sb.Append(",\"lengthMm\":").Append(Number(p.LengthMm));
             sb.Append(",\"widthMm\":").Append(Number(p.WidthMm));

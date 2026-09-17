@@ -133,6 +133,9 @@ namespace DwsEdge.Host
                 ProviderSettings settings = new ProviderSettings(baseDir, config.Section(providerId));
                 provider = registry.Create(providerId, settings, sink);
 
+                // 告诉事件出口：该 provider 是否分阶段上报（决定平台能否判定"包裹已完整"）
+                sink.StagedParcelResult = (provider.Capabilities & ProviderCapabilities.StagedParcelResult) != 0;
+
                 sink.Log(LogLevel.Info, "provider 能力 = " + provider.Capabilities);
 
                 Console.CancelKeyPress += OnCancelKeyPress;

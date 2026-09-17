@@ -37,6 +37,12 @@ namespace DwsEdge.Core.Abstractions
         ConfigWrite = 1 << 8,
 
         /// <summary>需要加密狗 / 授权，运维上要单独关注。</summary>
-        RequiresDongle = 1 << 9
+        RequiresDongle = 1 << 9,
+
+        /// <summary>
+        /// 包裹结果分阶段上报：同一个包裹会来多次（例如大华先回条码、再回条码+重量体积）。
+        /// 业务层据此判断"这条包裹记录是否已经完整"（需要看到 Enriched 才算完整）。
+        /// </summary>
+        StagedParcelResult = 1 << 10
     }
 }

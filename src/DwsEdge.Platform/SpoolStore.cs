@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using DwsEdge.Core.Model;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -40,6 +41,10 @@ namespace DwsEdge.Platform
         private long _noreadCount;
         private long _imageCount;
         private long _parseErrors;
+        private long _missingTraceId;
+        private long _traceIdConflicts;
+        private int _pendingParcels;
+        private DateTime _lastMissingTraceLog = DateTime.MinValue;
         private long _imageFileCount;
         private long _imageDiskBytes;
         private long _diskTotalBytes;
@@ -90,9 +95,18 @@ namespace DwsEdge.Platform
             {
                 _eventCount++;
 
-                string key = string.IsNullOrEmpty(evt.traceId)
-                    ? (evt.deviceId + "|" + evt.capturedAtMs)
-                    : evt.traceId;
+                string key = evt.traceId;
+                if (string.IsNullOrEmpty(key))
+                {
+                    // 事件没带追踪号：用 Core 的兜底规则生成（可追溯性较弱，计数并告警）
+                    key = ParcelTrace.BuildFallback(evt.deviceId, evt.capturedAtMs);
+                    _missingTraceId++;
+                    if ((DateTime.UtcNow - _lastMissingTraceLog).TotalSeconds > 60)
+                    {
+                        _lastMissingTraceLog = DateTime.UtcNow;
+                        _logger.LogWarning("收到 {0} 条缺少 traceId 的包裹事件，已用兜底键（相机+时间戳）；请检查采集宿主的追踪号生成", _missingTraceId);
+                    }
+                }
 
                 if (!_byTrace.TryGetValue(key, out record))
                 {
@@ -114,6 +128,14 @@ namespace DwsEdge.Platform
                     if (!hadCodes && evt.codes != null && evt.codes.Count > 0)
                     {
                         becameReadable = true;
+                    }
+
+                    // 冲突探测：同一追踪号下，新事件的条码和已有条码完全不相交 → 很可能是两个包裹被合并了
+                    if (hadCodes && evt.codes != null && evt.codes.Count > 0 && !HasCommonCode(record, evt.codes))
+                    {
+                        _traceIdConflicts++;
+                        _logger.LogWarning("追踪号冲突：{0} 上的条码 {1} 与已有 {2} 完全不相交",
+                            key, CodesText(evt.codes), string.Join(",", record.codes.ToArray()));
                     }
                 }
 
@@ -160,9 +182,29 @@ namespace DwsEdge.Platform
                 {
                     record.volumeMm3 = evt.volumeMm3;
                 }
+                if (evt.lengthMm > 0) { record.lengthMm = evt.lengthMm; }
+                if (evt.widthMm > 0) { record.widthMm = evt.widthMm; }
+                if (evt.heightMm > 0) { record.heightMm = evt.heightMm; }
                 if (!string.IsNullOrEmpty(evt.stage))
                 {
                     record.stage = evt.stage;
+                }
+
+                // 分阶段 provider：看到 enriched 才算完整
+                bool wasComplete = record.complete;
+                if (evt.stagedResult.HasValue)
+                {
+                    record.staged = evt.stagedResult.Value;
+                }
+                record.complete = !record.staged
+                    || string.Equals(record.stage, "enriched", StringComparison.OrdinalIgnoreCase);
+                if (isNew && !record.complete)
+                {
+                    _pendingParcels++;
+                }
+                else if (!isNew && record.complete && !wasComplete)
+                {
+                    _pendingParcels = Math.Max(0, _pendingParcels - 1);
                 }
                 if (evt.images != null && evt.images.Count > 0)
                 {
@@ -297,6 +339,44 @@ namespace DwsEdge.Platform
             return null;
         }
 
+        /// <summary>新事件的条码是否与已记录的条码有交集（用于识别追踪号冲突）。</summary>
+        private static bool HasCommonCode(ParcelRecord record, List<SpoolCode> codes)
+        {
+            if (record == null || record.codes == null || codes == null)
+            {
+                return false;
+            }
+            for (int i = 0; i < codes.Count; i++)
+            {
+                SpoolCode code = codes[i];
+                if (code == null || string.IsNullOrEmpty(code.value))
+                {
+                    continue;
+                }
+                if (record.codes.Contains(code.value))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static string CodesText(List<SpoolCode> codes)
+        {
+            List<string> values = new List<string>();
+            if (codes != null)
+            {
+                for (int i = 0; i < codes.Count; i++)
+                {
+                    if (codes[i] != null && !string.IsNullOrEmpty(codes[i].value))
+                    {
+                        values.Add(codes[i].value);
+                    }
+                }
+            }
+            return string.Join(",", values.ToArray());
+        }
+
         internal void CountParseError()
         {
             lock (_sync)
@@ -356,6 +436,9 @@ namespace DwsEdge.Platform
                 stats.noread = _noreadCount;
                 stats.images = _imageCount;
                 stats.parseErrors = _parseErrors;
+                stats.pendingParcels = _pendingParcels;
+                stats.missingTraceId = _missingTraceId;
+                stats.traceIdConflicts = _traceIdConflicts;
                 long readable = Math.Max(0, _parcelCount - _noreadCount);
                 stats.readRate = _parcelCount == 0 ? 0 : Math.Round((double)readable / _parcelCount, 4);
                 stats.camerasTotal = _cameras.Count;

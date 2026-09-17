@@ -29,6 +29,8 @@ dws-edge-min/
 ├─ build.ps1                     编译全部并拷贝产物到 runtime（依赖 .NET SDK 10）
 ├─ run.ps1                       运行采集宿主 / 业务平台
 ├─ tools/set-trigger-mode.ps1    切换大华 cfg 的触发模式（软/硬/狂扫）
+├─ tools/make-camera-cfg.ps1     生成相机清单（cfg + 方位映射，支持任意台数）
+├─ tools/check-traceids.ps1      扫描 spool，检查追踪号合并与疑似冲突
 ├─ config/gateway.ini            采集宿主配置（选 provider + provider 参数）
 ├─ src/
 │  ├─ DwsEdge.Core/              契约与模型（net48 + net10.0 双目标，两边共用）
@@ -171,6 +173,33 @@ cleanupOnStart=true    # 启动时先清理一次
   "diskTotalBytes": 120026746880, "diskFreeBytes": 7980036096, "diskUsedPercent": 93 }
 ```
 
+### 追踪号、包裹完整性与查重
+
+- **追踪号规则统一在 Core**（`ParcelTrace`）：`providerId|deviceId|capturedAtMs|code1,code2`。
+  同一包裹的多次回调（先条码、后重量体积）得到相同追踪号，平台靠它合并成一条记录；所有 provider 都走这一个函数，不再各写一份。
+- **完整性判定**：provider 通过能力位 `StagedParcelResult` 声明"分阶段上报"（大华是）。
+  采集宿主把该标记写进事件的 `stagedResult` 字段；平台据此判定：
+  - 分阶段 provider：看到 `enriched` 才 `complete = true`，只收到条码的记录标记为 **待补全**（页面上会显示）；
+  - 单次上报的 provider：第一个事件即 `complete = true`。
+- **兜底与告警**：事件没带追踪号时，平台用 `fallback|相机|时间戳` 兜底，并累计 `missingTraceId`、每 60 秒告警一次。
+- **冲突探测**：同一个追踪号下，如果后到事件的条码与已有条码**完全不相交**，判为疑似冲突（很可能是两个包裹被并成一条），累计 `traceIdConflicts` 并打日志。
+- **批量查重工具**（压测/验收用）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\check-traceids.ps1
+```
+
+输出示例：
+
+```
+追踪号查重报告（5 个文件）
+  包裹事件总数    : 25
+  唯一追踪号（包裹）: 14
+  平均每包裹事件数: 1.79（大华分两次上报时正常值≈2）
+  缺追踪号事件    : 1
+  疑似追踪号冲突  : 1
+```
+
 > 注意：如果 Visual Studio 正打开这个解决方案并在后台构建，`obj\bin` 会被 MSBuild/VBCSCompiler 占用，
 > `build.ps1` 会报“拒绝访问”。关掉 VS 再编译，或直接在 VS 里生成。
 
@@ -193,7 +222,7 @@ cleanupOnStart=true    # 启动时先清理一次
 | 接口 | 说明 |
 |---|---|
 | `GET /api/health` | 健康检查（含图片根目录） |
-| `GET /api/stats` | 事件数、包裹数、无码数、读码率、相机在线数、解析失败数 |
+| `GET /api/stats` | 事件数、包裹数、无码数、读码率、相机在线数、解析失败数，以及 `pendingParcels`（待补全包裹）、`missingTraceId`（缺追踪号事件）、`traceIdConflicts`（疑似追踪号冲突）、图片数与磁盘占用 |
 | `GET /api/parcels?limit=50` | 最新包裹（两次回调已合并成一条）；`codes` 是条码值数组，`codeDetails` 带每个码的类型（1d/2d）与方位 |
 | `GET /api/cameras` | 相机在线状态 |
 | `GET /api/images?path=<绝对路径>` | 按需读取图片（只允许图片根目录内的文件，越权返回 400） |
