@@ -381,6 +381,8 @@ export interface DownstreamOptions {
   /** 分阶段 provider：等重量体积到齐再发 */
   sendOnlyComplete: boolean;
   sendIntervalMs: number;
+  /** B5 服务端模式：新客户端接入时补发最近 N 条（0 = 不补发） */
+  replayRecentCount: number;
 }
 
 export interface DownstreamStats {
@@ -396,6 +398,22 @@ export interface DownstreamStats {
   lastSentAt?: string | null;
   lastError?: string | null;
   templateProblems: string[];
+  /** B5 服务端模式状态 */
+  serverMode: boolean;
+  listening: boolean;
+  listenTarget?: string | null;
+  clientCount: number;
+  clients: DownstreamClient[];
+}
+
+/** B5：已接入的下游客户端 */
+export interface DownstreamClient {
+  id: string;
+  remote: string;
+  connectedAt: string;
+  sent: number;
+  bytes: number;
+  lastError?: string | null;
 }
 
 export interface DownstreamResponse {

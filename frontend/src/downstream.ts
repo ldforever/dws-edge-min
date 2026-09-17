@@ -5,13 +5,16 @@
  */
 import { api } from "./api.js";
 import { $, badge, cell, clear, el, notify } from "./dom.js";
-import type { DownstreamOptions } from "./types.js";
+import type { DownstreamOptions, DownstreamStats } from "./types.js";
 
 export function initDownstream(): void {
   $("btnDsSave").addEventListener("click", () => void save());
   $("btnDsTest").addEventListener("click", () => void testConnection());
   $("btnDsPreview").addEventListener("click", () => void preview());
   $("btnDsRefresh").addEventListener("click", () => void refreshDownstream());
+  $("dsProtocol").addEventListener("change", () => {
+    applyProtocolLabels($<HTMLSelectElement>("dsProtocol").value === "tcp-server");
+  });
 }
 
 export async function refreshDownstream(): Promise<void> {
@@ -23,22 +26,63 @@ export async function refreshDownstream(): Promise<void> {
 
   const config = res.data.config;
   $<HTMLInputElement>("dsEnabled").checked = config.enabled;
+  $<HTMLSelectElement>("dsProtocol").value = config.protocol === "tcp-server" ? "tcp-server" : "tcp-client";
   $<HTMLInputElement>("dsHost").value = config.host;
   $<HTMLInputElement>("dsPort").value = String(config.port);
+  $<HTMLInputElement>("dsReplay").value = String(config.replayRecentCount ?? 0);
   $<HTMLTextAreaElement>("dsTemplate").value = config.template;
   $<HTMLSelectElement>("dsEncoding").value = config.encoding ?? "utf-8";
   $<HTMLInputElement>("dsRetry").value = String(config.retryIntervalMs);
   $<HTMLInputElement>("dsOnlyComplete").checked = config.sendOnlyComplete;
   $("dsFields").textContent = "可用字段：" + res.data.templateFields.map((f) => "{" + f + "}").join(" ");
 
+  applyProtocolLabels(res.data.stats.serverMode);
   renderStats(res.data.stats, res.data.file);
+  renderClients(res.data.stats);
   await loadLog();
+}
+
+/** 服务端/客户端两种模式下，host/port 的含义不同，标签跟着变 */
+function applyProtocolLabels(serverMode: boolean): void {
+  $("dsHostLabel").textContent = serverMode ? "绑定地址：" : "下游地址：";
+  $("dsPortLabel").textContent = serverMode ? "监听端口：" : "下游端口：";
+  $("dsHost").setAttribute("placeholder", serverMode ? "0.0.0.0" : "127.0.0.1");
+  $("dsReplayLabel").style.display = serverMode ? "" : "none";
+}
+
+function renderClients(stats: DownstreamStats): void {
+  const box = $("dsClientsBox");
+  box.style.display = stats.serverMode ? "" : "none";
+  if (!stats.serverMode) {
+    return;
+  }
+
+  const body = $<HTMLTableSectionElement>("dsClientRows");
+  clear(body);
+  const clients = stats.clients ?? [];
+  for (const client of clients) {
+    const tr = el("tr");
+    tr.appendChild(cell(client.id, "code"));
+    tr.appendChild(cell(client.remote, "muted"));
+    tr.appendChild(cell(client.connectedAt, "muted"));
+    tr.appendChild(cell(client.sent));
+    tr.appendChild(cell(client.bytes));
+    tr.appendChild(cell(client.lastError ?? "", "muted"));
+    body.appendChild(tr);
+  }
+  if (!clients.length) {
+    const tr = el("tr");
+    const td = el("td", "还没有下游接入（平台已在本机监听，等下游连上来）", "muted");
+    td.colSpan = 6;
+    tr.appendChild(td);
+    body.appendChild(tr);
+  }
 }
 
 function readOptions(): DownstreamOptions {
   return {
     enabled: $<HTMLInputElement>("dsEnabled").checked,
-    protocol: "tcp-client",
+    protocol: $<HTMLSelectElement>("dsProtocol").value,
     host: $<HTMLInputElement>("dsHost").value.trim(),
     port: Number($<HTMLInputElement>("dsPort").value) || 0,
     template: $<HTMLTextAreaElement>("dsTemplate").value,
@@ -47,14 +91,18 @@ function readOptions(): DownstreamOptions {
     retryIntervalMs: Number($<HTMLInputElement>("dsRetry").value) || 5000,
     maxAttempts: 0,
     sendOnlyComplete: $<HTMLInputElement>("dsOnlyComplete").checked,
-    sendIntervalMs: 0
+    sendIntervalMs: 0,
+    replayRecentCount: Number($<HTMLInputElement>("dsReplay").value) || 0
   };
 }
 
-function renderStats(stats: DownstreamResponseStats, file: string): void {
+function renderStats(stats: DownstreamStats, file: string): void {
   const connected = stats.connected ? "已连接" : (stats.enabled ? "未连接" : "未启用");
   $("dsSummary").textContent =
-    "目标 " + stats.target + " · " + connected +
+    (stats.serverMode
+      ? "服务端模式 · 监听 " + (stats.listenTarget ?? stats.target) + " · " + (stats.listening ? "监听中" : "未监听") +
+        " · 在线客户端 " + stats.clientCount
+      : "客户端模式 · 目标 " + stats.target + " · " + connected) +
     (stats.connectedSince ? "（自 " + stats.connectedSince + "）" : "") +
     " · 已下发 " + stats.sent + " 条" +
     " · 失败 " + stats.failed +
@@ -71,20 +119,6 @@ function renderStats(stats: DownstreamResponseStats, file: string): void {
   }
 
   $("dsFile").textContent = "配置文件：" + file;
-}
-
-interface DownstreamResponseStats {
-  target: string;
-  connected: boolean;
-  connectedSince?: string | null;
-  sent: number;
-  failed: number;
-  retries: number;
-  queueDepth: number;
-  lastSentAt?: string | null;
-  lastError?: string | null;
-  templateProblems: string[];
-  enabled: boolean;
 }
 
 async function save(): Promise<void> {

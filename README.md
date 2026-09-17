@@ -477,6 +477,7 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 | `POST /api/downstream/test` | **B4** 测试到下游的 TCP 连接 |
 | `POST /api/downstream/preview` | **B4** 用最近一条包裹渲染模板，返回实际报文 |
 | `GET /api/downstream/log?limit=` | **B4** 最近下发记录（成功/失败/字节数/错误） |
+| `POST /api/downstream`（protocol=tcp-server） | **B5** 平台作为 TCP 服务端监听并广播；状态里带 `listening`/`listenTarget`/`clientCount`/`clients` |
 | `GET /api/devices` | 设备信息页数据：相机清单（方位/清单标识/型号/序列号/在线/未发现）+ 汇总 + 六面聚合（A9） |
 | `GET /api/camera-positions` | 相机方位映射的当前内容（A9） |
 | `POST /api/camera-positions` | 保存方位映射（写 `config\camera-positions.ini`，自动备份） |
@@ -734,7 +735,50 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b4-downstream.ps1
 覆盖：模板格式与字段、断线期间不丢、恢复后自动补发且**每条只发一次**、换模板立即生效、
 模板校验，共 31 项断言。
 
-## 十、两个进程的边界
+## 十、下游 TCP 服务端输出（B5）
+
+B4 是"平台连下游"（客户端模式），B5 反过来：**平台监听端口，下游连上来**，
+一有包裹就广播给**所有已连接的下游**。配置就是同一份 `downstream.json`，把 `protocol` 换成 `tcp-server`：
+
+```json
+{
+  "enabled": true,
+  "protocol": "tcp-server",
+  "host": "0.0.0.0",          // 绑定地址（服务端模式下 host 是"本机要绑哪个网卡"）
+  "port": 9000,               // 监听端口
+  "template": "{traceId}|{code}|{weight}\r\n",
+  "retryIntervalMs": 1000,
+  "sendOnlyComplete": true,
+  "replayRecentCount": 0      // 新客户端接入时补发最近 N 条（0=不补发）
+}
+```
+
+**多客户端与断线行为**
+
+| 场景 | 行为 |
+|---|---|
+| 多个下游同时接入 | 每个客户端一个独立连接，包裹**广播**给所有在线客户端 |
+| 某个客户端断开 | 只把这一个客户端移除（写失败或检测到对端 FIN），**不影响采集、也不影响其他客户端** |
+| 一个客户端卡住 | 它自己的写失败只影响自己，其他客户端照常收 |
+| 没有客户端在线 | 包裹留在待发队列（`dispatchState=pending`），**不算失败、不会丢** |
+| 客户端接入 | 立刻开始收新包裹；`replayRecentCount>0` 时先补发最近 N 条（下游重启后能补数据） |
+| "已下发"的判定 | 广播那一刻**只要有一个客户端写成功**就算已下发（其余靠 replay 补），符合现场"下游收到就行"的语义 |
+
+界面（配置页 →「下游输出（TCP）」）加了**模式下拉**（客户端 / 服务端），
+切到服务端后地址/端口标签自动变成"绑定地址 / 监听端口"，并多出一块
+**已接入的下游客户端**列表（编号 / 远端地址 / 接入时间 / 已发条数 / 字节数 / 最近错误）。
+
+回归测试（脚本自己起两个 TCP 客户端）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\test-b5-tcp-server.ps1
+```
+
+覆盖：监听成功、两个客户端同时接入并都收到广播、杀掉一个客户端后另一个不受影响、
+采集继续正常入库、客户端重连后恢复接收、**没有客户端时包裹留在队列且客户端接入后自动补发**，
+共 20 项断言。
+
+## 十一、两个进程的边界
 
 | | 采集宿主（Edge） | 业务平台（Platform） |
 |---|---|---|
@@ -747,7 +791,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b4-downstream.ps1
 通信：V1 用文件 spool（`SpoolTailer` 增量读取，只处理完整行）；V2 换成 gRPC/命名管道时只需替换 `SpoolTailer`，
 `SpoolStore` 与平台 API 不动。
 
-## 十一、代码导读
+## 十二、代码导读
 
 **采集侧（net48）**
 
@@ -764,7 +808,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b4-downstream.ps1
 - `DwsEdge.Platform/BarcodeRuleStore.cs`：规则文件的读写、校验、备份与热加载。
 - `DwsEdge.Platform/DedupStore.cs`：去重指纹归档（按 traceId 的索引 + WAL + 定期整理 + 保留期）。
 - `DwsEdge.Platform/HistoryStore.cs`：历史库（快照 + 按 traceId 收敛的索引）、查询过滤、CSV 导出。
-- `DwsEdge.Platform/DownstreamSender.cs` + `DownstreamStore.cs` + `MessageTemplate.cs`：B4 下游 TCP 输出（模板、重传、连接活性检测）。
+- `DwsEdge.Platform/DownstreamSender.cs` + `DownstreamStore.cs` + `MessageTemplate.cs`：B4/B5 下游输出（客户端/服务端两种模式、模板、重传、连接活性检测、广播）。
 
 **平台侧（net10）**
 
@@ -780,7 +824,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b4-downstream.ps1
 - `frontend/src/realtime.ts` / `devices.ts` / `config.ts`：三个页签各自的渲染逻辑。
 - `frontend/src/sse.ts` / `dom.ts`：实时推送封装与 DOM 小工具。
 
-## 十二、常见问题
+## 十三、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -802,7 +846,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b4-downstream.ps1
 | 配置页红字"找不到 apply-config.ps1" | 跑一次 `build.ps1`（会把 `tools\*.ps1` 拷到 `runtime\tools`），或手工把 tools 目录放到 runtime 旁边 |
 | 相机显示"未发现" | cfg 里 `enable="1"` 但 SDK 没报；查上电、网线、网段，或该相机被别的软件占用 |
 
-## 十三、下一步（V1 完整版）
+## 十四、下一步（V1 完整版）
 
 采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做），平台侧包裹合并 / 历史库 / 存图访问 /
 统计与实时推送 / 设备信息 / 一键应用配置也都打通了。接着按 V1 需求清单排：

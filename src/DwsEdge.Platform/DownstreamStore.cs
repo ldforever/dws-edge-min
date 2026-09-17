@@ -41,6 +41,17 @@ namespace DwsEdge.Platform
         /// <summary>批量发送时每条之间的间隔（毫秒），给下游留处理时间。</summary>
         public int sendIntervalMs { get; set; }
 
+        /// <summary>B5 服务端模式：新客户端接入时补发最近 N 条（0 = 不补发）。</summary>
+        public int replayRecentCount { get; set; }
+
+        /// <summary>是否服务端模式（平台监听、下游接入）。</summary>
+        public static bool IsServerMode(DownstreamOptions options)
+        {
+            return options != null
+                && (string.Equals(options.protocol, "tcp-server", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(options.protocol, "server", StringComparison.OrdinalIgnoreCase));
+        }
+
         public DownstreamOptions Clone()
         {
             return (DownstreamOptions)MemberwiseClone();
@@ -75,6 +86,16 @@ namespace DwsEdge.Platform
         public string lastSentAt { get; set; }
         public string lastError { get; set; }
         public List<string> templateProblems { get; set; } = new List<string>();
+
+        // ---- B5：服务端模式 ----
+
+        public bool serverMode { get; set; }
+        public bool listening { get; set; }
+        public string listenTarget { get; set; }
+        public int clientCount { get; set; }
+
+        /// <summary>已接入的下游客户端（id / 远端地址 / 接入时间 / 已发条数 / 字节数 / 最近错误）。</summary>
+        public List<object> clients { get; set; } = new List<object>();
     }
 
     /// <summary>
@@ -173,13 +194,15 @@ namespace DwsEdge.Platform
                 return problems;
             }
 
-            if (!string.Equals(options.protocol, "tcp-client", StringComparison.OrdinalIgnoreCase))
+            bool isClient = string.Equals(options.protocol, "tcp-client", StringComparison.OrdinalIgnoreCase);
+            bool isServer = DownstreamOptions.IsServerMode(options);
+            if (!isClient && !isServer)
             {
-                problems.Add("protocol 目前只支持 tcp-client");
+                problems.Add("protocol 只支持 tcp-client（平台连下游）或 tcp-server（平台监听、下游接入）");
             }
             if (string.IsNullOrEmpty(options.host))
             {
-                problems.Add("host 不能为空");
+                problems.Add(isServer ? "host 不能为空（服务端模式填绑定地址，例如 0.0.0.0）" : "host 不能为空");
             }
             if (options.port < 1 || options.port > 65535)
             {
@@ -196,6 +219,10 @@ namespace DwsEdge.Platform
             if (options.maxAttempts < 0)
             {
                 problems.Add("maxAttempts 不能为负（0 = 一直重试）");
+            }
+            if (options.replayRecentCount < 0 || options.replayRecentCount > 100000)
+            {
+                problems.Add("replayRecentCount 建议在 0-100000 之间");
             }
             if (!IsKnownEncoding(options.encoding))
             {

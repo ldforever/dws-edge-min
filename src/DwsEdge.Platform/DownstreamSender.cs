@@ -48,6 +48,26 @@ namespace DwsEdge.Platform
         private string _lastSentAt;
         private string _lastError;
 
+        // ---- B5：服务端模式的监听与客户端 ----
+
+        /// <summary>一个已连接的下游客户端。</summary>
+        private sealed class ClientConn
+        {
+            public string id;
+            public string remote;
+            public TcpClient client;
+            public NetworkStream stream;
+            public DateTime connectedAtUtc = DateTime.UtcNow;
+            public long sent;
+            public long bytes;
+            public string lastError;
+        }
+
+        private readonly List<ClientConn> _clients = new List<ClientConn>();
+        private TcpListener _listener;
+        private string _listenTarget;
+        private long _clientSeq;
+
         public DownstreamSender(SpoolStore store, DownstreamStore config, ILogger<DownstreamSender> logger)
         {
             _store = store;
@@ -68,7 +88,14 @@ namespace DwsEdge.Platform
                     DownstreamOptions options = _config.Current;
                     if (options == null || !options.enabled)
                     {
+                        CloseAllClients();
                         delayMs = 1000;
+                    }
+                    else if (DownstreamOptions.IsServerMode(options))
+                    {
+                        // B5：服务端模式 —— 先保证在监听，然后广播给所有已连接客户端
+                        EnsureListening(options);
+                        delayMs = SendServerRound(options);
                     }
                     else
                     {
@@ -179,6 +206,341 @@ namespace DwsEdge.Platform
 
             return 200;
         }
+
+        #region B5：TCP 服务端模式
+
+        /// <summary>保证监听已启动（地址/端口变了会重建监听）。</summary>
+        private void EnsureListening(DownstreamOptions options)
+        {
+            string target = options.host + ":" + options.port.ToString(CultureInfo.InvariantCulture);
+            if (_listener != null && string.Equals(_listenTarget, target, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            CloseListener();
+            try
+            {
+                System.Net.IPAddress address;
+                string host = string.IsNullOrEmpty(options.host) ? "0.0.0.0" : options.host.Trim();
+                if (host == "0.0.0.0" || host == "*" || host == "+")
+                {
+                    address = System.Net.IPAddress.Any;
+                }
+                else if (!System.Net.IPAddress.TryParse(host, out address))
+                {
+                    throw new InvalidOperationException("服务端模式的 host 必须是本机可绑定的 IP（如 0.0.0.0 / 192.168.1.10）");
+                }
+
+                TcpListener listener = new TcpListener(address, options.port);
+                listener.Start();
+                _listener = listener;
+                _listenTarget = target;
+                _lastError = null;
+                _logger.LogInformation("下游 TCP 服务端已开始监听：{0}（等待下游接入）", target);
+            }
+            catch (Exception ex)
+            {
+                _lastError = ex.Message;
+                _logger.LogWarning("启动下游 TCP 服务端监听失败（{0}）：{1}", target, ex.Message);
+                CloseListener();
+            }
+        }
+
+        /// <summary>接收新接入的下游客户端（非阻塞：只取已经排队的连接）。</summary>
+        private void AcceptPendingClients(DownstreamOptions options)
+        {
+            if (_listener == null)
+            {
+                return;
+            }
+
+            while (true)
+            {
+                try
+                {
+                    if (!_listener.Pending())
+                    {
+                        return;
+                    }
+
+                    TcpClient client = _listener.AcceptTcpClient();
+                    client.NoDelay = true;
+                    ClientConn conn = new ClientConn();
+                    conn.id = "C" + Interlocked.Increment(ref _clientSeq);
+                    conn.client = client;
+                    conn.stream = client.GetStream();
+                    conn.remote = client.Client.RemoteEndPoint == null ? "?" : client.Client.RemoteEndPoint.ToString();
+                    _clients.Add(conn);
+
+                    _logger.LogInformation("下游客户端已接入：{0}（{1}），当前 {2} 个", conn.id, conn.remote, _clients.Count);
+                    AddLog(new DispatchLogItem
+                    {
+                        time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                        success = true,
+                        message = "客户端接入 " + conn.id + "（" + conn.remote + "）"
+                    });
+
+                    if (options.replayRecentCount > 0)
+                    {
+                        ReplayToClient(conn, options);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _lastError = ex.Message;
+                    _logger.LogWarning("接收下游客户端失败：{0}", ex.Message);
+                    return;
+                }
+            }
+        }
+
+        /// <summary>给新接入的客户端补发最近 N 条（下游重启/断线后能补上数据）。</summary>
+        private void ReplayToClient(ClientConn conn, DownstreamOptions options)
+        {
+            try
+            {
+                List<ParcelRecord> recent = _store.LatestParcels(options.replayRecentCount);
+                if (recent.Count == 0)
+                {
+                    return;
+                }
+
+                int oks = 0;
+                for (int i = recent.Count - 1; i >= 0; i--)   // 从旧到新补发
+                {
+                    string payload = MessageTemplate.Render(options.template, recent[i]);
+                    byte[] bytes = DownstreamStore.ResolveEncoding(options.encoding).GetBytes(payload);
+                    if (WriteToClient(conn, bytes))
+                    {
+                        oks++;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                _logger.LogInformation("已给客户端 {0} 补发最近 {1} 条", conn.id, oks);
+                AddLog(new DispatchLogItem
+                {
+                    time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                    success = true,
+                    message = "给 " + conn.id + " 补发最近 " + oks + " 条"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("补发失败：{0}", ex.Message);
+            }
+        }
+
+        /// <summary>写一个客户端；失败就把这个客户端踢掉（不影响其他客户端和采集）。</summary>
+        private bool WriteToClient(ClientConn conn, byte[] bytes)
+        {
+            try
+            {
+                if (conn.stream == null || conn.client == null || !conn.client.Connected)
+                {
+                    return false;
+                }
+
+                // 先看对端是否已经关了（FIN）—— 否则写进去是黑洞，会被误判成成功
+                System.Net.Sockets.Socket socket = conn.client.Client;
+                if (socket != null && socket.Poll(0, SelectMode.SelectRead) && socket.Available == 0)
+                {
+                    return false;
+                }
+
+                conn.stream.Write(bytes, 0, bytes.Length);
+                conn.stream.Flush();
+                conn.sent++;
+                conn.bytes += bytes.Length;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                conn.lastError = ex.Message;
+                return false;
+            }
+        }
+
+        /// <summary>广播一轮：把待下发的包裹发给所有在线客户端。</summary>
+        private int SendServerRound(DownstreamOptions options)
+        {
+            AcceptPendingClients(options);
+            DropDeadClients();
+
+            List<ParcelRecord> pending = _store.PendingDispatch(50);
+            if (pending.Count == 0)
+            {
+                return 300;
+            }
+            if (_clients.Count == 0)
+            {
+                // 没有客户端接入：包裹留在队列里等，不算失败（这就是"不丢"）
+                return 500;
+            }
+
+            foreach (ParcelRecord record in pending)
+            {
+                if (record.complete != true && options.sendOnlyComplete)
+                {
+                    continue;
+                }
+                if (options.maxAttempts > 0 && record.dispatchAttempts >= options.maxAttempts)
+                {
+                    continue;
+                }
+
+                string payload = MessageTemplate.Render(options.template, record);
+                byte[] bytes = DownstreamStore.ResolveEncoding(options.encoding).GetBytes(payload);
+
+                int okCount = 0;
+                List<ClientConn> snapshot = new List<ClientConn>(_clients);
+                for (int i = 0; i < snapshot.Count; i++)
+                {
+                    if (WriteToClient(snapshot[i], bytes))
+                    {
+                        okCount++;
+                    }
+                }
+
+                string time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                if (okCount > 0)
+                {
+                    // 只要有一个客户端收到就算"已下发"（业务语义）；其余客户端靠 replay 补
+                    _store.AckDispatch(record.traceId, true, null);
+                    _sent++;
+                    _bytesSent += bytes.Length;
+                    _lastSentAt = time;
+                    AddLog(new DispatchLogItem
+                    {
+                        time = time,
+                        traceId = record.traceId,
+                        success = true,
+                        attempt = record.dispatchAttempts + 1,
+                        bytes = bytes.Length,
+                        payload = Trim(payload),
+                        message = "已广播给 " + okCount + " 个客户端"
+                    });
+                }
+                else
+                {
+                    _failed++;
+                    _retries++;
+                    _store.AckDispatch(record.traceId, false, "没有可用的下游客户端");
+                    AddLog(new DispatchLogItem
+                    {
+                        time = time,
+                        traceId = record.traceId,
+                        success = false,
+                        attempt = record.dispatchAttempts + 1,
+                        bytes = bytes.Length,
+                        payload = Trim(payload),
+                        message = "广播失败（客户端都断了）",
+                        error = "没有可用的下游客户端"
+                    });
+                }
+
+                DropDeadClients();
+                if (_clients.Count == 0)
+                {
+                    return 500;
+                }
+            }
+
+            return 200;
+        }
+
+        /// <summary>清掉已经断开/出错的客户端（客户端断开不影响采集，也不影响其他客户端）。</summary>
+        private void DropDeadClients()
+        {
+            for (int i = _clients.Count - 1; i >= 0; i--)
+            {
+                ClientConn conn = _clients[i];
+                bool alive = true;
+                try
+                {
+                    if (conn.client == null || !conn.client.Connected)
+                    {
+                        alive = false;
+                    }
+                    else
+                    {
+                        System.Net.Sockets.Socket socket = conn.client.Client;
+                        if (socket != null && socket.Poll(0, SelectMode.SelectRead) && socket.Available == 0)
+                        {
+                            alive = false;   // 对端已关闭
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                    alive = false;
+                }
+
+                if (!alive)
+                {
+                    RemoveClient(conn, "客户端断开");
+                }
+            }
+        }
+
+        private void RemoveClient(ClientConn conn, string reason)
+        {
+            try
+            {
+                _clients.Remove(conn);
+                if (conn.stream != null)
+                {
+                    conn.stream.Dispose();
+                }
+                if (conn.client != null)
+                {
+                    conn.client.Close();
+                }
+            }
+            catch (Exception)
+            {
+            }
+
+            _logger.LogInformation("下游客户端已移除：{0}（{1}），剩余 {2} 个", conn.id, reason, _clients.Count);
+            AddLog(new DispatchLogItem
+            {
+                time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                success = false,
+                message = "客户端 " + conn.id + " 移除：" + reason + (string.IsNullOrEmpty(conn.lastError) ? "" : "（" + conn.lastError + "）")
+            });
+        }
+
+        private void CloseListener()
+        {
+            try
+            {
+                if (_listener != null)
+                {
+                    _listener.Stop();
+                }
+            }
+            catch (Exception)
+            {
+            }
+            _listener = null;
+            _listenTarget = null;
+        }
+
+        private void CloseAllClients()
+        {
+            List<ClientConn> snapshot = new List<ClientConn>(_clients);
+            for (int i = 0; i < snapshot.Count; i++)
+            {
+                RemoveClient(snapshot[i], "停止输出");
+            }
+            CloseListener();
+        }
+
+        #endregion
 
         private static string Trim(string payload)
         {
@@ -310,8 +672,15 @@ namespace DwsEdge.Platform
 
         private void OnConfigChanged()
         {
-            // 地址/编码变了就断开重连（下次循环会按新配置连）
+            // 地址/编码/模式变了：断开客户端与监听，下次循环按新配置重建
             CloseConnection();
+            CloseAllClients();
+        }
+
+        private bool IsPortInUseBySelf(DownstreamOptions options)
+        {
+            string target = options.host + ":" + options.port.ToString(CultureInfo.InvariantCulture);
+            return _listener != null && string.Equals(_listenTarget, target, StringComparison.OrdinalIgnoreCase);
         }
 
         private void AddLog(DispatchLogItem item)
@@ -359,12 +728,71 @@ namespace DwsEdge.Platform
             stats.lastError = _lastError;
             stats.queueDepth = _store.PendingDispatchCount();
             stats.templateProblems = MessageTemplate.Validate(options.template);
+
+            // B5：服务端模式的监听状态与客户端列表
+            stats.serverMode = DownstreamOptions.IsServerMode(options);
+            stats.listening = _listener != null;
+            stats.listenTarget = _listenTarget;
+            List<object> clients = new List<object>();
+            for (int i = 0; i < _clients.Count; i++)
+            {
+                ClientConn conn = _clients[i];
+                clients.Add(new
+                {
+                    id = conn.id,
+                    remote = conn.remote,
+                    connectedAt = conn.connectedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
+                    sent = conn.sent,
+                    bytes = conn.bytes,
+                    lastError = conn.lastError
+                });
+            }
+            stats.clients = clients;
+            stats.clientCount = clients.Count;
             return stats;
         }
 
         /// <summary>测试连接（不发送数据），返回是否成功与错误信息。</summary>
         public object TestConnection(DownstreamOptions options)
         {
+            // 服务端模式：能监听成功就算通过（顺便告诉现场当前监听到哪个地址）
+            if (DownstreamOptions.IsServerMode(options))
+            {
+                try
+                {
+                    System.Net.IPAddress address;
+                    string host = string.IsNullOrEmpty(options.host) ? "0.0.0.0" : options.host.Trim();
+                    if (host == "0.0.0.0" || host == "*" || host == "+")
+                    {
+                        address = System.Net.IPAddress.Any;
+                    }
+                    else if (!System.Net.IPAddress.TryParse(host, out address))
+                    {
+                        return new { ok = false, target = host + ":" + options.port, error = "host 必须是本机可绑定的 IP（如 0.0.0.0）" };
+                    }
+
+                    TcpListener probe = new TcpListener(address, options.port);
+                    probe.Start();
+                    probe.Stop();
+                    return new
+                    {
+                        ok = true,
+                        target = host + ":" + options.port,
+                        note = "端口可用，服务端模式会在这里等待下游接入" +
+                               (IsPortInUseBySelf(options) ? "（注意：当前已在监听同一个端口）" : "")
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new
+                    {
+                        ok = false,
+                        target = options.host + ":" + options.port,
+                        error = "端口不可用：" + ex.Message + (IsPortInUseBySelf(options) ? "（本服务已经在监听这个端口，属正常）" : "")
+                    };
+                }
+            }
+
             string target = options.host + ":" + options.port.ToString(CultureInfo.InvariantCulture);
             try
             {
@@ -388,6 +816,7 @@ namespace DwsEdge.Platform
         public override void Dispose()
         {
             CloseConnection();
+            CloseAllClients();
             base.Dispose();
         }
     }

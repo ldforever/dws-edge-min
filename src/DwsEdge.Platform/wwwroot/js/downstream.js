@@ -3,13 +3,16 @@
  *
  * 现场最常干的三件事：改模板看一眼长什么样、测一下连不连得通、看哪条没发出去。
  */
-import { api } from "./api.js?v=665be265";
-import { $, badge, cell, clear, el, notify } from "./dom.js?v=665be265";
+import { api } from "./api.js?v=f6a72d07";
+import { $, badge, cell, clear, el, notify } from "./dom.js?v=f6a72d07";
 export function initDownstream() {
     $("btnDsSave").addEventListener("click", () => void save());
     $("btnDsTest").addEventListener("click", () => void testConnection());
     $("btnDsPreview").addEventListener("click", () => void preview());
     $("btnDsRefresh").addEventListener("click", () => void refreshDownstream());
+    $("dsProtocol").addEventListener("change", () => {
+        applyProtocolLabels($("dsProtocol").value === "tcp-server");
+    });
 }
 export async function refreshDownstream() {
     const res = await api.downstream();
@@ -19,20 +22,58 @@ export async function refreshDownstream() {
     }
     const config = res.data.config;
     $("dsEnabled").checked = config.enabled;
+    $("dsProtocol").value = config.protocol === "tcp-server" ? "tcp-server" : "tcp-client";
     $("dsHost").value = config.host;
     $("dsPort").value = String(config.port);
+    $("dsReplay").value = String(config.replayRecentCount ?? 0);
     $("dsTemplate").value = config.template;
     $("dsEncoding").value = config.encoding ?? "utf-8";
     $("dsRetry").value = String(config.retryIntervalMs);
     $("dsOnlyComplete").checked = config.sendOnlyComplete;
     $("dsFields").textContent = "可用字段：" + res.data.templateFields.map((f) => "{" + f + "}").join(" ");
+    applyProtocolLabels(res.data.stats.serverMode);
     renderStats(res.data.stats, res.data.file);
+    renderClients(res.data.stats);
     await loadLog();
+}
+/** 服务端/客户端两种模式下，host/port 的含义不同，标签跟着变 */
+function applyProtocolLabels(serverMode) {
+    $("dsHostLabel").textContent = serverMode ? "绑定地址：" : "下游地址：";
+    $("dsPortLabel").textContent = serverMode ? "监听端口：" : "下游端口：";
+    $("dsHost").setAttribute("placeholder", serverMode ? "0.0.0.0" : "127.0.0.1");
+    $("dsReplayLabel").style.display = serverMode ? "" : "none";
+}
+function renderClients(stats) {
+    const box = $("dsClientsBox");
+    box.style.display = stats.serverMode ? "" : "none";
+    if (!stats.serverMode) {
+        return;
+    }
+    const body = $("dsClientRows");
+    clear(body);
+    const clients = stats.clients ?? [];
+    for (const client of clients) {
+        const tr = el("tr");
+        tr.appendChild(cell(client.id, "code"));
+        tr.appendChild(cell(client.remote, "muted"));
+        tr.appendChild(cell(client.connectedAt, "muted"));
+        tr.appendChild(cell(client.sent));
+        tr.appendChild(cell(client.bytes));
+        tr.appendChild(cell(client.lastError ?? "", "muted"));
+        body.appendChild(tr);
+    }
+    if (!clients.length) {
+        const tr = el("tr");
+        const td = el("td", "还没有下游接入（平台已在本机监听，等下游连上来）", "muted");
+        td.colSpan = 6;
+        tr.appendChild(td);
+        body.appendChild(tr);
+    }
 }
 function readOptions() {
     return {
         enabled: $("dsEnabled").checked,
-        protocol: "tcp-client",
+        protocol: $("dsProtocol").value,
         host: $("dsHost").value.trim(),
         port: Number($("dsPort").value) || 0,
         template: $("dsTemplate").value,
@@ -41,13 +82,17 @@ function readOptions() {
         retryIntervalMs: Number($("dsRetry").value) || 5000,
         maxAttempts: 0,
         sendOnlyComplete: $("dsOnlyComplete").checked,
-        sendIntervalMs: 0
+        sendIntervalMs: 0,
+        replayRecentCount: Number($("dsReplay").value) || 0
     };
 }
 function renderStats(stats, file) {
     const connected = stats.connected ? "已连接" : (stats.enabled ? "未连接" : "未启用");
     $("dsSummary").textContent =
-        "目标 " + stats.target + " · " + connected +
+        (stats.serverMode
+            ? "服务端模式 · 监听 " + (stats.listenTarget ?? stats.target) + " · " + (stats.listening ? "监听中" : "未监听") +
+                " · 在线客户端 " + stats.clientCount
+            : "客户端模式 · 目标 " + stats.target + " · " + connected) +
             (stats.connectedSince ? "（自 " + stats.connectedSince + "）" : "") +
             " · 已下发 " + stats.sent + " 条" +
             " · 失败 " + stats.failed +
