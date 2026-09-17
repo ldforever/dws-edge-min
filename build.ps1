@@ -44,6 +44,31 @@ function Copy-Files {
 $dotnet = Find-DotNet
 $srcDir = Join-Path $PSScriptRoot 'src'
 
+# 前端（TypeScript，无打包器）：有 node 就重新编译成 wwwroot\js\*.js + app.css；
+# 没有 node 就直接用仓库里已经提交的产物 —— 现场机器不需要装 node 工具链。
+$frontendDir = Join-Path $PSScriptRoot 'frontend'
+$webEntry = Join-Path $srcDir 'DwsEdge.Platform\wwwroot\js\main.js'
+if (Test-Path (Join-Path $frontendDir 'build.mjs')) {
+    $nodeExe = Get-Command node -ErrorAction SilentlyContinue
+    if ($nodeExe) {
+        Write-Host "  编译前端（TypeScript → wwwroot\js）" -ForegroundColor DarkGray
+        Push-Location $frontendDir
+        try {
+            & node build.mjs
+            if ($LASTEXITCODE -ne 0) { throw "前端编译失败：frontend\build.mjs" }
+        }
+        finally {
+            Pop-Location
+        }
+    }
+    else {
+        Write-Host "  跳过前端编译（未找到 node），使用已提交的 wwwroot\js 与 app.css" -ForegroundColor Yellow
+    }
+}
+if (!(Test-Path $webEntry)) {
+    Write-Host "  警告：缺少 src\DwsEdge.Platform\wwwroot\js\main.js —— 前端还没编译过，界面会打不开" -ForegroundColor Red
+}
+
 $projCore     = Join-Path $srcDir 'DwsEdge.Core\DwsEdge.Core.csproj'
 $projHost     = Join-Path $srcDir 'DwsEdge.Host\DwsEdge.Host.csproj'
 $projDahua    = Join-Path $srcDir 'DwsEdge.Providers.Dahua\DwsEdge.Providers.Dahua.csproj'

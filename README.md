@@ -33,6 +33,9 @@ dws-edge-min/
 ├─ tools/check-traceids.ps1      扫描 spool，检查追踪号合并与疑似冲突
 ├─ tools/apply-config.ps1        一键应用配置：写配置 → 重启 SDK 校验 → 失败自动回滚
 ├─ config/gateway.ini            采集宿主配置（选 provider + provider 参数）
+├─ frontend/                     前端 TypeScript 工程（无框架、无打包器）
+│  ├─ src/                       api / sse / dom / realtime / devices / config / types
+│  └─ build.mjs                  tsc 编译 → wwwroot\js，并拷贝样式
 ├─ src/
 │  ├─ DwsEdge.Core/              契约与模型（net48 + net10.0 双目标，两边共用）
 │  │  ├─ Model/                  CodeItem / ImageRef / ParcelEvent / CameraReadEvent / CameraStatusEvent
@@ -58,6 +61,9 @@ dws-edge-min/
 ```
 
 ## 二、依赖
+
+* **后端**：.NET SDK 10（net48 目标包 + ASP.NET Core），离线可用 `build.ps1 -Offline`；
+* **前端**：Node ≥ 18 + TypeScript（**可选**）—— 只在改界面时需要，现场部署用仓库里已编译好的 `wwwroot`。
 
 - **.NET SDK 10**（`dotnet build`，开发机上已有）；
 - **.NET Framework 4.8 目标包**（编译 net48 工程）；
@@ -367,7 +373,59 @@ spool\.consumed               平台写出的"已消费到哪一天"标记（供
 > 注意：如果 Visual Studio 正打开这个解决方案并在后台构建，`obj\bin` 会被 MSBuild/VBCSCompiler 占用，
 > `build.ps1` 会报“拒绝访问”。关掉 VS 再编译，或直接在 VS 里生成。
 
-## 四、运行后能看到什么
+## 四、前端工程（TypeScript，无框架）
+
+界面不再是「一个 index.html 里塞 500 行 JS」，而是一个独立的小工程：
+
+```
+frontend/
+├─ package.json          devDependencies 只有 typescript，没有打包器
+├─ tsconfig.json         类型检查用（strict）
+├─ tsconfig.build.json   编译输出用（→ src\DwsEdge.Platform\wwwroot\js）
+├─ build.mjs             构建脚本：tsc + 拷贝样式（--watch 可监听）
+└─ src/
+   ├─ types.ts           /api/* 的 DTO 类型，和后端 DTO 一一对应
+   ├─ api.ts             所有接口调用（返回 { status, data }，不抛 HTTP 异常）
+   ├─ sse.ts             EventSource 封装 + 断线重连
+   ├─ dom.ts             $ / cell / 方位中文名 / CSV / 下载 / 提示
+   ├─ realtime.ts        实时监控页（KPI + 过包表 + 相机表）
+   ├─ devices.ts         设备信息页（方位编辑、保存、六面概览、导出 CSV）
+   ├─ config.ts          配置页（一键应用 + 结果回显）
+   ├─ main.ts            入口：页签切换 + 装配
+   └─ styles.css         全部样式
+```
+
+编译产物（**提交进仓库**，现场机器不需要 node）：
+
+```
+src\DwsEdge.Platform\wwwroot\
+├─ index.html   只剩骨架 + 文案
+├─ app.css      ← src/styles.css
+└─ js\*.js      ← src/*.ts 编译出的原生 ES Module（浏览器直接加载）
+```
+
+**为什么不用打包器**（esbuild / webpack）：这个前端只有五六个模块、零第三方运行时依赖，
+浏览器原生 ES Module 就够了。好处是离线现场零工具链、DevTools 里看到的就是真实源文件名、
+改一行样式不用等打包。以后真要做 SPA 再上 Vue/React + Vite 也不冲突——后端接口一个字都不用改。
+
+开发循环：
+
+```powershell
+cd frontend
+npm install      # 只装 typescript（可选；不装也会用全局 tsc）
+npm run check    # 类型检查（strict，不产出文件）
+npm run watch    # 改 .ts / .css 自动重新编译
+npm run build    # 一次性构建
+```
+
+`build.ps1` 会自动跑一次前端构建：**检测到 node 才跑**，没有 node 就直接用仓库里已提交的产物
+（现场部署因此不依赖 node 工具链）。
+
+**类型是干什么用的**：`types.ts` 里的 interface 和后端 `SpoolModels.cs` / `ConfigStore.cs` 的 DTO 一一对应。
+A9 那一次一口气加了 `declaredKind / declaredValue / position / discovered / sessionId / positionPending`
+这些字段，字段名写错在 `npm run check` 阶段就会报错，不用等界面上出现一片空白单元格。
+
+## 五、运行后能看到什么
 
 **采集宿主（控制台）**
 
@@ -401,7 +459,7 @@ spool\.consumed               平台写出的"已消费到哪一天"标记（供
 实测结果示例：`{"events":4,"parcels":2,"noread":0,"images":2,"readRate":1,"parseErrors":0}` —— 两次触发共 4 条事件（detected + enriched），
 被平台合并成 2 个包裹，读码率 100%，图片按需可读。
 
-## 五、两个进程的边界
+## 六、两个进程的边界
 
 | | 采集宿主（Edge） | 业务平台（Platform） |
 |---|---|---|
@@ -414,7 +472,7 @@ spool\.consumed               平台写出的"已消费到哪一天"标记（供
 通信：V1 用文件 spool（`SpoolTailer` 增量读取，只处理完整行）；V2 换成 gRPC/命名管道时只需替换 `SpoolTailer`，
 `SpoolStore` 与平台 API 不动。
 
-## 六、代码导读
+## 七、代码导读
 
 **采集侧（net48）**
 
@@ -433,15 +491,24 @@ spool\.consumed               平台写出的"已消费到哪一天"标记（供
 - `DwsEdge.Platform/SpoolTailer.cs`：增量读取 spool，按字节偏移记录位置，只处理以换行结尾的完整行。
 - `DwsEdge.Platform/SpoolStore.cs`：按 `traceId` 合并两次回调（`updates` 计数），维护最近 N 条、统计、SSE 订阅者、图片按需读取（带目录白名单校验）。
 - `DwsEdge.Platform/ConfigStore.cs`：配置页与一键应用（调 `tools\apply-config.ps1`）、相机方位映射的读写。
-- `DwsEdge.Platform/wwwroot/index.html`：三个页签 —— 实时监控（SSE + 统计卡片 + 图片链接）、设备信息（相机清单/方位/六面概览）、配置（一键应用）。
+- `DwsEdge.Platform/wwwroot/index.html`：只剩骨架与文案；样式和逻辑分别来自 `frontend/src/styles.css` 与 `frontend/src/*.ts` 的编译产物。
 
-## 七、常见问题
+**前端（TypeScript，见第四节）**
+
+- `frontend/src/main.ts`：入口，装配页签与实时推送。
+- `frontend/src/api.ts` + `types.ts`：接口层与 DTO 类型（与后端一一对应）。
+- `frontend/src/realtime.ts` / `devices.ts` / `config.ts`：三个页签各自的渲染逻辑。
+- `frontend/src/sse.ts` / `dom.ts`：实时推送封装与 DOM 小工具。
+
+## 八、常见问题
 
 | 现象 | 处理 |
 |---|---|
 | `build.ps1` 报“拒绝访问” | VS 正在占用 `obj\bin`，关闭 VS 后重试，或直接在 VS 里生成 |
 | 平台启动即崩、报事件日志无写权限 | 已在 `Program.cs` 关闭默认日志提供程序（只留控制台）；若自行加日志，注意别依赖 Windows 事件日志 |
 | 页面 404 或样式丢失 | `runtime\platform\wwwroot` 缺失；`build.ps1` 会单独拷贝 wwwroot，重新编译即可 |
+| 页面白屏、控制台报 `app.js/js 404` | 前端没编译：`cd frontend && npm run build`（或直接跑 `build.ps1`），产物要落在 `wwwroot\js` 与 `wwwroot\app.css` |
+| `npm run check` 报某个字段不存在 | 后端 DTO 改了、`frontend/src/types.ts` 没跟着改 —— 这正是上 TypeScript 想要的提示 |
 | 采集宿主返回 3000 | 相机数与配置不符（没连上）：核对 `runtime\Cfg\LogisticsBase.cfg` 的 `num` 与 `<Camera ... enable="1">` |
 | 采集宿主返回 2200 | 没插加密狗 |
 | 软触发没反应 | `triggerMode` 不是 2；用 `tools\set-trigger-mode.ps1 -Mode soft` 改好并重启采集宿主 |
@@ -454,7 +521,7 @@ spool\.consumed               平台写出的"已消费到哪一天"标记（供
 | 配置页红字"找不到 apply-config.ps1" | 跑一次 `build.ps1`（会把 `tools\*.ps1` 拷到 `runtime\tools`），或手工把 tools 目录放到 runtime 旁边 |
 | 相机显示"未发现" | cfg 里 `enable="1"` 但 SDK 没报；查上电、网线、网段，或该相机被别的软件占用 |
 
-## 八、下一步（V1 完整版）
+## 九、下一步（V1 完整版）
 
 采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做），平台侧包裹合并 / 历史库 / 存图访问 /
 统计与实时推送 / 设备信息 / 一键应用配置也都打通了。接着按 V1 需求清单排：

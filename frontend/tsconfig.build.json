@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "sourceMap": false,
+    "declaration": false,
+    "outDir": "../src/DwsEdge.Platform/wwwroot/js",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*.ts"]
+}

@@ -1,0 +1,51 @@
+/**
+ * 实时推送（SSE）封装。
+ *
+ * 平台在连接建立时会先补发：最近 20 条包裹 + 统计 + 当前所有相机状态，
+ * 所以这里不用自己再拉一遍初始数据；断线后 2 秒自动重连。
+ */
+import { STREAM_URL } from "./api.js";
+import type { StreamMessage } from "./types.js";
+
+export interface StreamHandlers {
+  onParcel: (data: Extract<StreamMessage, { type: "parcel" }>["data"]) => void;
+  onCamera: (data: Extract<StreamMessage, { type: "camera" }>["data"]) => void;
+  onStats: (data: Extract<StreamMessage, { type: "stats" }>["data"]) => void;
+  /** 连接状态变化（用于右上角小圆点） */
+  onStatus: (connected: boolean) => void;
+}
+
+const RECONNECT_DELAY_MS = 2000;
+
+export function connectStream(handlers: StreamHandlers): void {
+  const es = new EventSource(STREAM_URL);
+
+  es.onopen = () => handlers.onStatus(true);
+
+  es.onerror = () => {
+    handlers.onStatus(false);
+    es.close();
+    window.setTimeout(() => connectStream(handlers), RECONNECT_DELAY_MS);
+  };
+
+  es.onmessage = (event: MessageEvent<string>) => {
+    let msg: StreamMessage;
+    try {
+      msg = JSON.parse(event.data) as StreamMessage;
+    } catch {
+      return; // 半截消息，忽略
+    }
+
+    switch (msg.type) {
+      case "parcel":
+        handlers.onParcel(msg.data);
+        break;
+      case "camera":
+        handlers.onCamera(msg.data);
+        break;
+      case "stats":
+        handlers.onStats(msg.data);
+        break;
+    }
+  };
+}

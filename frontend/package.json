@@ -1,0 +1,15 @@
+{
+  "name": "dws-edge-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DWS 物流解码平台前端：TypeScript + 原生 DOM，无框架、无打包器；tsc 直接输出浏览器能跑的原生 ES Module（wwwroot\\js）",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}
