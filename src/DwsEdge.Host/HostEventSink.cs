@@ -238,7 +238,8 @@ namespace DwsEdge.Host
             }
             _spoolDate = today;
             string path = Path.Combine(_spoolDir, "events-" + today + ".jsonl");
-            _spoolWriter = new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite), new UTF8Encoding(false));
+            // bufferSize=1：每行都直接写进操作系统，进程崩溃也不会丢已写入的事件
+            _spoolWriter = new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite, 1), new UTF8Encoding(false));
             _spoolWriter.AutoFlush = true;
         }
 

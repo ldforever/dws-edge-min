@@ -200,6 +200,61 @@ powershell -ExecutionPolicy Bypass -File .\tools\check-traceids.ps1
   疑似追踪号冲突  : 1
 ```
 
+### spool 事件文件保留策略（A：带消费保护）
+
+`config\gateway.ini` 的 `[storage]` 段新增：
+
+```ini
+spoolRetentionDays=7      # spool 事件文件保存天数；0=永久保留
+```
+
+删除条件**必须同时满足**：
+
+1. 文件日期早于"今天 − spoolRetentionDays"；
+2. 业务平台已经写过消费标记 `spool\.consumed`，且该文件日期 **早于或等于**标记日期。
+
+也就是说：**平台没消费过的数据绝不会被删**。平台没运行时（没有标记），清理会打印
+`业务平台还没有写过消费标记…本次不删除任何事件文件，避免丢数据` 然后跳过。
+
+实测日志：
+
+```
+[info] spool 保留策略：目录 ...\runtime\spool；保存 7 天；每 30 分钟检查（启动时先清理一次）（仅在业务平台消费后删除）
+[info] spool 清理：删除 3 个事件文件，释放 2 KB（保存天数：7 天，已消费到：2026-09-17）
+```
+
+### 历史持久化与消费位点（B：重启不再全量重放）
+
+平台把数据落到 `runtime\platform\..\data\`（默认 `runtime\data\`）：
+
+```
+data\parcels-yyyyMMdd.jsonl   包裹快照：每次事件更新写一行完整记录（逐行落盘）
+data\offsets.json             spool 消费位点：进程重启后只读新增事件
+spool\.consumed               平台写出的"已消费到哪一天"标记（供采集宿主清理判断）
+```
+
+启动行为：
+
+1. 先从历史文件恢复最近 `History:LoadDays`（默认 2 天）的包裹 → 界面立刻有数据；
+2. 再从 `offsets.json` 记录的位置继续读 spool 新增事件，**不再全量重放**。
+
+实测（同一个 spool，两次启动）：
+
+```
+第一次（无位点）： events=33  parcels=18
+第二次（有位点）： events=0   parcels=18   ← 不重放，数据来自历史
+```
+
+历史查询接口：
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/history?from=2026-09-16&to=2026-09-17&code=YT&deviceId=cam6-top&noread=false&limit=200` | 按时间范围 + 条码/相机/无码过滤查询历史包裹（返回字段与 `/api/parcels` 一致，含 `codeDetails`、`complete`、长宽高） |
+
+> 说明：当前历史库用按天 JSONL 文件实现，方法集中在 `HistoryStore`（Append / LoadRecent / Query / LoadOffsets / SaveOffsets）。
+> 之所以没用 SQLite：当前开发环境无法离线获取 `Microsoft.Data.Sqlite` 包。等能装包时，只需用同样的方法签名替换这一个类，
+> 平台其余代码不用改。
+
 > 注意：如果 Visual Studio 正打开这个解决方案并在后台构建，`obj\bin` 会被 MSBuild/VBCSCompiler 占用，
 > `build.ps1` 会报“拒绝访问”。关掉 VS 再编译，或直接在 VS 里生成。
 
@@ -225,6 +280,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\check-traceids.ps1
 | `GET /api/stats` | 事件数、包裹数、无码数、读码率、相机在线数、解析失败数，以及 `pendingParcels`（待补全包裹）、`missingTraceId`（缺追踪号事件）、`traceIdConflicts`（疑似追踪号冲突）、图片数与磁盘占用 |
 | `GET /api/parcels?limit=50` | 最新包裹（两次回调已合并成一条）；`codes` 是条码值数组，`codeDetails` 带每个码的类型（1d/2d）与方位 |
 | `GET /api/cameras` | 相机在线状态 |
+| `GET /api/history?from=&to=&code=&deviceId=&noread=&limit=` | 历史查询（读历史文件，支持时间范围、条码、相机、无码过滤） |
 | `GET /api/images?path=<绝对路径>` | 按需读取图片（只允许图片根目录内的文件，越权返回 400） |
 | `GET /api/stream` | SSE 实时推送（包裹与统计） |
 

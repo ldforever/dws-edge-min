@@ -118,6 +118,7 @@ namespace DwsEdge.Host
             IAcquisitionProvider provider = null;
             TestConsole testConsole = null;
             ImageRetentionService retention = null;
+            SpoolRetentionService spoolRetention = null;
             int exitCode = 0;
 
             try
@@ -144,6 +145,8 @@ namespace DwsEdge.Host
 
                 // 存图保留策略（按天数清理 + 磁盘水位保护），与厂商无关
                 retention = StartRetention(baseDir, config, providerId, sink);
+                // spool 事件文件保留策略（带业务端消费保护）
+                spoolRetention = StartSpoolRetention(baseDir, config, sink);
 
                 if (testOptions.EnableSoftTrigger)
                 {
@@ -187,6 +190,11 @@ namespace DwsEdge.Host
             }
             finally
             {
+                if (spoolRetention != null)
+                {
+                    spoolRetention.Dispose();
+                }
+
                 if (retention != null)
                 {
                     retention.Dispose();
@@ -222,6 +230,38 @@ namespace DwsEdge.Host
             }
 
             return exitCode;
+        }
+
+        /// <summary>
+        /// 按 [storage] 的 spoolRetentionDays 启动 spool 事件文件保留策略。
+        /// 只有业务平台写过 spool\.consumed 标记之后才会删，平台没消费过就不删。
+        /// </summary>
+        private static SpoolRetentionService StartSpoolRetention(string baseDir, SimpleConfig config, HostEventSink sink)
+        {
+            string spoolDir = Path.Combine(baseDir, "spool");
+            int days = ParseInt(config.Get("storage", "spoolRetentionDays", "0"), 0);
+            int interval = ParseInt(config.Get("storage", "cleanupIntervalMinutes", "30"), 30);
+            bool cleanupOnStart = ParseBool(config.Get("storage", "cleanupOnStart", "true"), true);
+
+            SpoolRetentionService service = new SpoolRetentionService(spoolDir, days, interval,
+                delegate(string message, bool warning)
+                {
+                    sink.Log(warning ? LogLevel.Warn : LogLevel.Info, message);
+                });
+
+            if (!service.Enabled)
+            {
+                sink.Log(LogLevel.Info, "未启用 spool 保留策略（[storage] 里 spoolRetentionDays=0）");
+                return null;
+            }
+
+            sink.Log(LogLevel.Info, string.Format(CultureInfo.InvariantCulture,
+                "spool 保留策略：目录 {0}；保存 {1} 天；每 {2} 分钟检查{3}（仅在业务平台消费后删除）",
+                service.SpoolDirectory, days, interval,
+                cleanupOnStart ? "（启动时先清理一次）" : string.Empty));
+
+            service.Start(cleanupOnStart);
+            return service;
         }
 
         /// <summary>

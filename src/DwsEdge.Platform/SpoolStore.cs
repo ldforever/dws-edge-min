@@ -33,6 +33,7 @@ namespace DwsEdge.Platform
             new ConcurrentDictionary<Channel<string>, byte>();
         private readonly JsonSerializerOptions _json = new JsonSerializerOptions();
         private readonly ILogger<SpoolStore> _logger;
+        private readonly HistoryStore _history;
         private readonly string _imagesRoot;
         private readonly int _maxRecords;
 
@@ -51,14 +52,20 @@ namespace DwsEdge.Platform
         private long _diskFreeBytes;
         private int _diskUsedPercent;
 
-        public SpoolStore(IConfiguration config, ILogger<SpoolStore> logger)
+        public SpoolStore(IConfiguration config, HistoryStore history, ILogger<SpoolStore> logger)
         {
             _logger = logger;
+            _history = history;
             string root = config["Images:Root"] ?? "../images";
             _imagesRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, root));
             int max = 5000;
             int.TryParse(config["Images:MaxRecords"], out max);
             _maxRecords = Math.Max(100, max);
+
+            // 平台重启后先从历史恢复最近数据，界面立刻有内容；spool 只读新增事件
+            int loadDays = 2;
+            int.TryParse(config["History:LoadDays"], out loadDays);
+            LoadRecentHistory(Math.Max(1, loadDays));
         }
 
         public string ImagesRoot
@@ -245,6 +252,9 @@ namespace DwsEdge.Platform
                     BumpCameraCodeCount(evt.deviceId, record.time);
                 }
 
+                // 写一行历史快照（持久化），重启后不必再全量重放 spool
+                _history.Append(record);
+
                 Trim();
             }
 
@@ -410,6 +420,69 @@ namespace DwsEdge.Platform
                 _order.RemoveFirst();
                 _byTrace.Remove(first.Value);
             }
+        }
+
+        #endregion
+
+        #region 历史加载与查询
+
+        /// <summary>平台启动时从历史文件恢复最近 N 天的包裹，避免"重启后界面空白"。</summary>
+        private void LoadRecentHistory(int days)
+        {
+            try
+            {
+                List<ParcelRecord> recent = _history.LoadRecent(days, _maxRecords);
+                if (recent == null || recent.Count == 0)
+                {
+                    return;
+                }
+
+                int loaded = 0;
+                lock (_sync)
+                {
+                    // LoadRecent 返回按时间倒序，这里反过来放，保证 LatestParcels 的先后顺序正确
+                    for (int i = recent.Count - 1; i >= 0; i--)
+                    {
+                        ParcelRecord record = recent[i];
+                        if (record == null || string.IsNullOrEmpty(record.traceId) || _byTrace.ContainsKey(record.traceId))
+                        {
+                            continue;
+                        }
+
+                        _byTrace[record.traceId] = record;
+                        _order.AddLast(record.traceId);
+                        _parcelCount++;
+                        if (record.codeCount == 0)
+                        {
+                            _noreadCount++;
+                        }
+                        if (!record.complete)
+                        {
+                            _pendingParcels++;
+                        }
+                        _imageCount += record.imageCount;
+                        loaded++;
+                    }
+                }
+
+                _logger.LogInformation("已从历史恢复 {0} 个包裹（最近 {1} 天）", loaded, days);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "从历史恢复失败，本次按空白启动");
+            }
+        }
+
+        /// <summary>历史查询：简单查询读内存，带条件或跨天的查询读历史文件。</summary>
+        public List<ParcelRecord> QueryHistory(DateTime from, DateTime to, string code, string deviceId, bool? noread, int limit)
+        {
+            bool simpleQuery = string.IsNullOrEmpty(code) && string.IsNullOrEmpty(deviceId) && !noread.HasValue
+                && (DateTime.Today - from.Date).TotalDays <= 1;
+            if (simpleQuery)
+            {
+                return LatestParcels(limit);
+            }
+            return _history.Query(from, to, code, deviceId, noread, limit);
         }
 
         #endregion

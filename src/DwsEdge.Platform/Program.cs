@@ -36,6 +36,7 @@ namespace DwsEdge.Platform
             });
 
             builder.Services.AddSingleton<SpoolStore>();
+            builder.Services.AddSingleton<HistoryStore>();
             builder.Services.AddHostedService<SpoolTailer>();
             builder.Services.AddHostedService<StorageProbe>();
 
@@ -52,6 +53,19 @@ namespace DwsEdge.Platform
                 return Results.Json(store.LatestParcels(take));
             });
             app.MapGet("/api/cameras", (SpoolStore store) => Results.Json(store.Cameras()));
+            app.MapGet("/api/history", (SpoolStore store, string from, string to, string code, string deviceId, bool? noread, int? limit) =>
+            {
+                DateTime fromDay = ParseDay(from, DateTime.Today.AddDays(-1));
+                DateTime toDay = ParseDay(to, DateTime.Today);
+                if (toDay < fromDay)
+                {
+                    DateTime swap = fromDay;
+                    fromDay = toDay;
+                    toDay = swap;
+                }
+                int take = limit.HasValue ? Math.Clamp(limit.Value, 1, 2000) : 200;
+                return Results.Json(store.QueryHistory(fromDay, toDay, code, deviceId, noread, take));
+            });
             app.MapGet("/api/images", (SpoolStore store, string path) => store.OpenImage(path));
             app.MapGet("/api/stream", (HttpContext context, SpoolStore store, CancellationToken token) =>
                 store.StreamAsync(context, token));
@@ -60,6 +74,16 @@ namespace DwsEdge.Platform
             logger.LogInformation("DwsEdge.Platform 启动完成；图片根目录：{0}", app.Services.GetRequiredService<SpoolStore>().ImagesRoot);
 
             app.Run();
+        }
+
+        private static DateTime ParseDay(string value, DateTime fallback)
+        {
+            DateTime parsed;
+            if (!string.IsNullOrEmpty(value) && DateTime.TryParse(value, out parsed))
+            {
+                return parsed.Date;
+            }
+            return fallback.Date;
         }
     }
 }

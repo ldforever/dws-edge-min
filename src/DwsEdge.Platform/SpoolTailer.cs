@@ -20,6 +20,7 @@ namespace DwsEdge.Platform
     public sealed class SpoolTailer : BackgroundService
     {
         private readonly SpoolStore _store;
+        private readonly HistoryStore _history;
         private readonly ILogger<SpoolTailer> _logger;
         private readonly string _spoolDirectory;
         private readonly int _intervalMs;
@@ -28,9 +29,14 @@ namespace DwsEdge.Platform
         private readonly JsonSerializerOptions _json =
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
-        public SpoolTailer(IConfiguration config, SpoolStore store, ILogger<SpoolTailer> logger)
+        private DateTime _lastOffsetSave = DateTime.MinValue;
+        private DateTime _lastMarkerWrite = DateTime.MinValue;
+        private string _lastConsumedDay;
+
+        public SpoolTailer(IConfiguration config, SpoolStore store, HistoryStore history, ILogger<SpoolTailer> logger)
         {
             _store = store;
+            _history = history;
             _logger = logger;
 
             string directory = config["Spool:Directory"] ?? "../spool";
@@ -45,11 +51,24 @@ namespace DwsEdge.Platform
         {
             _logger.LogInformation("采集事件目录：{0}（轮询 {1} ms）", _spoolDirectory, _intervalMs);
 
+            // 恢复上次的消费位点：只读新增事件，不再全量重放
+            Dictionary<string, long> saved = _history.LoadOffsets();
+            foreach (KeyValuePair<string, long> pair in saved)
+            {
+                _offsets[pair.Key] = pair.Value;
+            }
+            if (saved.Count > 0)
+            {
+                _logger.LogInformation("已恢复 {0} 个文件的消费位点（继续读新增事件）", saved.Count);
+            }
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
                     ProcessOnce();
+                    PersistOffsets(false);
+                    UpdateConsumedMarker();
                 }
                 catch (Exception ex)
                 {
@@ -151,6 +170,112 @@ namespace DwsEdge.Platform
                 _store.CountParseError();
                 _logger.LogDebug(ex, "处理事件失败");
             }
+        }
+
+        /// <summary>把消费位点写盘（默认节流 5 秒；force=true 立即写）。</summary>
+        private void PersistOffsets(bool force)
+        {
+            if (!force && (DateTime.UtcNow - _lastOffsetSave).TotalSeconds < 5)
+            {
+                return;
+            }
+            _lastOffsetSave = DateTime.UtcNow;
+
+            // 只保留仍然存在的文件，避免 offsets.json 无限增长
+            Dictionary<string, long> snapshot = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, long> pair in _offsets)
+            {
+                if (File.Exists(pair.Key))
+                {
+                    snapshot[pair.Key] = pair.Value;
+                }
+            }
+            _history.SaveOffsets(snapshot);
+        }
+
+        /// <summary>
+        /// 写出"已完整消费到哪一天"的标记（spool\.consumed），供采集宿主的 spool 保留策略使用：
+        /// 只有被标记覆盖的日期文件才允许删除。规则是从最旧文件开始、连续读完整的最大日期。
+        /// </summary>
+        private void UpdateConsumedMarker()
+        {
+            if (!Directory.Exists(_spoolDirectory))
+            {
+                return;
+            }
+
+            string[] files = Directory.GetFiles(_spoolDirectory, "events-*.jsonl");
+            Array.Sort(files, StringComparer.Ordinal);
+
+            string consumedDay = null;
+            for (int i = 0; i < files.Length; i++)
+            {
+                long offset;
+                if (!_offsets.TryGetValue(files[i], out offset))
+                {
+                    offset = 0;
+                }
+
+                long length;
+                try
+                {
+                    length = new FileInfo(files[i]).Length;
+                }
+                catch (Exception)
+                {
+                    break;
+                }
+
+                if (offset < length)
+                {
+                    break;   // 这个文件还没读完，后面的更不能算已消费
+                }
+
+                string day = ExtractDay(files[i]);
+                if (!string.IsNullOrEmpty(day))
+                {
+                    consumedDay = day;
+                }
+            }
+
+            if (string.IsNullOrEmpty(consumedDay) || consumedDay == _lastConsumedDay)
+            {
+                return;
+            }
+            if ((DateTime.UtcNow - _lastMarkerWrite).TotalSeconds < 5)
+            {
+                return;
+            }
+
+            try
+            {
+                File.WriteAllText(Path.Combine(_spoolDirectory, ".consumed"), consumedDay, new UTF8Encoding(false));
+                _lastConsumedDay = consumedDay;
+                _lastMarkerWrite = DateTime.UtcNow;
+                _logger.LogInformation("已更新 spool 消费标记：{0}（该日期之前的文件允许被采集宿主清理）", consumedDay);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "写 spool 消费标记失败");
+            }
+        }
+
+        private static string ExtractDay(string path)
+        {
+            string name = Path.GetFileNameWithoutExtension(path);
+            int dash = name.LastIndexOf('-');
+            if (dash < 0 || dash >= name.Length - 1)
+            {
+                return null;
+            }
+            string day = name.Substring(dash + 1);
+            return day.Length == 8 ? day : null;
+        }
+
+        public override async Task StopAsync(CancellationToken cancellationToken)
+        {
+            PersistOffsets(true);
+            await base.StopAsync(cancellationToken);
         }
     }
 }
