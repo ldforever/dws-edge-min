@@ -9,7 +9,7 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=e44d2a93" />
+<link rel="stylesheet" href="./app.css?v=bdee5c5f" />
 </head>
 <body>
 <header>
@@ -59,14 +59,29 @@
     <!-- B8：相机状态告警条（有活动告警时变黄/变红，点一下到设备信息页看记录） -->
     <div id="alertBar" class="alertbar ok">相机状态监控启动中…</div>
 
-    <h2>最新过包（实时）</h2>
-    <div id="emptyTip" class="empty">暂无数据：先用 run.ps1 -TriggerOnce 触发一次过包。</div>
-    <table>
-      <thead>
-        <tr><th>时间</th><th>条码</th><th>相机</th><th>阶段</th><th>图片</th></tr>
-      </thead>
-      <tbody id="rows"></tbody>
-    </table>
+    <!-- C1：最新过包 —— 默认卡片墙（缩略图/条码/时间/相机/状态），也可切回表格 -->
+    <h2 class="withtoolbar">
+      最新过包（实时）
+      <span class="viewswitch">
+        <button class="btn small" id="viewCards">卡片</button>
+        <button class="btn small secondary" id="viewTable">表格</button>
+      </span>
+    </h2>
+
+    <div id="cardEmpty" class="empty">暂无数据：先用 run.ps1 -TriggerOnce 触发一次过包。</div>
+    <div id="cardWall" class="wall"></div>
+
+    <div id="tableView" style="display:none">
+      <div id="emptyTip" class="empty">暂无数据：先用 run.ps1 -TriggerOnce 触发一次过包。</div>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr><th>时间</th><th>条码</th><th>相机</th><th>阶段</th><th>图片</th></tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
 
     <h2 style="margin-top:24px">相机状态</h2>
     <div id="camEmpty" class="empty">暂无相机状态：采集宿主启动后会上报相机快照。</div>
@@ -553,6 +568,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=e44d2a93"></script>
+<script type="module" src="./js/main.js?v=bdee5c5f"></script>
 </body>
 </html>

@@ -112,3 +112,21 @@ a.img:hover img.thumb { border-color: #58a6ff; }
 .loginbox .toolbar { margin: 16px 0 8px; }
 .err { color: #f0883e; font-size: 12px; }
 .user { font-size: 12px; color: #c9d1d9; }
+
+/* C1：最新过包卡片墙 */
+h2.withtoolbar { display: flex; align-items: center; gap: 10px; }
+.viewswitch { display: inline-flex; gap: 4px; margin-left: 4px; }
+.wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.pcard { display: flex; gap: 10px; background: #1a212b; border: 1px solid #263041; border-radius: 8px; padding: 10px; min-height: 96px; }
+.pcard.new { animation: cardflash 1.4s ease-out; }
+@keyframes cardflash { from { background: #1f3a2a; border-color: #2ea043; } to { background: #1a212b; border-color: #263041; } }
+.pcard-thumb { position: relative; width: 96px; height: 72px; flex: 0 0 96px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; overflow: hidden; display: flex; align-items: center; justify-content: center; text-decoration: none; }
+.pcard-thumb img.thumb { width: 100%; height: 100%; object-fit: cover; border: 0; border-radius: 0; height: 72px; }
+.pcard-thumb .ph { color: #6e7681; font-size: 11px; }
+.pcard-thumb:hover { border-color: #58a6ff; }
+.pcard-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.pcard-code { font-family: Consolas, "Courier New", monospace; font-size: 13px; color: #e6edf3; word-break: break-all; }
+.pcard-code.noread { color: #f0883e; }
+.pcard-meta { font-size: 11px; color: #8b98a9; }
+.pcard-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.pcard-extra { font-size: 11px; color: #6e7681; }

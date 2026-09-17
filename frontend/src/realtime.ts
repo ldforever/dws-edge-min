@@ -1,9 +1,11 @@
-/**
- * 实时监控页：KPI 卡片 + 最新过包表 + 相机状态表。
+﻿/**
+ * 实时监控页：KPI 卡片 + 最新过包（卡片墙 / 表格可切换） + 相机状态表。
  *
  * 说明：
  *   * 过包表按 traceId 去重 —— SSE 会把"补全重量体积后"的同一条记录再推一次，
  *     直接原地更新那一行，比追加两行清楚（同时仍能看到 更新次数 ×2）；
+ *   * C1：默认用"卡片墙"展示最新包裹（缩略图 + 条码 + 时间 + 相机 + 状态），
+ *     点缩略图看原图；喜欢表格的现场可以切回表格，选择记在浏览器里；
  *   * 相机状态表与"设备信息"页共用同一份数据源（平台推送的 camera 事件）。
  */
 import { api } from "./api.js";
@@ -11,8 +13,12 @@ import { $, cell, clear, el, gb, imageCell, positionLabel, dash } from "./dom.js
 import type { CameraRecord, CodeDetail, ParcelRecord, Stats } from "./types.js";
 
 const MAX_ROWS = 120;
+/** 卡片墙最多留多少张（一屏大概 6-12 张，多出来的往下滚） */
+const MAX_CARDS = 30;
 /** 页面首屏拉多少条历史（平台还会通过 SSE 补发最近 20 条） */
 const INITIAL_PARCELS = 50;
+/** 视图选择存在浏览器里，现场刷新页面不用每次重新点 */
+const VIEW_KEY = "dws.view.parcels";
 
 const rowByTrace = new Map<string, HTMLTableRowElement>();
 const cameras = new Map<string, CameraRecord>();
@@ -21,12 +27,58 @@ let rowsEl: HTMLTableSectionElement;
 let emptyEl: HTMLElement;
 let camRowsEl: HTMLTableSectionElement;
 let camEmptyEl: HTMLElement;
+let cardWallEl: HTMLElement;
+let cardEmptyEl: HTMLElement;
+let tableViewEl: HTMLElement;
+
+/** 一张卡片里需要"就地更新"的节点（重建整张卡会让缩略图重新加载、闪一下） */
+interface CardParts {
+  root: HTMLElement;
+  link: HTMLAnchorElement;
+  img: HTMLImageElement;
+  placeholder: HTMLElement;
+  code: HTMLElement;
+  meta: HTMLElement;
+  tags: HTMLElement;
+  extra: HTMLElement;
+}
+
+const cards = new Map<string, CardParts>();
 
 export function initRealtime(): void {
   rowsEl = $<HTMLTableSectionElement>("rows");
   emptyEl = $("emptyTip");
   camRowsEl = $<HTMLTableSectionElement>("camRows");
   camEmptyEl = $("camEmpty");
+  cardWallEl = $("cardWall");
+  cardEmptyEl = $("cardEmpty");
+  tableViewEl = $("tableView");
+
+  $("viewCards").addEventListener("click", () => setView("cards"));
+  $("viewTable").addEventListener("click", () => setView("table"));
+
+  let saved = "";
+  try {
+    saved = window.localStorage.getItem(VIEW_KEY) ?? "";
+  } catch {
+    saved = ""; // 隐私模式/壳里可能不让用 localStorage，忽略即可
+  }
+  setView(saved === "table" ? "table" : "cards");
+}
+
+/** 切换"卡片墙 / 表格"两种视图 */
+function setView(view: "cards" | "table"): void {
+  const cardsOn = view === "cards";
+  cardWallEl.style.display = cardsOn ? "" : "none";
+  cardEmptyEl.style.display = cardsOn && cards.size === 0 ? "block" : "none";
+  tableViewEl.style.display = cardsOn ? "none" : "";
+  $("viewCards").className = "btn small" + (cardsOn ? "" : " secondary");
+  $("viewTable").className = "btn small" + (cardsOn ? " secondary" : "");
+  try {
+    window.localStorage.setItem(VIEW_KEY, view);
+  } catch {
+    // 存不了就算了，不影响使用
+  }
 }
 
 export function renderStats(s: Stats): void {
@@ -126,6 +178,165 @@ export function renderParcel(p: ParcelRecord, flash: boolean): void {
     if (!last) break;
     rowByTrace.delete(last.dataset.key ?? "");
     rowsEl.removeChild(last);
+  }
+
+  // C1：同一份数据也渲染成卡片（卡片墙才是默认视图）
+  upsertCard(key, p, flash);
+}
+
+// ---------------------------------------------------------------- C1 过包卡片墙
+
+/** 一个包裹的"状态"徽标：读码 / 无码 / 待补全 / 已下发 / 下发失败 */
+function cardTags(p: ParcelRecord): HTMLElement[] {
+  const tags: HTMLElement[] = [];
+  const count = p.codeCount ?? (p.codes ?? []).length;
+
+  if (count > 0) {
+    tags.push(el("span", "读码 " + count, "badge ok"));
+  } else {
+    tags.push(el("span", "NOREAD", "badge err"));
+  }
+
+  if (p.complete === false) {
+    tags.push(el("span", "待补全", "badge warn"));
+  }
+  if ((p.updates ?? 0) > 1) {
+    tags.push(el("span", "更新 ×" + p.updates, "tag"));
+  }
+  if ((p.imageCount ?? 0) > 0) {
+    tags.push(el("span", "图 " + p.imageCount, "tag"));
+  }
+
+  if (p.dispatchState === "sent") {
+    tags.push(el("span", "已下发", "badge ok"));
+  } else if (p.dispatchState === "failed") {
+    tags.push(el("span", "下发失败" + (p.dispatchAttempts ? "×" + p.dispatchAttempts : ""), "badge err"));
+  }
+
+  // 被规则丢掉的码：现场最常问"为什么是 NOREAD"，直接写在卡片上
+  const dropped = p.filteredCodes ?? [];
+  if (dropped.length > 0) {
+    tags.push(el("span", "规则丢弃 " + dropped.length, "tag"));
+  }
+  return tags;
+}
+
+function buildCard(key: string): CardParts {
+  const root = el("div", undefined, "pcard");
+  root.dataset.key = key;
+
+  const link = el("a", undefined, "pcard-thumb");
+  link.target = "_blank";
+  const img = el("img", undefined, "thumb");
+  img.loading = "lazy";
+  img.alt = "包裹图片";
+  const placeholder = el("span", "无图", "ph");
+  link.appendChild(img);
+  link.appendChild(placeholder);
+
+  const body = el("div", undefined, "pcard-body");
+  const code = el("div", undefined, "pcard-code");
+  const meta = el("div", undefined, "pcard-meta");
+  const tags = el("div", undefined, "pcard-tags");
+  const extra = el("div", undefined, "pcard-extra");
+  body.appendChild(code);
+  body.appendChild(meta);
+  body.appendChild(tags);
+  body.appendChild(extra);
+
+  root.appendChild(link);
+  root.appendChild(body);
+  return { root, link, img, placeholder, code, meta, tags, extra };
+}
+
+function updateCard(parts: CardParts, p: ParcelRecord): void {
+  // 条码：值 + 方位/类型标签（和表格里的显示口径一致）
+  const details: CodeDetail[] = p.codeDetails?.length
+    ? p.codeDetails
+    : (p.codes ?? []).map((value) => ({ value }));
+
+  clear(parts.code);
+  if (details.length === 0) {
+    parts.code.className = "pcard-code noread";
+    parts.code.textContent = "NOREAD";
+  } else {
+    parts.code.className = "pcard-code";
+    details.forEach((d, i) => {
+      if (i > 0) parts.code.appendChild(document.createTextNode("  "));
+      parts.code.appendChild(document.createTextNode(d.value));
+      const marks: string[] = [];
+      if (d.position) marks.push(positionLabel(d.position));
+      if (d.kind && d.kind !== "unknown") marks.push(d.kind.toUpperCase());
+      if (marks.length) parts.code.appendChild(el("span", " " + marks.join("/"), "tag"));
+    });
+  }
+
+  parts.meta.textContent = (p.time ?? "") + "　·　" + (p.deviceId ?? "未知相机");
+
+  clear(parts.tags);
+  for (const tag of cardTags(p)) {
+    parts.tags.appendChild(tag);
+  }
+
+  // 重量/体积：分阶段 provider 先给条码、后给重量体积，这里补上就立刻能看到
+  const bits: string[] = [];
+  const weight = p.weightGrams ?? -1;
+  const volume = p.volumeMm3 ?? 0;
+  if (weight > 0) bits.push((weight / 1000).toFixed(2) + " kg");
+  const lengthMm = p.lengthMm ?? 0;
+  if (lengthMm > 0) {
+    bits.push(Math.round(lengthMm) + "×" + Math.round(p.widthMm ?? 0) + "×" + Math.round(p.heightMm ?? 0) + " mm");
+  }
+  if (volume > 0) bits.push(Math.round(volume / 1000) + " cm³");
+  parts.extra.textContent = bits.join("　·　");
+  parts.extra.style.display = bits.length ? "" : "none";
+
+  // 缩略图：只有路径变了才换 src，避免同一包裹更新时重复请求/闪白
+  const path = (p.imageCount ?? 0) > 0 ? p.firstImagePath : null;
+  if (path) {
+    const thumbUrl = "/api/images/thumb?w=320&path=" + encodeURIComponent(path);
+    if (parts.img.getAttribute("src") !== thumbUrl) {
+      parts.img.setAttribute("src", thumbUrl);
+    }
+    parts.img.style.display = "";
+    parts.placeholder.style.display = "none";
+    parts.link.href = "/api/images?path=" + encodeURIComponent(path);
+    parts.link.title = "点击查看原图：" + path;
+  } else {
+    parts.img.removeAttribute("src");
+    parts.img.style.display = "none";
+    parts.placeholder.style.display = "";
+    parts.link.removeAttribute("href");
+    parts.link.title = "这个包裹没有图片";
+  }
+}
+
+function upsertCard(key: string, p: ParcelRecord, flash: boolean): void {
+  let parts = cards.get(key);
+  if (!parts) {
+    parts = buildCard(key);
+    cards.set(key, parts);
+  }
+
+  updateCard(parts, p);
+
+  // 更新过的包裹挪到最前面：卡片墙永远按"最近一次更新"倒序，和表格口径一致
+  cardWallEl.insertBefore(parts.root, cardWallEl.firstChild);
+
+  // 每张卡都要保留自己的高亮动画：先摘掉类、强制重排、再加回来
+  parts.root.classList.remove("new");
+  if (flash) {
+    void parts.root.offsetWidth;
+    parts.root.classList.add("new");
+  }
+
+  cardEmptyEl.style.display = "none";
+
+  while (cardWallEl.children.length > MAX_CARDS) {
+    const last = cardWallEl.lastElementChild as HTMLElement | null;
+    if (!last) break;
+    cards.delete(last.dataset.key ?? "");
+    cardWallEl.removeChild(last);
   }
 }
 

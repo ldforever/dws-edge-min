@@ -4,18 +4,18 @@
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
  * 也没有全局变量：模块之间只通过 import 通信，方便以后换壳（WebView2）或加页面。
  */
-import { api } from "./api.js?v=e44d2a93";
-import { connectStream } from "./sse.js?v=e44d2a93";
-import { $ } from "./dom.js?v=e44d2a93";
-import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=e44d2a93";
-import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=e44d2a93";
-import { initConfig, refreshConfig } from "./config.js?v=e44d2a93";
-import { initRules, refreshRules } from "./rules.js?v=e44d2a93";
-import { initDedup, refreshDedup } from "./dedup.js?v=e44d2a93";
-import { initHistory, refreshHistory } from "./history.js?v=e44d2a93";
-import { initDownstream, refreshDownstream } from "./downstream.js?v=e44d2a93";
-import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=e44d2a93";
-import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=e44d2a93";
+import { api } from "./api.js?v=bdee5c5f";
+import { connectStream } from "./sse.js?v=bdee5c5f";
+import { $ } from "./dom.js?v=bdee5c5f";
+import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=bdee5c5f";
+import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=bdee5c5f";
+import { initConfig, refreshConfig } from "./config.js?v=bdee5c5f";
+import { initRules, refreshRules } from "./rules.js?v=bdee5c5f";
+import { initDedup, refreshDedup } from "./dedup.js?v=bdee5c5f";
+import { initHistory, refreshHistory } from "./history.js?v=bdee5c5f";
+import { initDownstream, refreshDownstream } from "./downstream.js?v=bdee5c5f";
+import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=bdee5c5f";
+import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=bdee5c5f";
 const PAGES = ["realtime", "devices", "history", "config"];
 function showPage(name) {
     for (const page of PAGES) {
