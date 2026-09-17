@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Globalization;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -116,6 +117,7 @@ namespace DwsEdge.Host
             HostEventSink sink = new HostEventSink(baseDir, spoolEnabled);
             IAcquisitionProvider provider = null;
             TestConsole testConsole = null;
+            ImageRetentionService retention = null;
             int exitCode = 0;
 
             try
@@ -136,6 +138,9 @@ namespace DwsEdge.Host
                 Console.CancelKeyPress += OnCancelKeyPress;
 
                 provider.Start();
+
+                // 存图保留策略（按天数清理 + 磁盘水位保护），与厂商无关
+                retention = StartRetention(baseDir, config, providerId, sink);
 
                 if (testOptions.EnableSoftTrigger)
                 {
@@ -179,6 +184,11 @@ namespace DwsEdge.Host
             }
             finally
             {
+                if (retention != null)
+                {
+                    retention.Dispose();
+                }
+
                 if (testConsole != null)
                 {
                     testConsole.Dispose();
@@ -209,6 +219,57 @@ namespace DwsEdge.Host
             }
 
             return exitCode;
+        }
+
+        /// <summary>
+        /// 按 [storage] 段启动存图保留策略（与厂商无关）。
+        /// 图片目录优先取 [storage] imageDir；为空则沿用该 provider 段里的 imageDir，再兜底 images。
+        /// 天数和磁盘水位都为 0（或未配置）时不启用，返回 null。
+        /// </summary>
+        private static ImageRetentionService StartRetention(string baseDir, SimpleConfig config, string providerId, HostEventSink sink)
+        {
+            Dictionary<string, string> providerSection = config.Section(providerId);
+            string providerImageDir;
+            if (!providerSection.TryGetValue("imageDir", out providerImageDir))
+            {
+                providerImageDir = null;
+            }
+
+            string imageDir = config.Get("storage", "imageDir", null);
+            if (string.IsNullOrEmpty(imageDir))
+            {
+                imageDir = string.IsNullOrEmpty(providerImageDir) ? "images" : providerImageDir;
+            }
+
+            int retentionDays = ParseInt(config.Get("storage", "retentionDays", "0"), 0);
+            int maxDiskPercent = ParseInt(config.Get("storage", "maxDiskPercent", "0"), 0);
+            int intervalMinutes = ParseInt(config.Get("storage", "cleanupIntervalMinutes", "30"), 30);
+            bool cleanupOnStart = ParseBool(config.Get("storage", "cleanupOnStart", "true"), true);
+
+            string root = Path.IsPathRooted(imageDir) ? imageDir : Path.Combine(baseDir, imageDir);
+
+            ImageRetentionService service = new ImageRetentionService(root, retentionDays, maxDiskPercent, intervalMinutes,
+                delegate(string message, bool warning)
+                {
+                    sink.Log(warning ? LogLevel.Warn : LogLevel.Info, message);
+                });
+
+            if (!service.Enabled)
+            {
+                sink.Log(LogLevel.Info, "未启用存图保留策略（[storage] 里 retentionDays 和 maxDiskPercent 都为 0）");
+                return null;
+            }
+
+            sink.Log(LogLevel.Info, string.Format(CultureInfo.InvariantCulture,
+                "存图保留策略：目录 {0}；保存 {1}；磁盘水位 {2}；每 {3} 分钟检查{4}",
+                service.ImageRoot,
+                retentionDays <= 0 ? "永久" : retentionDays + " 天",
+                maxDiskPercent <= 0 ? "不启用" : maxDiskPercent + "%",
+                intervalMinutes,
+                cleanupOnStart ? "（启动时先清理一次）" : string.Empty));
+
+            service.Start(cleanupOnStart);
+            return service;
         }
 
         private static void OnCancelKeyPress(object sender, ConsoleCancelEventArgs e)

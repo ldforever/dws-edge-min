@@ -40,6 +40,11 @@ namespace DwsEdge.Platform
         private long _noreadCount;
         private long _imageCount;
         private long _parseErrors;
+        private long _imageFileCount;
+        private long _imageDiskBytes;
+        private long _diskTotalBytes;
+        private long _diskFreeBytes;
+        private int _diskUsedPercent;
 
         public SpoolStore(IConfiguration config, ILogger<SpoolStore> logger)
         {
@@ -300,6 +305,19 @@ namespace DwsEdge.Platform
             }
         }
 
+        /// <summary>由 StorageProbe 定期刷新图片目录与磁盘信息。</summary>
+        public void UpdateStorage(long imageFileCount, long imageDiskBytes, long diskTotalBytes, long diskFreeBytes, int diskUsedPercent)
+        {
+            lock (_sync)
+            {
+                _imageFileCount = imageFileCount;
+                _imageDiskBytes = imageDiskBytes;
+                _diskTotalBytes = diskTotalBytes;
+                _diskFreeBytes = diskFreeBytes;
+                _diskUsedPercent = diskUsedPercent;
+            }
+        }
+
         private void Trim()
         {
             while (_order.Count > _maxRecords)
@@ -350,6 +368,11 @@ namespace DwsEdge.Platform
                     }
                 }
                 stats.camerasOnline = online;
+                stats.imageFileCount = _imageFileCount;
+                stats.imageDiskBytes = _imageDiskBytes;
+                stats.diskTotalBytes = _diskTotalBytes;
+                stats.diskFreeBytes = _diskFreeBytes;
+                stats.diskUsedPercent = _diskUsedPercent;
                 stats.serverTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
                 return stats;
             }

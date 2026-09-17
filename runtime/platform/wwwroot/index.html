@@ -90,12 +90,15 @@ const MAX_ROWS = 120;
 const seen = new Set();
 
 function setStats(s) {
+  const gb = function (bytes) { return (Number(bytes || 0) / 1024 / 1024 / 1024).toFixed(1) + ' GB'; };
   document.getElementById('kpiParcels').textContent = s.parcels ?? 0;
   document.getElementById('kpiRate').textContent = ((s.readRate ?? 0) * 100).toFixed(1) + '%';
   document.getElementById('kpiNoread').textContent = s.noread ?? 0;
   document.getElementById('kpiCameras').textContent = (s.camerasOnline ?? 0) + ' / ' + (s.camerasTotal ?? 0);
   document.getElementById('foot').textContent =
-    '事件 ' + (s.events ?? 0) + ' 条 · 图片 ' + (s.images ?? 0) + ' 张 · 解析失败 ' + (s.parseErrors ?? 0) + ' · 服务器时间 ' + (s.serverTime ?? '');
+    '事件 ' + (s.events ?? 0) + ' 条 · 落盘图片 ' + (s.imageFileCount ?? 0) + ' 张 / ' + gb(s.imageDiskBytes)
+    + ' · 磁盘 ' + (s.diskUsedPercent ?? 0) + '%（剩余 ' + gb(s.diskFreeBytes) + '）'
+    + ' · 解析失败 ' + (s.parseErrors ?? 0) + ' · 服务器时间 ' + (s.serverTime ?? '');
 }
 
 function imgUrl(path) { return '/api/images?path=' + encodeURIComponent(path); }

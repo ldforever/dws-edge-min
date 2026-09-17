@@ -37,6 +37,7 @@ namespace DwsEdge.Platform
 
             builder.Services.AddSingleton<SpoolStore>();
             builder.Services.AddHostedService<SpoolTailer>();
+            builder.Services.AddHostedService<StorageProbe>();
 
             WebApplication app = builder.Build();
 

@@ -123,6 +123,16 @@ namespace DwsEdge.Platform
         public int camerasTotal { get; set; }
         public int camerasOnline { get; set; }
         public long parseErrors { get; set; }
+
+        /// <summary>图片目录扫描结果（后台定期刷新）。</summary>
+        public long imageFileCount { get; set; }
+        public long imageDiskBytes { get; set; }
+
+        /// <summary>图片所在磁盘的容量与占用。</summary>
+        public long diskTotalBytes { get; set; }
+        public long diskFreeBytes { get; set; }
+        public int diskUsedPercent { get; set; }
+
         public string serverTime { get; set; }
     }
 }

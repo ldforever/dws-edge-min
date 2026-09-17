@@ -143,6 +143,34 @@ powershell -ExecutionPolicy Bypass -File .\run.ps1 -Duration 10
 4. 让包裹过包，确认该相机重新出码（出码数增加）；
 5. 连续做 3 次，确认计数累加正确、没有重复计数。
 
+### 存图保留策略（保存天数 + 磁盘水位）
+
+采集宿主内置一个与厂商无关的清理服务，只处理图片根目录下**名字是 8 位日期**的目录，绝不碰其他文件。
+配置在 `config\gateway.ini` 的 `[storage]` 段：
+
+```ini
+[storage]
+imageDir=              # 留空=沿用 provider 段里的 imageDir（默认 images）
+retentionDays=7        # 超过 7 天的日期目录整目录删除；0=永久保留
+maxDiskPercent=85      # 磁盘占用达到 85% 就从最旧的日期目录开始删；0=不启用
+cleanupIntervalMinutes=30   # 清理间隔
+cleanupOnStart=true    # 启动时先清理一次
+```
+
+启动日志会打印策略与清理结果：
+
+```
+[info] 存图保留策略：目录 ...\images；保存 7 天；磁盘水位 85%；每 30 分钟检查（启动时先清理一次）
+[info] 存图清理：删除 2 个日期目录、2 个文件，释放 6 KB；当前磁盘占用 93%（保存天数：7 天，水位上限：0%）
+```
+
+平台 `/api/stats` 也会给出图片与磁盘占用（后台每 5 分钟探测一次，不拖慢接口）：
+
+```json
+{ "imageFileCount": 9, "imageDiskBytes": 1844658,
+  "diskTotalBytes": 120026746880, "diskFreeBytes": 7980036096, "diskUsedPercent": 93 }
+```
+
 > 注意：如果 Visual Studio 正打开这个解决方案并在后台构建，`obj\bin` 会被 MSBuild/VBCSCompiler 占用，
 > `build.ps1` 会报“拒绝访问”。关掉 VS 再编译，或直接在 VS 里生成。
 
