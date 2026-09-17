@@ -71,7 +71,14 @@ export const api = {
     imageUrl: (path) => "/api/images?path=" + encodeURIComponent(path),
     /** B7：缩略图（BMP 真缩小并缓存，JPEG 回退原图） */
     imageThumbUrl: (path, width) => "/api/images/thumb?w=" + width + "&path=" + encodeURIComponent(path),
-    imageInfo: (path) => request("/api/images/info?path=" + encodeURIComponent(path))
+    imageInfo: (path) => request("/api/images/info?path=" + encodeURIComponent(path)),
+    // ---- B8 相机状态监控与告警 ----
+    monitorSummary: () => request("/api/monitor/summary"),
+    monitorCameras: () => request("/api/monitor/cameras"),
+    monitorEvents: (limit, camera) => request("/api/monitor/events?limit=" + limit + (camera ? "&camera=" + encodeURIComponent(camera) : "")),
+    monitorAlerts: (limit, activeOnly) => request("/api/monitor/alerts?limit=" + limit + "&activeOnly=" + activeOnly),
+    monitorConfig: () => request("/api/monitor/config"),
+    saveMonitorConfig: (options) => request("/api/monitor/config", { method: "POST", json: options })
 };
 export const STREAM_URL = "/api/stream";
 /** 历史查询串：导出时不要 limit/offset（要全量） */

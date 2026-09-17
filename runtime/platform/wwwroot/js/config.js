@@ -3,8 +3,8 @@
  *
  * 界面调的就是命令行那条路径（tools\apply-config.ps1），所以不会出现"界面能过、命令行过不了"。
  */
-import { api } from "./api.js?v=54253388";
-import { $, badge, el, notify } from "./dom.js?v=54253388";
+import { api } from "./api.js?v=c8468a3c";
+import { $, badge, el, notify } from "./dom.js?v=c8468a3c";
 const TRIGGER_LABEL = {
     hard: "硬触发（光电）",
     soft: "软触发",

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 平台 API 的数据类型。
  *
  * 这些 interface 与后端 DwsEdge.Platform 的 DTO 一一对应：
@@ -239,7 +239,11 @@ export interface ApplyRequest {
 export type StreamMessage =
   | { type: "parcel"; data: ParcelRecord }
   | { type: "camera"; data: CameraRecord }
-  | { type: "stats"; data: Stats };
+  | { type: "stats"; data: Stats }
+  /** B8：监控快照（在线率/心跳/活动告警），平台按检查间隔周期推送 */
+  | { type: "monitor"; data: MonitorSnapshot }
+  /** B8：单条告警产生/恢复 */
+  | { type: "alert"; data: MonitorAlert };
 
 // ---------------------------------------------------------------- B2 条码过滤规则
 
@@ -467,4 +471,119 @@ export interface DownstreamPreview {
   rendered: string;
   bytes: number;
   problems: string[];
+}
+
+// ---------------------------------------------------------------- B8 相机状态监控与告警
+
+/** 监控阈值配置（runtime\config\monitor.json，与后端 MonitorOptions 一一对应） */
+export interface MonitorOptions {
+  enabled: boolean;
+  /** 多少秒没收到任何数据（状态或出码）就算心跳超时 */
+  heartbeatTimeoutSeconds: number;
+  /** 离线持续多少秒才告警（避免闪断刷屏） */
+  offlineAlertSeconds: number;
+  frequentOfflineCount: number;
+  frequentOfflineWindowMinutes: number;
+  /** 在线率低于这个百分比就告警 */
+  onlineRateAlertPercent: number;
+  /** 在线率统计窗口（分钟） */
+  onlineRateWindowMinutes: number;
+  checkIntervalSeconds: number;
+  eventRetentionDays: number;
+}
+
+/** 一条活动告警的简表（挂在相机状态里） */
+export interface MonitorAlertBrief {
+  code: string;
+  severity: string;
+  message: string;
+}
+
+/** GET /api/monitor/cameras：每台相机的监控指标 */
+export interface MonitorCameraStatus {
+  camera: string;
+  online: boolean;
+  /** 在线率；数据不足时为 -1 */
+  onlineRatePercent: number;
+  onlineSeconds: number;
+  offlineSeconds: number;
+  currentStateSeconds: number;
+  lastHeartbeatAt?: string | null;
+  /** 距上次心跳多少秒；没有心跳记录时为 -1 */
+  lastHeartbeatAgeSeconds: number;
+  lastCodeAt?: string | null;
+  offlineCount: number;
+  alertCount: number;
+  alerts: MonitorAlertBrief[];
+}
+
+/** GET /api/monitor/summary */
+export interface MonitorSummary {
+  cameras: number;
+  online: number;
+  offline: number;
+  averageOnlineRatePercent: number;
+  activeAlerts: number;
+  events: number;
+  enabled: boolean;
+  heartbeatTimeoutSeconds: number;
+  offlineAlertSeconds: number;
+  configFile: string;
+}
+
+/** 一条相机事件（掉线记录 / 上线 / 恢复 / 告警产生 / 告警恢复） */
+export interface MonitorEvent {
+  time: string;
+  atMs: number;
+  camera: string;
+  /** offline / online / recovered / alert-raised / alert-cleared */
+  event: string;
+  detail?: string | null;
+  /** 本次离线时长（毫秒），只有 recovered 才有 */
+  offlineDurationMs: number;
+  code?: string | null;
+  severity?: string | null;
+}
+
+/** 一条告警 */
+export interface MonitorAlert {
+  id: string;
+  camera: string;
+  /** camera-offline / heartbeat-timeout / frequent-offline / low-online-rate / declared-missing */
+  code: string;
+  severity: string;
+  message: string;
+  active: boolean;
+  raisedAt: string;
+  clearedAt?: string | null;
+}
+
+/** GET /api/monitor/alerts */
+export interface MonitorAlertsResponse {
+  activeCount: number;
+  items: MonitorAlert[];
+}
+
+/** SSE type=monitor 的载荷 */
+export interface MonitorSnapshot {
+  summary: MonitorSummary;
+  cameras: MonitorCameraStatus[];
+  alerts: MonitorAlert[];
+  serverTime: string;
+}
+
+/** GET /api/monitor/config */
+export interface MonitorConfigResponse {
+  file: string;
+  dataDirectory: string;
+  options: MonitorOptions;
+  note?: string;
+}
+
+export interface SaveMonitorConfigResponse {
+  ok: boolean;
+  file: string;
+  backup?: string | null;
+  options: MonitorOptions;
+  note?: string;
 }

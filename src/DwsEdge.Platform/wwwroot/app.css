@@ -1,4 +1,4 @@
-/*
+﻿/*
  * 平台界面样式：暗色、信息密度优先（现场大屏 + 笔记本都要看得清）。
  * 由 esbuild 打包成 wwwroot\app.css，index.html 只引 app.css。
  */
@@ -91,3 +91,12 @@ input[type=date] { background: #0d1117; color: #e6edf3; border: 1px solid #30363
 /* B7：列表里的缩略图（点击看原图） */
 img.thumb { height: 48px; border: 1px solid #30363d; border-radius: 4px; display: block; background: #0d1117; }
 a.img:hover img.thumb { border-color: #58a6ff; }
+
+/* B8：相机状态告警条（实时监控页顶部，点一下跳设备信息页） */
+.alertbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 18px; cursor: pointer; border: 1px solid #263041; background: #1a212b; }
+.alertbar .title { font-weight: 600; }
+.alertbar .item { color: #e6edf3; }
+.alertbar .more { color: #8b98a9; font-size: 12px; }
+.alertbar.ok { border-color: #2ea04366; background: #14251b; color: #3fb950; }
+.alertbar.warn { border-color: #d2992266; background: #2a2213; color: #d29922; }
+.alertbar.err { border-color: #f8514966; background: #2a1a17; color: #f85149; }

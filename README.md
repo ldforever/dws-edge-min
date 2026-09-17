@@ -34,7 +34,7 @@ dws-edge-min/
 ├─ tools/apply-config.ps1        一键应用配置：写配置 → 重启 SDK 校验 → 失败自动回滚
 ├─ config/gateway.ini            采集宿主配置（选 provider + provider 参数）
 ├─ frontend/                     前端 TypeScript 工程（无框架、无打包器）
-│  ├─ src/                       api / sse / dom / realtime / devices / config / types
+│  ├─ src/                       api / sse / dom / realtime / devices / monitor / config / history / rules / dedup / downstream / types
 │  └─ build.mjs                  tsc 编译 → wwwroot\js，并拷贝样式
 ├─ src/
 │  ├─ DwsEdge.Core/              契约与模型（net48 + net10.0 双目标，两边共用）
@@ -45,18 +45,24 @@ dws-edge-min/
 │  ├─ DwsEdge.Providers.Simulator/ 测试用模拟相机（不需要相机和加密狗）
 │  ├─ DwsEdge.Host/              采集宿主 exe（net48/x64）
 │  └─ DwsEdge.Platform/          业务平台 exe（net10.0）
-│     ├─ Program.cs              最小 API：健康/统计/包裹/相机/图片/SSE
+│     ├─ Program.cs              最小 API：健康/统计/包裹/相机/图片/历史/规则/下游/监控/SSE
 │     ├─ SpoolTailer.cs          消费 spool 事件（V2 换 gRPC 只改这里）
 │     ├─ SpoolStore.cs           包裹合并、统计、实时推送、图片按需读取
+│     ├─ HistoryStore.cs         历史库（索引 + 查询 + CSV 导出）
+│     ├─ DedupStore.cs           去重指纹归档（按 traceId）
+│     ├─ BarcodeRuleStore.cs     条码过滤规则（热加载）
+│     ├─ DownstreamSender.cs     下游输出（TCP 客户端/服务端、HTTP）
+│     ├─ ThumbnailService.cs     缩略图（纯 C# 处理 BMP）
+│     ├─ CameraMonitor.cs        相机状态监控与告警（B8）
 │     ├─ SpoolModels.cs          事件与输出模型
 │     ├─ appsettings.json        端口、spool 目录、图片根目录
-│     └─ wwwroot/index.html      实时监控页（暗色，SSE 推送）
+│     └─ wwwroot/                index.html 骨架 + 编译产物（app.css / js\*.js）
 └─ runtime/                      运行时目录（大华 SDK 全部 DLL、Cfg、图片、spool、日志）
    ├─ DwsEdge.Host.exe
    ├─ DwsEdge.Core.dll           （net48 版本）
    ├─ providers/                 插件 DLL
    ├─ platform/                  业务平台（含 net10 版 Core、wwwroot）
-   ├─ config/gateway.ini
+   ├─ config/                    gateway.ini（采集）+ barcode-rules.json / downstream.json / monitor.json（平台，保存自动备份）
    └─ images/  spool/  logs/  Log/
 ```
 
@@ -390,6 +396,7 @@ frontend/
    ├─ dom.ts             $ / cell / 方位中文名 / CSV / 下载 / 提示
    ├─ realtime.ts        实时监控页（KPI + 过包表 + 相机表）
    ├─ devices.ts         设备信息页（方位编辑、保存、六面概览、导出 CSV）
+   ├─ monitor.ts         监控与告警（告警条、在线率/心跳、掉线与告警记录、阈值配置）（B8）
    ├─ config.ts          配置页（一键应用 + 结果回显）
    ├─ main.ts            入口：页签切换 + 装配
    └─ styles.css         全部样式
@@ -456,7 +463,8 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 
 **事件文件**：`runtime\spool\events-<日期>.jsonl`（一行一个事件，先落盘再推送，业务端重启不丢）
 
-**业务平台（浏览器 http://本机IP:8090）**：包裹总数、读码率、无码数、相机在线数，以及实时过包列表（SSE 推送）。
+**业务平台（浏览器 http://本机IP:8090）**：包裹总数、读码率、无码数、相机在线数、**相机告警条**（B8），
+以及实时过包列表（SSE 推送）；设备信息页有每台相机的在线率/心跳/掉线记录。
 
 **平台 API**（实测返回）：
 
@@ -488,6 +496,11 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 | `GET /api/images?path=<绝对路径>` | 按需读取原图（只允许图片根目录内的文件，越权返回 400） |
 | `GET /api/images/thumb?path=&w=160` | **B7** 缩略图（BMP 真缩小并缓存；JPEG 回退原图） |
 | `GET /api/images/info?path=` | **B7** 图片元信息（字节/时间/后缀/是否支持缩略图） |
+| `GET /api/monitor/summary` | **B8** 监控汇总（相机数、在线/离线、平均在线率、活动告警数） |
+| `GET /api/monitor/cameras` | **B8** 每台相机的在线率 / 心跳 / 最近出码 / 掉线次数 / 当前状态 / 活动告警 |
+| `GET /api/monitor/events?limit=&camera=` | **B8** 掉线、上线、恢复、告警 事件流（可查、可按相机过滤） |
+| `GET /api/monitor/alerts?limit=&activeOnly=` | **B8** 告警列表（默认只看活动告警） |
+| `GET /api/monitor/config` / `POST /api/monitor/config` | **B8** 告警阈值读写（保存自动备份、立即生效） |
 | `GET /api/stream` | SSE 实时推送（包裹与统计） |
 
 实测结果示例：`{"events":4,"parcels":2,"noread":0,"images":2,"readRate":1,"parseErrors":0}` —— 两次触发共 4 条事件（detected + enriched），
@@ -864,7 +877,75 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b7-images.ps1
 覆盖：元信息、缩略图尺寸/体积、缓存不重算、白名单越权、文件不存在、JPEG 回退、
 **并发 8 个取图请求**、以及取图期间采集照常入库，共 19 项断言。
 
-## 十三、两个进程的边界
+## 十三、相机状态监控与告警（B8）
+
+现场最怕的不是"没数据"，而是"某台相机悄悄掉了，三天后才发现"。这一段把相机的**在线率、掉线记录、心跳、告警**
+做成可查、可推、可配 —— 判定全在平台侧做，采集宿主一行都不用改。
+
+### 判定口径
+
+| 指标 | 口径 |
+|---|---|
+| 心跳 | 最近一次收到该相机的**任何**数据：状态事件（上/下线）或出码事件。出码是最强的心跳 —— 它说明"相机 + SDK + 落盘 + spool"整条链都在工作 |
+| 在线率 | 累计在线时长 /（在线 + 离线）时长；默认统计窗口 60 分钟。平台重启后从"重启那一刻"重新累计，不拿磁盘里的旧时间戳造数 |
+| 掉线记录 | 每一次上线/掉线都写一条事件，落盘 `runtime\data\camera-events-yyyyMMdd.jsonl`（一条一行 JSON，重启后照样能查） |
+
+### 五类告警
+
+| 告警码 | 含义 | 默认阈值 |
+|---|---|---|
+| `camera-offline` | 相机离线，且持续超过阈值（闪断不刷屏） | 10 秒 |
+| `heartbeat-timeout` | 超过阈值没收到任何数据 —— 兜住"掉线压根不上报"的相机（拔网线、断电、交换机端口坏了） | 60 秒 |
+| `frequent-offline` | 窗口内掉线次数达到阈值（网线接触不良、供电不稳的典型症状） | 30 分钟内 3 次 |
+| `low-online-rate` | 在线率低于阈值 | 95%（窗口 60 分钟） |
+| `declared-missing` | cfg 清单里声明了、但 SDK 没发现（没上电/没接网/被别的软件占用） | 立即，critical |
+
+告警**产生与恢复都记事件、都推界面**；条件恢复后自动消除，不需要人工清。
+
+### 接口
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/monitor/summary` | 汇总：相机数、在线/离线、平均在线率、活动告警数 |
+| `GET /api/monitor/cameras` | 每台相机：在线率、心跳时间与新鲜度、最近出码、掉线次数、当前状态持续时长、活动告警 |
+| `GET /api/monitor/events?limit=&camera=` | 掉线/上线/恢复/告警 事件流（可按相机过滤） |
+| `GET /api/monitor/alerts?limit=&activeOnly=` | 告警列表（默认只看活动告警） |
+| `GET /api/monitor/config` / `POST /api/monitor/config` | 阈值读写（保存自动备份、立即生效） |
+
+SSE 新增两种消息：`type=monitor`（监控快照，按检查间隔周期推 —— 界面上的"心跳 12 秒前""在线率 48.2%"自己会走）
+和 `type=alert`（单条告警产生/恢复，用来即时提示）。
+
+### 界面
+
+* 实时监控页顶部**告警条**：正常是绿色"相机状态正常：6 / 6 台在线"；有告警就变黄/红，列出前三条，点一下跳到设备信息页；
+* 设备信息页**相机状态监控**面板：在线率 / 最近心跳 / 最近出码 / 掉线次数 / 当前状态持续 / 活动告警 + 掉线告警记录表；
+* 配置页**监控与告警阈值**面板：心跳超时、离线告警、检查间隔、频繁掉线次数与窗口、在线率下限与窗口、事件保留天数。
+
+### 配置与落盘
+
+| 文件 | 内容 |
+|---|---|
+| `runtime\config\monitor.json` | 阈值（首次运行自动生成；支持热加载，平台每秒检查一次文件，改完不用重启） |
+| `runtime\data\camera-events-yyyyMMdd.jsonl` | 事件流：一条一行；平台启动时恢复最近 3 天 |
+
+**重启语义**：从磁盘恢复出来的相机，心跳与离线计时都从"平台启动时刻"起算 ——
+否则平台一重启就会拿磁盘里的旧时间戳报一堆假警（这是实测踩到的坑，记在回归脚本里）。
+
+回归测试：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\test-b8-monitor.ps1
+```
+
+覆盖：5 台相机（正常 / 清单里没发现 / 沉默 / 频繁闪断 / 在线率过低）→ 在线率与心跳数值、掉线记录条数与按相机过滤、
+五类告警、掉线→恢复后告警自动消除并记录离线时长、出码当心跳使告警消除、事件落盘与平台重启后恢复、
+阈值读写 / 非法值拒绝 / 旧配置自动备份、以及监控不影响原有链路（包裹照常入库、设备页照常显示、SSE 补发带监控快照），
+共 **54 项断言**。
+
+实现位置：`src\DwsEdge.Platform\CameraMonitor.cs`（判定与统计）+ `MonitorWatcher`（定时检查并推快照），
+`SpoolStore` 把相机状态与出码事件喂给它；前端在 `frontend\src\monitor.ts`。
+
+## 十四、两个进程的边界
 
 | | 采集宿主（Edge） | 业务平台（Platform） |
 |---|---|---|
@@ -877,7 +958,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b7-images.ps1
 通信：V1 用文件 spool（`SpoolTailer` 增量读取，只处理完整行）；V2 换成 gRPC/命名管道时只需替换 `SpoolTailer`，
 `SpoolStore` 与平台 API 不动。
 
-## 十四、代码导读
+## 十五、代码导读
 
 **采集侧（net48）**
 
@@ -895,6 +976,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b7-images.ps1
 - `DwsEdge.Platform/DedupStore.cs`：去重指纹归档（按 traceId 的索引 + WAL + 定期整理 + 保留期）。
 - `DwsEdge.Platform/HistoryStore.cs`：历史库（快照 + 按 traceId 收敛的索引）、查询过滤、CSV 导出。
 - `DwsEdge.Platform/DownstreamSender.cs` + `DownstreamStore.cs` + `MessageTemplate.cs`：B4/B5 下游输出（客户端/服务端两种模式、模板、重传、连接活性检测、广播）。
+- `DwsEdge.Platform/CameraMonitor.cs`：B8 相机状态监控（在线率/掉线记录/心跳/五类告警、事件落盘与恢复、阈值热加载）+ `MonitorWatcher`（后台定时判定并推快照）。
 
 **平台侧（net10）**
 
@@ -908,9 +990,10 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b7-images.ps1
 - `frontend/src/main.ts`：入口，装配页签与实时推送。
 - `frontend/src/api.ts` + `types.ts`：接口层与 DTO 类型（与后端一一对应）。
 - `frontend/src/realtime.ts` / `devices.ts` / `config.ts`：三个页签各自的渲染逻辑。
+- `frontend/src/monitor.ts`：B8 监控与告警（告警条、每台相机指标、掉线与告警记录、阈值配置）。
 - `frontend/src/sse.ts` / `dom.ts`：实时推送封装与 DOM 小工具。
 
-## 十五、常见问题
+## 十六、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -931,15 +1014,23 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b7-images.ps1
 | 界面改了方位，条码方位还是旧的 | 采集宿主只在启动时读方位表；重启宿主（配置页勾"通过后自动重启采集宿主"也可以） |
 | 配置页红字"找不到 apply-config.ps1" | 跑一次 `build.ps1`（会把 `tools\*.ps1` 拷到 `runtime\tools`），或手工把 tools 目录放到 runtime 旁边 |
 | 相机显示"未发现" | cfg 里 `enable="1"` 但 SDK 没报；查上电、网线、网段，或该相机被别的软件占用 |
+| 相机一直报"心跳超时" | 这台相机既不报状态也不出码：查上电、网线、交换机端口；确认窗口内有包裹经过（没包裹经过时心跳只能靠状态事件） |
+| 偶尔报"频繁掉线" | 网线接触不良 / 供电不稳 / 网段内有 IP 冲突的典型症状，看 `camera-events-*.jsonl` 里的掉线时间点找规律 |
+| 在线率老是 100% 或一直很低 | 在线率窗口可在"配置 → 监控与告警阈值"里改（默认 60 分钟）；刚上线的相机样本不足时显示 `—` |
+| 不想被告警刷屏 | 把 `offlineAlertSeconds` 调大（闪断就不报），或把"启用监控与告警"关掉（数据仍会继续统计） |
 
-## 十六、下一步（V1 完整版）
+## 十七、下一步（V1 完整版）
 
-采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做），平台侧包裹合并 / 历史库 / 存图访问 /
-统计与实时推送 / 设备信息 / 一键应用配置也都打通了。接着按 V1 需求清单排：
+采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做）；平台侧 B1-B8 也打通了：
+包裹合并与去重（B1）、条码过滤规则（B2）、历史库与导出（B3）、下游 TCP 客户端 / TCP 服务端 /
+HTTP 推送（B4-B6）、图片按需访问与缩略图（B7）、相机状态监控与告警（B8）。
+
+接着按 V1 需求清单排：
 
 1. **A8-3 配置模板**：把当前 cfg 存成模板、按模板生成/对比（界面上"另存为模板/套用模板"）；
-2. 条码过滤规则（长度、前后缀、正则与黑白名单）；
-3. 下游对接（TCP 客户端 / 服务端、HTTP，带重传与幂等）；
-4. 配置页补齐：存图策略、输出参数（相机清单与触发模式已能改）；
+2. 配置页补齐：存图策略、输出参数（相机清单、触发模式、下游、监控阈值已能改）；
+3. **告警外发**：把 B8 的告警接到下游（TCP/HTTP 报文或钉钉/企业微信机器人），现场不用盯屏；
+4. **C 类**：登录与权限、操作审计、多语言/多站点、报表（读码率、在线率按班次统计）；
 5. 把 `SpoolTailer` 换成 gRPC / 命名管道，降低延迟（为 ARM 全栈铺路）；
-6. 采集宿主做成 Windows 服务 / 看门狗，配置页的"重启采集宿主"改成调服务管理器（现在是从平台直接拉进程）。
+6. 采集宿主做成 Windows 服务 / 看门狗，配置页的"重启采集宿主"改成调服务管理器（现在是从平台直接拉进程）；
+7. 采集宿主与平台一起做成自启动 + 自动恢复（现场无人值守的前提）。

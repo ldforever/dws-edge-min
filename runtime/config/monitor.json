@@ -1,0 +1,11 @@
+{
+  "enabled": true,
+  "heartbeatTimeoutSeconds": 60,
+  "offlineAlertSeconds": 10,
+  "frequentOfflineCount": 3,
+  "frequentOfflineWindowMinutes": 30,
+  "onlineRateAlertPercent": 95,
+  "onlineRateWindowMinutes": 60,
+  "checkIntervalSeconds": 5,
+  "eventRetentionDays": 30
+}

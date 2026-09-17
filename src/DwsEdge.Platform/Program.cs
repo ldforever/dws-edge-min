@@ -48,6 +48,9 @@ namespace DwsEdge.Platform
             builder.Services.AddSingleton<DownstreamStore>();
             builder.Services.AddSingleton<ConfigStore>();
             builder.Services.AddSingleton<DownstreamSender>();
+            // B8：相机状态监控（在线率 / 掉线记录 / 心跳 / 告警）
+            builder.Services.AddSingleton<CameraMonitor>();
+            builder.Services.AddHostedService<MonitorWatcher>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<DownstreamSender>());
             builder.Services.AddHostedService<SpoolTailer>();
             builder.Services.AddHostedService<StorageProbe>();
@@ -284,10 +287,63 @@ namespace DwsEdge.Platform
             app.MapGet("/api/images/thumb", (SpoolStore store, string path, int? w) =>
                 store.OpenThumbnail(path, w.HasValue ? Math.Clamp(w.Value, 32, 1600) : 320));
             app.MapGet("/api/images/info", (SpoolStore store, string path) => Results.Json(store.ImageInfo(path)));
+
+            // B8：相机状态监控与告警 —— 在线率 / 掉线记录 / 心跳 / 告警 / 阈值配置
+            app.MapGet("/api/monitor/summary", (CameraMonitor monitor) => Results.Json(monitor.Summary()));
+
+            app.MapGet("/api/monitor/cameras", (CameraMonitor monitor) => Results.Json(monitor.Statuses()));
+
+            // 掉线记录：谁在什么时候掉的、掉了多久（掉线/上线/恢复/告警都在这条流里）
+            app.MapGet("/api/monitor/events", (CameraMonitor monitor, int? limit, string camera) =>
+            {
+                int take = limit.HasValue ? Math.Clamp(limit.Value, 1, 500) : 100;
+                return Results.Json(monitor.RecentEvents(take, camera));
+            });
+
+            app.MapGet("/api/monitor/alerts", (CameraMonitor monitor, int? limit, bool? activeOnly) =>
+            {
+                int take = limit.HasValue ? Math.Clamp(limit.Value, 1, 500) : 100;
+                return Results.Json(monitor.Alerts(take, activeOnly.GetValueOrDefault(true)));
+            });
+
+            app.MapGet("/api/monitor/config", (CameraMonitor monitor) => Results.Json(new
+            {
+                file = monitor.ConfigFilePath,
+                dataDirectory = monitor.DataDirectory,
+                options = monitor.Options,
+                note = "改文件或 POST 本接口都立即生效（平台每秒检查一次配置文件，不用重启）"
+            }));
+
+            app.MapPost("/api/monitor/config", (CameraMonitor monitor, MonitorOptions request) =>
+            {
+                try
+                {
+                    string backup = monitor.SaveOptions(request);
+                    return Results.Json(new
+                    {
+                        ok = true,
+                        file = monitor.ConfigFilePath,
+                        backup,
+                        options = monitor.Options,
+                        note = "已立即生效；旧配置已备份"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
             app.MapGet("/api/stream", (HttpContext context, SpoolStore store, CancellationToken token) =>
                 store.StreamAsync(context, token));
 
             ILogger logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Platform");
+
+            // B8：告警产生/恢复时推给界面（顶部告警条）
+            SpoolStore store = app.Services.GetRequiredService<SpoolStore>();
+            CameraMonitor monitor = app.Services.GetRequiredService<CameraMonitor>();
+            monitor.OnAlertChanged = alert => store.PublishAlert(alert);
+
             logger.LogInformation("DwsEdge.Platform 启动完成；图片根目录：{0}", app.Services.GetRequiredService<SpoolStore>().ImagesRoot);
 
             app.Run();

@@ -46,6 +46,8 @@ namespace DwsEdge.Platform
         private readonly HistoryStore _history;
         private readonly BarcodeRuleStore _rules;
         private readonly DedupStore _dedup;
+        /// <summary>B8 相机状态监控（在线率 / 掉线记录 / 心跳 / 告警）。</summary>
+        private readonly CameraMonitor _monitor;
         private readonly string _imagesRoot;
         private readonly string _runtimeRoot;
         private ThumbnailService _thumbs;
@@ -81,12 +83,13 @@ namespace DwsEdge.Platform
         private int _diskUsedPercent;
 
         public SpoolStore(IConfiguration config, HistoryStore history, BarcodeRuleStore rules,
-            DedupStore dedup, ILogger<SpoolStore> logger)
+            DedupStore dedup, CameraMonitor monitor, ILogger<SpoolStore> logger)
         {
             _logger = logger;
             _history = history;
             _rules = rules;
             _dedup = dedup;
+            _monitor = monitor;
             string root = config["Images:Root"] ?? "../images";
             _imagesRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, root));
             _runtimeRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, config["Runtime:Root"] ?? ".."));
@@ -379,6 +382,13 @@ namespace DwsEdge.Platform
                 Trim();
             }
 
+            // B8 心跳：这个相机"刚刚交出过数据"。出码是最强的心跳信号（比状态事件更能说明采集链路是通的），
+            // 放在锁外面调用，避免在持有 _sync 的时候再进监控模块的锁。
+            if (_monitor != null)
+            {
+                _monitor.ApplyCode(evt.deviceId, evt.capturedAtMs > 0 ? evt.capturedAtMs : evt.receivedAtMs);
+            }
+
             _publishedParcels++;
             Publish(new { type = "parcel", data = record });
         }
@@ -469,12 +479,11 @@ namespace DwsEdge.Platform
 
         private void ApplyCameraStatus(SpoolEvent evt, bool replay)
         {
+            string key = evt.deviceId ?? "unknown";
+            bool isSnapshot = evt.isSnapshot.GetValueOrDefault(false);
             CameraRecord camera;
             lock (_sync)
             {
-                string key = evt.deviceId ?? "unknown";
-                bool isSnapshot = evt.isSnapshot.GetValueOrDefault(false);
-
                 // 换了一轮采集宿主（会话号变了）就把上一轮的相机清掉：
                 // 改了相机清单重启后，设备列表应该只有新清单里的相机，而不是新旧混在一起。
                 if (evt.sessionId > 0 && evt.sessionId != _cameraSessionId)
@@ -563,6 +572,14 @@ namespace DwsEdge.Platform
                 {
                     camera.statusChanges++;
                 }
+            }
+
+            // B8 把同一条状态喂给监控模块：在线率、掉线记录、心跳、告警都以它为准。
+            // 放在锁外面调用（监控模块自己加锁），避免两把锁互相等。
+            if (_monitor != null)
+            {
+                _monitor.ApplyStatus(key, camera.online, camera.atMs, isSnapshot, replay,
+                    camera.declaredLabel, camera.position, camera.discovered);
             }
 
             if (!replay)
@@ -1439,6 +1456,26 @@ namespace DwsEdge.Platform
             }
         }
 
+        /// <summary>B8：告警产生/恢复时推给界面（界面顶部告警条用它实时更新）。</summary>
+        public void PublishAlert(CameraAlert alert)
+        {
+            if (alert == null)
+            {
+                return;
+            }
+            Publish(new { type = "alert", data = alert });
+        }
+
+        /// <summary>B8：把监控快照（汇总 + 每台指标 + 活动告警）推给界面。</summary>
+        public void PublishMonitor(CameraMonitor monitor)
+        {
+            if (monitor == null)
+            {
+                return;
+            }
+            Publish(new { type = "monitor", data = monitor.Snapshot(50) });
+        }
+
         public async Task StreamAsync(HttpContext context, CancellationToken token)
         {
             context.Response.Headers["Content-Type"] = "text/event-stream";
@@ -1469,6 +1506,14 @@ namespace DwsEdge.Platform
                 {
                     string camera = JsonSerializer.Serialize(new { type = "camera", data = cameras[i] }, _json);
                     await context.Response.WriteAsync("data: " + camera + "\n\n", token);
+                }
+
+                // B8：监控快照（在线率/心跳/活动告警）也补一份，页面一打开就有数
+                if (_monitor != null)
+                {
+                    string snapshot = JsonSerializer.Serialize(
+                        new { type = "monitor", data = _monitor.Snapshot(50) }, _json);
+                    await context.Response.WriteAsync("data: " + snapshot + "\n\n", token);
                 }
                 await context.Response.Body.FlushAsync(token);
 

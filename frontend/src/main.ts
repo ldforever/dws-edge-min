@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 前端入口：装配页签、实时推送、首屏数据。
  *
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
@@ -14,6 +14,7 @@ import { initRules, refreshRules } from "./rules.js";
 import { initDedup, refreshDedup } from "./dedup.js";
 import { initHistory, refreshHistory } from "./history.js";
 import { initDownstream, refreshDownstream } from "./downstream.js";
+import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js";
 
 type PageName = "realtime" | "devices" | "history" | "config";
 const PAGES: PageName[] = ["realtime", "devices", "history", "config"];
@@ -25,13 +26,17 @@ function showPage(name: PageName): void {
   }
 
   // 切页时按需拉一次数据（数据不多，够用且简单）
-  if (name === "devices") void refreshDevices();
+  if (name === "devices") {
+    void refreshDevices();
+    void refreshMonitor();
+  }
   if (name === "history") void refreshHistory();
   if (name === "config") {
     void refreshConfig();
     void refreshRules();
     void refreshDedup();
     void refreshDownstream();
+    void refreshMonitorConfig();
   }
 }
 
@@ -48,6 +53,7 @@ function bootstrap(): void {
   initDedup();
   initHistory();
   initDownstream();
+  initMonitor();
 
   for (const page of PAGES) {
     $("tab-" + page).addEventListener("click", () => showPage(page));
@@ -64,9 +70,14 @@ function bootstrap(): void {
       upsertCamera(c);
       scheduleDevicesRefresh();
     },
+    onMonitor: (snapshot) => renderMonitorSnapshot(snapshot),
+    onAlert: (alert) => renderAlert(alert),
     onStats: renderStats,
     onStatus: setConnectionState
   });
+
+  // 首屏也拉一次监控（SSE 会补发，但"页面比平台先起来"或断线期间得靠这个）
+  void refreshMonitor();
 }
 
 /** 新包裹到达后刷新统计（合并 500ms 内的多次刷新） */

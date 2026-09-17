@@ -4,16 +4,17 @@
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
  * 也没有全局变量：模块之间只通过 import 通信，方便以后换壳（WebView2）或加页面。
  */
-import { api } from "./api.js?v=54253388";
-import { connectStream } from "./sse.js?v=54253388";
-import { $ } from "./dom.js?v=54253388";
-import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=54253388";
-import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=54253388";
-import { initConfig, refreshConfig } from "./config.js?v=54253388";
-import { initRules, refreshRules } from "./rules.js?v=54253388";
-import { initDedup, refreshDedup } from "./dedup.js?v=54253388";
-import { initHistory, refreshHistory } from "./history.js?v=54253388";
-import { initDownstream, refreshDownstream } from "./downstream.js?v=54253388";
+import { api } from "./api.js?v=c8468a3c";
+import { connectStream } from "./sse.js?v=c8468a3c";
+import { $ } from "./dom.js?v=c8468a3c";
+import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=c8468a3c";
+import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=c8468a3c";
+import { initConfig, refreshConfig } from "./config.js?v=c8468a3c";
+import { initRules, refreshRules } from "./rules.js?v=c8468a3c";
+import { initDedup, refreshDedup } from "./dedup.js?v=c8468a3c";
+import { initHistory, refreshHistory } from "./history.js?v=c8468a3c";
+import { initDownstream, refreshDownstream } from "./downstream.js?v=c8468a3c";
+import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=c8468a3c";
 const PAGES = ["realtime", "devices", "history", "config"];
 function showPage(name) {
     for (const page of PAGES) {
@@ -21,8 +22,10 @@ function showPage(name) {
         $("tab-" + page).classList.toggle("active", page === name);
     }
     // 切页时按需拉一次数据（数据不多，够用且简单）
-    if (name === "devices")
+    if (name === "devices") {
         void refreshDevices();
+        void refreshMonitor();
+    }
     if (name === "history")
         void refreshHistory();
     if (name === "config") {
@@ -30,6 +33,7 @@ function showPage(name) {
         void refreshRules();
         void refreshDedup();
         void refreshDownstream();
+        void refreshMonitorConfig();
     }
 }
 function setConnectionState(connected) {
@@ -44,6 +48,7 @@ function bootstrap() {
     initDedup();
     initHistory();
     initDownstream();
+    initMonitor();
     for (const page of PAGES) {
         $("tab-" + page).addEventListener("click", () => showPage(page));
     }
@@ -57,9 +62,13 @@ function bootstrap() {
             upsertCamera(c);
             scheduleDevicesRefresh();
         },
+        onMonitor: (snapshot) => renderMonitorSnapshot(snapshot),
+        onAlert: (alert) => renderAlert(alert),
         onStats: renderStats,
         onStatus: setConnectionState
     });
+    // 首屏也拉一次监控（SSE 会补发，但"页面比平台先起来"或断线期间得靠这个）
+    void refreshMonitor();
 }
 /** 新包裹到达后刷新统计（合并 500ms 内的多次刷新） */
 let statsTimer = null;

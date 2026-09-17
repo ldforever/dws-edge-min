@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
@@ -9,7 +9,7 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=54253388" />
+<link rel="stylesheet" href="./app.css?v=c8468a3c" />
 </head>
 <body>
 <header>
@@ -35,6 +35,9 @@
       <div class="card"><div class="label">无码包裹</div><div class="value" id="kpiNoread">0</div></div>
       <div class="card"><div class="label">相机在线 / 总数</div><div class="value small" id="kpiCameras">0 / 0</div></div>
     </div>
+
+    <!-- B8：相机状态告警条（有活动告警时变黄/变红，点一下到设备信息页看记录） -->
+    <div id="alertBar" class="alertbar ok">相机状态监控启动中…</div>
 
     <h2>最新过包（实时）</h2>
     <div id="emptyTip" class="empty">暂无数据：先用 run.ps1 -TriggerOnce 触发一次过包。</div>
@@ -93,6 +96,53 @@
       </thead>
       <tbody id="devRows"></tbody>
     </table>
+
+    <!-- ==================== B8 相机状态监控与告警 ==================== -->
+    <div class="panel" style="margin-top:20px">
+      <h2>相机状态监控与告警（B8）</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:12px">
+        数据来自采集宿主上报的相机状态与出码事件，平台侧只做统计与判定（不改采集）。
+        <b>心跳</b> = 最近一次收到该相机的任何数据（状态事件或出码）；
+        <b>离线告警</b>要持续超过阈值才报（避免闪断刷屏），恢复后自动消除。
+        阈值在"配置 → 监控与告警阈值"里改，改完立即生效。
+      </div>
+
+      <div class="cards">
+        <div class="card"><div class="label">监控相机数</div><div class="value small" id="monCameras">0</div></div>
+        <div class="card good"><div class="label">在线 / 总数</div><div class="value small" id="monOnline">0 / 0</div></div>
+        <div class="card"><div class="label">平均在线率</div><div class="value small" id="monRate">—</div></div>
+        <div class="card bad"><div class="label">活动告警</div><div class="value small" id="monAlerts">0</div></div>
+      </div>
+
+      <div class="toolbar">
+        <button class="btn secondary" id="btnRefreshMonitor">刷新监控</button>
+        <label class="chk"><input type="checkbox" id="monOnlyActive" /> 只看告警记录</label>
+        <span id="monMsg" class="muted" style="font-size:12px"></span>
+      </div>
+
+      <h3>每台相机（在线率 / 心跳 / 掉线 / 当前告警）</h3>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>相机</th><th>状态</th><th>在线率</th><th>最近心跳</th><th>最近出码</th>
+              <th>掉线次数</th><th>当前状态持续</th><th>活动告警</th>
+            </tr>
+          </thead>
+          <tbody id="monRows"></tbody>
+        </table>
+      </div>
+
+      <h3>掉线 / 上线 / 告警记录（最近 200 条，落盘在 data\camera-events-*.jsonl）</h3>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr><th>时间</th><th>相机</th><th>事件</th><th>说明</th><th>本次离线时长</th></tr>
+          </thead>
+          <tbody id="monEventRows"></tbody>
+        </table>
+      </div>
+    </div>
     <footer id="devFoot">—</footer>
   </section>
 
@@ -324,6 +374,37 @@
     </div>
 
     <div class="panel">
+      <h2>监控与告警阈值（B8）</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:12px">
+        判定完全是"平台侧"的事，不影响采集：<b>心跳超时</b>用来兜住"掉线压根不上报"的相机，
+        <b>离线告警</b>要求持续超过阈值（闪断不刷屏），<b>频繁掉线</b>看窗口内掉线次数，
+        <b>在线率下限</b>低于阈值告警。保存后立即生效（平台每秒检查一次配置文件，不用重启）。
+      </div>
+
+      <div class="toolbar">
+        <label class="chk"><input type="checkbox" id="monEnabled" checked /> 启用监控与告警</label>
+        <label class="chk">心跳超时(秒)：<input type="text" id="monHeartbeat" size="5" /></label>
+        <label class="chk">离线告警(秒)：<input type="text" id="monOfflineAlert" size="5" /></label>
+        <label class="chk">检查间隔(秒)：<input type="text" id="monCheckInterval" size="5" /></label>
+      </div>
+      <div class="toolbar">
+        <label class="chk">频繁掉线次数：<input type="text" id="monFreqCount" size="5" /></label>
+        <label class="chk">统计窗口(分钟)：<input type="text" id="monFreqWindow" size="5" /></label>
+        <label class="chk">在线率下限(%)：<input type="text" id="monRatePercent" size="5" /></label>
+        <label class="chk">在线率窗口(分钟)：<input type="text" id="monRateWindow" size="5" /></label>
+        <label class="chk">事件保留(天)：<input type="text" id="monRetention" size="5" /></label>
+      </div>
+      <div class="toolbar">
+        <button class="btn" id="btnMonSave">保存并生效</button>
+        <button class="btn secondary" id="btnMonReload">重新读取</button>
+        <button class="btn secondary" id="btnMonDefaults">填默认值</button>
+        <span id="monConfigBadge"></span>
+        <span id="monConfigMsg" class="muted" style="font-size:12px"></span>
+      </div>
+      <div class="muted" id="monConfigFile" style="font-size:12px"></div>
+    </div>
+
+    <div class="panel">
       <h2>一键应用配置</h2>
       <div class="muted" style="font-size:12px;margin-bottom:12px">
         写配置 → 启动 SDK 回读校验 → 不通过自动回滚。同一个按钮走的就是命令行
@@ -363,6 +444,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=54253388"></script>
+<script type="module" src="./js/main.js?v=c8468a3c"></script>
 </body>
 </html>

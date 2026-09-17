@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 接口层：所有 /api/* 调用都从这里走。
  *
  * 约定：
@@ -22,10 +22,17 @@ import type {
   HistoryFilter,
   HistoryResult,
   ImageInfo,
+  MonitorAlertsResponse,
+  MonitorCameraStatus,
+  MonitorConfigResponse,
+  MonitorEvent,
+  MonitorOptions,
+  MonitorSummary,
   ParcelRecord,
   PositionsResponse,
   RuleTestResponse,
   RulesResponse,
+  SaveMonitorConfigResponse,
   SavePositionsResponse,
   SaveRulesResponse,
   Stats
@@ -159,7 +166,27 @@ export const api = {
     "/api/images/thumb?w=" + width + "&path=" + encodeURIComponent(path),
 
   imageInfo: (path: string): Promise<ApiResult<ImageInfo>> =>
-    request<ImageInfo>("/api/images/info?path=" + encodeURIComponent(path))
+    request<ImageInfo>("/api/images/info?path=" + encodeURIComponent(path)),
+
+  // ---- B8 相机状态监控与告警 ----
+  monitorSummary: (): Promise<ApiResult<MonitorSummary>> => request<MonitorSummary>("/api/monitor/summary"),
+
+  monitorCameras: (): Promise<ApiResult<MonitorCameraStatus[]>> =>
+    request<MonitorCameraStatus[]>("/api/monitor/cameras"),
+
+  monitorEvents: (limit: number, camera?: string): Promise<ApiResult<MonitorEvent[]>> =>
+    request<MonitorEvent[]>(
+      "/api/monitor/events?limit=" + limit + (camera ? "&camera=" + encodeURIComponent(camera) : "")
+    ),
+
+  monitorAlerts: (limit: number, activeOnly: boolean): Promise<ApiResult<MonitorAlertsResponse>> =>
+    request<MonitorAlertsResponse>("/api/monitor/alerts?limit=" + limit + "&activeOnly=" + activeOnly),
+
+  monitorConfig: (): Promise<ApiResult<MonitorConfigResponse>> =>
+    request<MonitorConfigResponse>("/api/monitor/config"),
+
+  saveMonitorConfig: (options: MonitorOptions): Promise<ApiResult<SaveMonitorConfigResponse>> =>
+    request<SaveMonitorConfigResponse>("/api/monitor/config", { method: "POST", json: options })
 };
 
 export const STREAM_URL = "/api/stream";
