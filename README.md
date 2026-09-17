@@ -404,6 +404,25 @@ src\DwsEdge.Platform\wwwroot\
 └─ js\*.js      ← src/*.ts 编译出的原生 ES Module（浏览器直接加载）
 ```
 
+**现场升级不会被浏览器缓存坑**：构建时会按 js/css 的内容算一个 8 位指纹，写进引用里 ——
+
+```html
+<link rel="stylesheet" href="./app.css?v=7fa00a80" />
+<script type="module" src="./js/main.js?v=7fa00a80"></script>
+```
+
+模块之间的 `import` 也会带上同一个版本号（`import { api } from "./api.js?v=7fa00a80"`）——
+原生 ES Module 的 import 是独立 URL，只给入口加版本号的话，`api.js` / `dom.js` 这些子模块仍可能被缓存住。
+
+两个特性很重要：
+
+* **内容没变，版本号就不变** —— 重复构建不会产生无意义的 git 改动，也不会白刷客户浏览器缓存；
+* **内容一变，所有 URL 都变** —— 现场换一份前端，客户普通刷新（F5）就能拿到新版，不需要教他们按 Ctrl+F5。
+
+配套地，平台只给 `.html` 加 `Cache-Control: no-cache`（每次都回源校验）：
+否则浏览器可能继续用旧的 `index.html`，里面那个"新版本号"根本到不了客户端。
+js/css 不加缓存头，失效完全交给版本号。
+
 **为什么不用打包器**（esbuild / webpack）：这个前端只有五六个模块、零第三方运行时依赖，
 浏览器原生 ES Module 就够了。好处是离线现场零工具链、DevTools 里看到的就是真实源文件名、
 改一行样式不用等打包。以后真要做 SPA 再上 Vue/React + Vite 也不冲突——后端接口一个字都不用改。
@@ -509,6 +528,7 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 | 页面 404 或样式丢失 | `runtime\platform\wwwroot` 缺失；`build.ps1` 会单独拷贝 wwwroot，重新编译即可 |
 | 页面白屏、控制台报 `app.js/js 404` | 前端没编译：`cd frontend && npm run build`（或直接跑 `build.ps1`），产物要落在 `wwwroot\js` 与 `wwwroot\app.css` |
 | `npm run check` 报某个字段不存在 | 后端 DTO 改了、`frontend/src/types.ts` 没跟着改 —— 这正是上 TypeScript 想要的提示 |
+| 升级前端后客户还看到旧界面 | 正常构建会在 `index.html` 引用上写 `?v=<内容指纹>`，普通刷新即可生效；如果手工拷文件忘了跑构建，指纹不会变，浏览器就会继续用旧的 |
 | 采集宿主返回 3000 | 相机数与配置不符（没连上）：核对 `runtime\Cfg\LogisticsBase.cfg` 的 `num` 与 `<Camera ... enable="1">` |
 | 采集宿主返回 2200 | 没插加密狗 |
 | 软触发没反应 | `triggerMode` 不是 2；用 `tools\set-trigger-mode.ps1 -Mode soft` 改好并重启采集宿主 |
