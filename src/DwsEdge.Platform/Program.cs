@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -44,7 +45,22 @@ namespace DwsEdge.Platform
             WebApplication app = builder.Build();
 
             app.UseDefaultFiles();
-            app.UseStaticFiles();
+
+            // 静态文件与缓存：
+            //   * index.html 每次都要回源校验（no-cache）—— 前端升级后如果浏览器继续用旧的
+            //     index.html，里面那个"新版本号"根本到不了客户端，版本号方案就等于白做；
+            //   * js/css 这里不加缓存头，失效靠构建时写进引用的 ?v=<内容指纹>
+            //     （引用一变就是新 URL，浏览器必然重新下载）。
+            app.UseStaticFiles(new StaticFileOptions
+            {
+                OnPrepareResponse = ctx =>
+                {
+                    if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ctx.Context.Response.Headers["Cache-Control"] = "no-cache";
+                    }
+                }
+            });
 
             app.MapGet("/api/health", (SpoolStore store) => Results.Json(store.Health()));
             app.MapGet("/api/stats", (SpoolStore store) => Results.Json(store.Stats()));
