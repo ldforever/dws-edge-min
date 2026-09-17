@@ -79,3 +79,9 @@ pre.out { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; pa
 .facemap { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; max-width: 320px; margin: 8px 0 4px; border: 1px dashed #30363d; border-radius: 8px; overflow: hidden; }
 .facemap div { padding: 8px 4px; text-align: center; font-size: 11px; color: #8b98a9; border: 1px solid #1c232e; }
 .facemap div.has { color: #e6edf3; background: #1a212b; }
+
+/* B2 规则表格：输入框要紧凑，列多了以后横向滚动 */
+.scroll-x { overflow-x: auto; }
+input.rule-input { padding: 3px 6px; font-size: 12px; }
+input.rule-input.num { width: 52px; }
+button.btn.small { padding: 3px 8px; font-size: 12px; }

@@ -43,6 +43,14 @@ export const api = {
     savePositions: (positions) => request("/api/camera-positions", { method: "POST", json: { positions } }),
     config: () => request("/api/config"),
     applyConfig: (body) => request("/api/config/apply", { method: "POST", json: body }),
+    // ---- B2 条码过滤规则 ----
+    rules: () => request("/api/rules"),
+    saveRules: (ruleSet) => request("/api/rules", { method: "POST", json: ruleSet }),
+    testRules: (codes, ruleSet) => request("/api/rules/test", {
+        method: "POST",
+        json: { codes, ruleset: ruleSet }
+    }),
+    filteredCodes: (limit) => request(`/api/rules/filtered?limit=${limit}`),
     /** 图片按需读取接口（只允许图片根目录内的文件） */
     imageUrl: (path) => "/api/images?path=" + encodeURIComponent(path)
 };

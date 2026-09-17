@@ -10,6 +10,7 @@ using System.Threading.Channels;
 using System.Threading.Tasks;
 using DwsEdge.Core.Config;
 using DwsEdge.Core.Model;
+using DwsEdge.Core.Rules;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -43,8 +44,13 @@ namespace DwsEdge.Platform
         private readonly JsonSerializerOptions _json = new JsonSerializerOptions();
         private readonly ILogger<SpoolStore> _logger;
         private readonly HistoryStore _history;
+        private readonly BarcodeRuleStore _rules;
         private readonly string _imagesRoot;
         private readonly int _maxRecords;
+
+        /// <summary>最近被规则丢弃的条码（诊断用，环形缓冲，最新在前）。</summary>
+        private readonly LinkedList<FilteredCodeRecord> _filteredRecent = new LinkedList<FilteredCodeRecord>();
+        private const int FilteredRecentCapacity = 200;
 
         private long _eventCount;
         private long _parcelCount;
@@ -56,6 +62,8 @@ namespace DwsEdge.Platform
         private long _duplicateEvents;
         private long _mergedParcels;
         private long _publishedParcels;
+        private long _filteredCodes;
+        private long _filteredToNoread;
         private int _pendingParcels;
         private int _dispatchPending;
         private int _dispatchSent;
@@ -69,10 +77,11 @@ namespace DwsEdge.Platform
         private long _diskFreeBytes;
         private int _diskUsedPercent;
 
-        public SpoolStore(IConfiguration config, HistoryStore history, ILogger<SpoolStore> logger)
+        public SpoolStore(IConfiguration config, HistoryStore history, BarcodeRuleStore rules, ILogger<SpoolStore> logger)
         {
             _logger = logger;
             _history = history;
+            _rules = rules;
             string root = config["Images:Root"] ?? "../images";
             _imagesRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, root));
             int max = 5000;
@@ -111,6 +120,12 @@ namespace DwsEdge.Platform
                 return;
             }
 
+            // 去重指纹用"过滤前"的内容：这样以后改了规则，也不会把已经处理过的事件重新当成新事件。
+            string fingerprint = Fingerprint(evt);
+
+            // ---- B2：条码过滤（命中"丢弃"规则的码在这里被摘掉，后面按"没有这个码"处理）----
+            List<FilteredCodeRecord> filtered = FilterCodes(evt);
+
             ParcelRecord record = null;
             bool isNew = false;
             bool becameReadable = false;
@@ -140,8 +155,6 @@ namespace DwsEdge.Platform
                 string idKey = evt.eventId > 0
                     ? "id:" + evt.eventId.ToString(CultureInfo.InvariantCulture) + "|" + (evt.stage ?? "")
                     : null;
-                string fingerprint = Fingerprint(evt);
-
                 HashSet<string> applied;
                 if (!_appliedByTrace.TryGetValue(key, out applied))
                 {
@@ -171,6 +184,24 @@ namespace DwsEdge.Platform
                 // 落盘内容指纹：平台重启后重读 spool 时，靠它把同一条回调继续判成重复
                 _history.AppendApplied(key, fingerprint);
 
+                // B2：把这次被规则丢掉的条码记下来（累计 + 最近列表 + 挂到包裹上，方便解释 NOREAD）
+                if (filtered.Count > 0)
+                {
+                    _filteredCodes += filtered.Count;
+                    for (int i = 0; i < filtered.Count; i++)
+                    {
+                        FilteredCodeRecord item = filtered[i];
+                        item.traceId = key;
+                        item.deviceId = evt.deviceId;
+                        item.time = FormatTime(evt.capturedAtMs > 0 ? evt.capturedAtMs : evt.receivedAtMs);
+                        _filteredRecent.AddFirst(item);
+                    }
+                    while (_filteredRecent.Count > FilteredRecentCapacity)
+                    {
+                        _filteredRecent.RemoveLast();
+                    }
+                }
+
                 if (!_byTrace.TryGetValue(key, out record))
                 {
                     record = new ParcelRecord();
@@ -180,7 +211,15 @@ namespace DwsEdge.Platform
                     record.time = FormatTime(evt.capturedAtMs > 0 ? evt.capturedAtMs : evt.receivedAtMs);
                     record.codes = new List<string>();
                     record.codeDetails = new List<CodeDetail>();
+                    record.filteredCodes = new List<FilteredCodeRecord>();
                     record.weightGrams = -1;
+
+                    // 新建记录也要把这次被规则丢掉的码挂上去（否则界面解释不了"NOREAD 为什么没码"）
+                    if (filtered.Count > 0)
+                    {
+                        record.filteredCodes.AddRange(filtered);
+                    }
+
                     // B1：下发状态只在这里置一次，后面无论合并多少次回调都不会再动它，
                     // 所以同一个包裹在下游那边天然只会"入队一次"。
                     record.dispatchState = DispatchPending;
@@ -188,10 +227,20 @@ namespace DwsEdge.Platform
                     _order.AddLast(key);
                     _dispatchPending++;
                     isNew = true;
+
+                    // 条码全被规则丢掉 → 这个包裹就是"无码包裹"，单独记一笔（现场最常见的问题）
+                    if (filtered.Count > 0 && (evt.codes == null || evt.codes.Count == 0))
+                    {
+                        _filteredToNoread++;
+                    }
                 }
                 else
                 {
                     bool hadCodes = record.codeCount > 0;
+                    if (filtered.Count > 0 && record.filteredCodes != null)
+                    {
+                        record.filteredCodes.AddRange(filtered);
+                    }
                     if (!hadCodes && evt.codes != null && evt.codes.Count > 0)
                     {
                         becameReadable = true;
@@ -514,6 +563,72 @@ namespace DwsEdge.Platform
             {
                 Publish(new { type = "camera", data = camera });
             }
+        }
+
+        /// <summary>
+        /// B2：按当前规则过滤事件里的条码，命中"丢弃"的直接从事件上摘掉。
+        /// 返回被摘掉的条码明细（traceId/时间由调用方补）。
+        ///
+        /// 没有配置任何规则时直接返回 —— 现场不用规则就一点额外开销都没有。
+        /// </summary>
+        private List<FilteredCodeRecord> FilterCodes(SpoolEvent evt)
+        {
+            List<FilteredCodeRecord> dropped = new List<FilteredCodeRecord>();
+            if (evt.codes == null || evt.codes.Count == 0 || _rules == null)
+            {
+                return dropped;
+            }
+
+            BarcodeFilter filter = _rules.Filter;
+            BarcodeRuleSet set = filter != null ? filter.RuleSet : null;
+            if (filter == null || set == null || set.rules == null || set.rules.Count == 0)
+            {
+                return dropped;
+            }
+
+            for (int i = evt.codes.Count - 1; i >= 0; i--)
+            {
+                SpoolCode code = evt.codes[i];
+                if (code == null || string.IsNullOrEmpty(code.value))
+                {
+                    continue;
+                }
+
+                BarcodeDecision decision = filter.Decide(code.value);
+                if (decision.kept)
+                {
+                    continue;
+                }
+
+                FilteredCodeRecord item = new FilteredCodeRecord();
+                item.code = code.value;
+                item.rule = decision.matchedRule;
+                item.reason = decision.reason;
+                dropped.Add(item);
+                evt.codes.RemoveAt(i);
+            }
+
+            if (dropped.Count > 0)
+            {
+                dropped.Reverse();   // 还原成原来的顺序，日志更好看
+            }
+            return dropped;
+        }
+
+        /// <summary>B2：最近被规则丢弃的条码（诊断用）。</summary>
+        public List<FilteredCodeRecord> RecentFilteredCodes(int limit)
+        {
+            List<FilteredCodeRecord> result = new List<FilteredCodeRecord>();
+            lock (_sync)
+            {
+                LinkedListNode<FilteredCodeRecord> node = _filteredRecent.First;
+                while (node != null && result.Count < limit)
+                {
+                    result.Add(node.Value);
+                    node = node.Next;
+                }
+            }
+            return result;
         }
 
         private const string DispatchPending = "pending";
@@ -962,6 +1077,10 @@ namespace DwsEdge.Platform
                 stats.dispatchPending = _dispatchPending;
                 stats.dispatchSent = _dispatchSent;
                 stats.dispatchFailed = _dispatchFailed;
+                stats.filteredCodes = _filteredCodes;
+                stats.filteredToNoread = _filteredToNoread;
+                BarcodeRuleSet set = _rules != null ? _rules.Current : null;
+                stats.ruleCount = set != null ? set.EnabledByPriority().Count : 0;
                 long readable = Math.Max(0, _parcelCount - _noreadCount);
                 stats.readRate = _parcelCount == 0 ? 0 : Math.Round((double)readable / _parcelCount, 4);
                 stats.camerasTotal = _cameras.Count;

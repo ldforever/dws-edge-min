@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
+using DwsEdge.Core.Rules;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -38,6 +39,7 @@ namespace DwsEdge.Platform
 
             builder.Services.AddSingleton<SpoolStore>();
             builder.Services.AddSingleton<HistoryStore>();
+            builder.Services.AddSingleton<BarcodeRuleStore>();
             builder.Services.AddSingleton<ConfigStore>();
             builder.Services.AddHostedService<SpoolTailer>();
             builder.Services.AddHostedService<StorageProbe>();
@@ -79,6 +81,74 @@ namespace DwsEdge.Platform
             });
             app.MapPost("/api/dispatch/ack", (SpoolStore store, DispatchAckRequest request) =>
                 store.AckDispatch(request?.traceId, request?.success ?? false, request?.error));
+
+            // B2：条码过滤规则 —— 读取 / 保存（热加载） / 规则测试 / 最近被丢掉的码
+            app.MapGet("/api/rules", (BarcodeRuleStore rules) =>
+            {
+                BarcodeRuleSet set = rules.Current;
+                return Results.Json(new
+                {
+                    file = rules.FilePath,
+                    exists = rules.FileExists,
+                    defaultAction = set.defaultAction,
+                    ignoreCase = set.ignoreCase,
+                    ruleCount = set.rules != null ? set.rules.Count : 0,
+                    enabledCount = set.EnabledByPriority().Count,
+                    rules = set.rules ?? new System.Collections.Generic.List<BarcodeRule>()
+                });
+            });
+
+            app.MapPost("/api/rules", (BarcodeRuleStore rules, BarcodeRuleSet request) =>
+            {
+                try
+                {
+                    string backup = rules.Save(request);
+                    BarcodeRuleSet saved = rules.Current;
+                    return Results.Json(new
+                    {
+                        ok = true,
+                        file = rules.FilePath,
+                        backup,
+                        enabledCount = saved.EnabledByPriority().Count,
+                        defaultAction = saved.defaultAction,
+                        note = "已立即生效（平台每秒检查一次规则文件，不需要重启）"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapPost("/api/rules/test", (BarcodeRuleStore rules, BarcodeRuleTestRequest request) =>
+            {
+                if (request == null || request.codes == null || request.codes.Count == 0)
+                {
+                    return Results.BadRequest(new { error = "codes 不能为空" });
+                }
+
+                BarcodeRuleSet set = request.ruleset ?? rules.Current;
+                System.Collections.Generic.List<string> problems = rules.Validate(set);
+                BarcodeFilter filter = rules.CreateFilter(set);
+                BarcodeFilterReport report = filter.Decide(request.codes);
+
+                return Results.Json(new
+                {
+                    usingDraft = request.ruleset != null,
+                    defaultAction = set.defaultAction,
+                    enabledCount = set.EnabledByPriority().Count,
+                    kept = report.kept,
+                    dropped = report.dropped,
+                    decisions = report.decisions,
+                    problems
+                });
+            });
+
+            app.MapGet("/api/rules/filtered", (SpoolStore store, int? limit) =>
+            {
+                int take = limit.HasValue ? Math.Clamp(limit.Value, 1, 500) : 100;
+                return Results.Json(store.RecentFilteredCodes(take));
+            });
 
             // A9：设备信息（相机清单 + 方位 + 型号/序列号 + 在线状态）
             app.MapGet("/api/devices", (SpoolStore store, ConfigStore cfg) =>

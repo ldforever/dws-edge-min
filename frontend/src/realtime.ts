@@ -84,6 +84,15 @@ export function renderParcel(p: ParcelRecord, flash: boolean): void {
   } else {
     codeTd.className = "noread";
     codeTd.textContent = "NOREAD";
+    // B2：无码的时候把"被规则丢掉的码"直接显示出来，现场一眼就知道是过滤掉的还是真没读到
+    const dropped = p.filteredCodes ?? [];
+    if (dropped.length) {
+      const values = dropped.map((f) => f.code).join(" , ");
+      const rules = dropped.map((f) => f.rule).filter((r) => !!r);
+      const tip = el("span", "  丢弃：" + values + (rules.length ? "（规则 " + rules.join("/") + "）" : ""), "tag");
+      tip.style.color = "#d29922";
+      codeTd.appendChild(tip);
+    }
   }
   tr.appendChild(codeTd);
 

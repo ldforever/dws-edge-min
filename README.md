@@ -521,7 +521,71 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b1-dedup.ps1
 脚本造 9 条事件（3 个包裹，含 3 条重复、1 组 eventId 重号），分三轮共 27 项断言：
 正常消费 → 下发幂等 → 模拟异常退出后重读整个 spool。
 
-## 七、两个进程的边界
+## 七、条码过滤规则（B2）
+
+现场读到的码不都是运单号：有设备码、测试码、误识别的噪声码。规则就是把它们挑出来丢掉，
+或者反过来"只认某几类码"。规则文件是 `runtime\config\barcode-rules.json`（UTF-8）：
+
+```json
+{
+  "defaultAction": "drop",
+  "ignoreCase": true,
+  "rules": [
+    { "name": "拉黑单号", "priority": 8,  "enabled": true, "action": "drop", "blacklist": ["SF0000000000"] },
+    { "name": "测试码",   "priority": 5,  "enabled": true, "action": "drop", "prefix": "TEST" },
+    { "name": "SF 运单",  "priority": 10, "enabled": true, "action": "keep", "prefix": "SF", "minLength": 12, "maxLength": 14 },
+    { "name": "京东单号", "priority": 20, "enabled": true, "action": "keep", "regex": "^JD\\d{10}$" },
+    { "name": "噪声码",   "priority": 30, "enabled": true, "action": "drop", "whitelist": ["*NOISE*"] }
+  ]
+}
+```
+
+**匹配语义**
+
+* 一条规则里**填了的条件必须全部满足**（AND）：长度范围、前/后缀、正则、白名单、黑名单；
+* 规则之间按 `priority` **从小到大**依次判断，**第一条命中的规则决定结果**（上面例子里"拉黑单号"优先级 8,
+  比"SF 运单"的 10 更靠前，所以被拉黑的那个单号先被丢掉）；
+* 一条规则都没命中时，按 `defaultAction`（keep / drop）处理；
+* 名单支持 `*` 通配：`SF*`、`*0001`、`*JD*`。
+
+**现场安全**
+
+| 保护 | 说明 |
+|---|---|
+| 正则超时 | 正则匹配限 50ms；写得太复杂只会判成"不命中"并告警，**不会把平台卡住** |
+| 非法规则被拒 | 优先级重复、正则语法错、动作写错、最小长度>最大长度 —— 保存时直接返回 400 并说明原因 |
+| 自动备份 | 每次保存前把原文件备份成 `barcode-rules.json.bak-<时间戳>` |
+| 热加载 | 平台每秒检查一次规则文件，**现场直接改文件就能生效**，不用重启 |
+| 零开销 | 没配规则时不做任何额外判断，行为与之前完全一致 |
+
+**能被看到的结果**（这是 B2 好不好用的关键）
+
+* 过包行会直接标出被丢掉的码和命中的规则：`NOREAD 丢弃：TEST0002（规则 测试码）`，
+  所以"这单为什么是无码"一眼就有答案；
+* 配置页的**规则测试**可以先把一批条码粘进去试跑（用的是界面上**还没保存**的规则），
+  逐条给出保留/丢弃、命中的规则名和人话原因；
+* 实时页底栏与 `/api/stats` 有 `filteredCodes`（被丢掉的码数）、`filteredToNoread`（因过滤变成无码的包裹数）、
+  `ruleCount`（当前启用的规则数）。
+
+**接口**
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/rules` | 当前规则（含文件路径、启用条数、默认动作） |
+| `POST /api/rules` | 保存规则（自动备份、立即生效；非法规则返回 400） |
+| `POST /api/rules/test` | 规则测试：`{codes:[...], ruleset?:{...}}`，不落盘 |
+| `GET /api/rules/filtered?limit=` | 本次运行最近被丢弃的条码（用于现场调规则） |
+
+**回归测试**（离线，不需要相机）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\test-b2-rules.ps1
+```
+
+脚本会试跑一份"长度+前缀+正则+黑白名单+优先级"的组合规则、保存后喂事件核对过滤统计、
+直接改文件验证热加载、再验证非法规则会被拒绝，共 40 项断言。
+
+## 八、两个进程的边界
 
 | | 采集宿主（Edge） | 业务平台（Platform） |
 |---|---|---|
@@ -534,7 +598,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b1-dedup.ps1
 通信：V1 用文件 spool（`SpoolTailer` 增量读取，只处理完整行）；V2 换成 gRPC/命名管道时只需替换 `SpoolTailer`，
 `SpoolStore` 与平台 API 不动。
 
-## 八、代码导读
+## 九、代码导读
 
 **采集侧（net48）**
 
@@ -547,6 +611,8 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b1-dedup.ps1
 - `DwsEdge.Core/Config/CameraPlan.cs`：读 cfg（mode/num/triggerMode + 相机声明），启动自检与配置校验共用。
 - `DwsEdge.Core/Config/CameraPositions.cs`：相机方位表的读写（界面与采集宿主共用一份实现）。
 - `DwsEdge.Core/Config/CameraIdentity.cs`：把 cfg 里的 `ip=/key=/id=` 和 SDK 上报的相机标识对上号。
+- `DwsEdge.Core/Rules/BarcodeRule.cs` + `BarcodeFilter.cs`：条码过滤规则的模型与匹配引擎（纯逻辑，不依赖 IO）。
+- `DwsEdge.Platform/BarcodeRuleStore.cs`：规则文件的读写、校验、备份与热加载。
 
 **平台侧（net10）**
 
@@ -562,7 +628,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b1-dedup.ps1
 - `frontend/src/realtime.ts` / `devices.ts` / `config.ts`：三个页签各自的渲染逻辑。
 - `frontend/src/sse.ts` / `dom.ts`：实时推送封装与 DOM 小工具。
 
-## 九、常见问题
+## 十、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -584,7 +650,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b1-dedup.ps1
 | 配置页红字"找不到 apply-config.ps1" | 跑一次 `build.ps1`（会把 `tools\*.ps1` 拷到 `runtime\tools`），或手工把 tools 目录放到 runtime 旁边 |
 | 相机显示"未发现" | cfg 里 `enable="1"` 但 SDK 没报；查上电、网线、网段，或该相机被别的软件占用 |
 
-## 十、下一步（V1 完整版）
+## 十一、下一步（V1 完整版）
 
 采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做），平台侧包裹合并 / 历史库 / 存图访问 /
 统计与实时推送 / 设备信息 / 一键应用配置也都打通了。接着按 V1 需求清单排：

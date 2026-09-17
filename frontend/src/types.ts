@@ -62,6 +62,10 @@ export interface ParcelRecord {
   time?: string;
   codes?: string[];
   codeDetails?: CodeDetail[];
+
+  /** B2：这个包裹被规则丢弃掉的条码（含命中的规则名） */
+  filteredCodes?: FilteredCodeRecord[];
+
   codeCount?: number;
   weightGrams?: number;
   volumeMm3?: number;
@@ -236,3 +240,80 @@ export type StreamMessage =
   | { type: "parcel"; data: ParcelRecord }
   | { type: "camera"; data: CameraRecord }
   | { type: "stats"; data: Stats };
+
+// ---------------------------------------------------------------- B2 条码过滤规则
+
+/** 一条条码过滤规则（字段名与后端 Core\Rules\BarcodeRule.cs 一致） */
+export interface BarcodeRule {
+  name: string;
+  /** 越小越先判断；第一条命中的规则决定结果 */
+  priority: number;
+  enabled: boolean;
+  /** keep / drop */
+  action: string;
+  remark?: string | null;
+  minLength?: number | null;
+  maxLength?: number | null;
+  prefix?: string | null;
+  suffix?: string | null;
+  regex?: string | null;
+  /** 支持 * 通配：SF* / *0001 / *JD* */
+  whitelist?: string[] | null;
+  blacklist?: string[] | null;
+}
+
+export interface BarcodeRuleSet {
+  /** 没有规则命中时的默认动作：keep / drop */
+  defaultAction: string;
+  ignoreCase: boolean;
+  rules: BarcodeRule[];
+}
+
+/** GET /api/rules */
+export interface RulesResponse extends BarcodeRuleSet {
+  file: string;
+  exists: boolean;
+  ruleCount: number;
+  enabledCount: number;
+}
+
+/** POST /api/rules */
+export interface SaveRulesResponse {
+  ok: boolean;
+  file: string;
+  backup?: string | null;
+  enabledCount: number;
+  defaultAction: string;
+  note?: string;
+}
+
+/** 单个条码的判定结果 */
+export interface RuleDecision {
+  code: string;
+  kept: boolean;
+  matchedRule?: string | null;
+  reason: string;
+  action?: string | null;
+}
+
+/** POST /api/rules/test */
+export interface RuleTestResponse {
+  /** true = 用的是界面上还没保存的规则 */
+  usingDraft: boolean;
+  defaultAction: string;
+  enabledCount: number;
+  kept: number;
+  dropped: number;
+  decisions: RuleDecision[];
+  problems: string[];
+}
+
+/** 被规则丢弃的条码（GET /api/rules/filtered） */
+export interface FilteredCodeRecord {
+  time: string;
+  traceId: string;
+  deviceId: string;
+  code: string;
+  rule?: string | null;
+  reason: string;
+}

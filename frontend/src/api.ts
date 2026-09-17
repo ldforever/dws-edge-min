@@ -9,12 +9,17 @@
 import type {
   ApplyRequest,
   ApplyResult,
+  BarcodeRuleSet,
   CameraRecord,
   ConfigSummary,
   DeviceView,
+  FilteredCodeRecord,
   ParcelRecord,
   PositionsResponse,
+  RuleTestResponse,
+  RulesResponse,
   SavePositionsResponse,
+  SaveRulesResponse,
   Stats
 } from "./types.js";
 
@@ -89,6 +94,21 @@ export const api = {
 
   applyConfig: (body: ApplyRequest): Promise<ApiResult<ApplyResult>> =>
     request<ApplyResult>("/api/config/apply", { method: "POST", json: body }),
+
+  // ---- B2 条码过滤规则 ----
+  rules: (): Promise<ApiResult<RulesResponse>> => request<RulesResponse>("/api/rules"),
+
+  saveRules: (ruleSet: BarcodeRuleSet): Promise<ApiResult<SaveRulesResponse>> =>
+    request<SaveRulesResponse>("/api/rules", { method: "POST", json: ruleSet }),
+
+  testRules: (codes: string[], ruleSet: BarcodeRuleSet | null): Promise<ApiResult<RuleTestResponse>> =>
+    request<RuleTestResponse>("/api/rules/test", {
+      method: "POST",
+      json: { codes, ruleset: ruleSet }
+    }),
+
+  filteredCodes: (limit: number): Promise<ApiResult<FilteredCodeRecord[]>> =>
+    request<FilteredCodeRecord[]>(`/api/rules/filtered?limit=${limit}`),
 
   /** 图片按需读取接口（只允许图片根目录内的文件） */
   imageUrl: (path: string): string => "/api/images?path=" + encodeURIComponent(path)

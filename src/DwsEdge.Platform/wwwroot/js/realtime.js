@@ -6,8 +6,8 @@
  *     直接原地更新那一行，比追加两行清楚（同时仍能看到 更新次数 ×2）；
  *   * 相机状态表与"设备信息"页共用同一份数据源（平台推送的 camera 事件）。
  */
-import { api } from "./api.js?v=2f1f6302";
-import { $, cell, clear, el, gb, positionLabel, dash } from "./dom.js?v=2f1f6302";
+import { api } from "./api.js?v=bee1f896";
+import { $, cell, clear, el, gb, positionLabel, dash } from "./dom.js?v=bee1f896";
 const MAX_ROWS = 120;
 /** 页面首屏拉多少条历史（平台还会通过 SSE 补发最近 20 条） */
 const INITIAL_PARCELS = 50;
@@ -75,6 +75,15 @@ export function renderParcel(p, flash) {
     else {
         codeTd.className = "noread";
         codeTd.textContent = "NOREAD";
+        // B2：无码的时候把"被规则丢掉的码"直接显示出来，现场一眼就知道是过滤掉的还是真没读到
+        const dropped = p.filteredCodes ?? [];
+        if (dropped.length) {
+            const values = dropped.map((f) => f.code).join(" , ");
+            const rules = dropped.map((f) => f.rule).filter((r) => !!r);
+            const tip = el("span", "  丢弃：" + values + (rules.length ? "（规则 " + rules.join("/") + "）" : ""), "tag");
+            tip.style.color = "#d29922";
+            codeTd.appendChild(tip);
+        }
     }
     tr.appendChild(codeTd);
     tr.appendChild(cell(p.deviceId, "muted"));

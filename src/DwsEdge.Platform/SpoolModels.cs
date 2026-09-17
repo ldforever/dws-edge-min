@@ -61,6 +61,18 @@ namespace DwsEdge.Platform
         public string path { get; set; }
     }
 
+    /// <summary>B2：被规则丢弃的条码（现场诊断用，保留最近若干条）。</summary>
+    public sealed class FilteredCodeRecord
+    {
+        public string time { get; set; }
+        public string traceId { get; set; }
+        public string deviceId { get; set; }
+        public string code { get; set; }
+        /// <summary>命中的规则名；空表示按默认动作丢弃。</summary>
+        public string rule { get; set; }
+        public string reason { get; set; }
+    }
+
     /// <summary>平台对外输出的包裹记录：一个包裹一条，两次回调已合并。</summary>
     public sealed class CodeDetail
     {
@@ -82,6 +94,10 @@ namespace DwsEdge.Platform
         public List<string> codes { get; set; }
         /// <summary>完整条码信息：值 + 类型 + 方位。</summary>
         public List<CodeDetail> codeDetails { get; set; }
+
+        /// <summary>B2：这个包裹被规则丢弃掉的条码（含命中的规则名），方便现场解释"NOREAD 为什么没码"。</summary>
+        public List<FilteredCodeRecord> filteredCodes { get; set; }
+
         public int codeCount { get; set; }
         public int weightGrams { get; set; }
         public double volumeMm3 { get; set; }
@@ -233,6 +249,16 @@ namespace DwsEdge.Platform
         public string error { get; set; }
     }
 
+    /// <summary>B2：规则测试请求体（不落盘、不影响运行中的规则）。</summary>
+    public sealed class BarcodeRuleTestRequest
+    {
+        /// <summary>要测试的条码（每行一个或数组）。</summary>
+        public List<string> codes { get; set; }
+
+        /// <summary>可选：用这份规则集测试（界面上还没保存的改动也能先测）；为空则用当前生效的规则。</summary>
+        public DwsEdge.Core.Rules.BarcodeRuleSet ruleset { get; set; }
+    }
+
     /// <summary>平台统计。</summary>
     public sealed class PlatformStats
     {
@@ -279,6 +305,17 @@ namespace DwsEdge.Platform
         public int dispatchPending { get; set; }
         public int dispatchSent { get; set; }
         public int dispatchFailed { get; set; }
+
+        // ---- B2：条码过滤 ----
+
+        /// <summary>被规则丢弃的条码数量（累计）。</summary>
+        public long filteredCodes { get; set; }
+
+        /// <summary>因为条码全被过滤而变成"无码"的包裹数（累计）。</summary>
+        public long filteredToNoread { get; set; }
+
+        /// <summary>当前生效的规则条数（启用中的）。</summary>
+        public int ruleCount { get; set; }
 
         public string serverTime { get; set; }
     }

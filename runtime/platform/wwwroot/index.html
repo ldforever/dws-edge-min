@@ -9,7 +9,7 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=2f1f6302" />
+<link rel="stylesheet" href="./app.css?v=bee1f896" />
 </head>
 <body>
 <header>
@@ -103,6 +103,68 @@
     </div>
 
     <div class="panel">
+      <h2>条码过滤规则（B2）</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:12px">
+        按优先级从小到大逐条判断，<b>第一条命中的规则决定结果</b>；一条规则里填了的条件必须全部满足。
+        保存后立即生效（平台每秒检查一次规则文件，不用重启）。规则文件：
+        <span class="code">runtime\config\barcode-rules.json</span>
+      </div>
+
+      <div class="toolbar">
+        <label class="chk">没有规则命中时：
+          <select id="ruleDefaultAction">
+            <option value="keep">保留</option>
+            <option value="drop">丢弃</option>
+          </select>
+        </label>
+        <label class="chk"><input type="checkbox" id="ruleIgnoreCase" checked /> 忽略大小写</label>
+        <button class="btn secondary" id="btnReloadRules">重新读取</button>
+        <button class="btn secondary" id="btnAddRule">新增规则</button>
+        <button class="btn" id="btnSaveRules">保存规则</button>
+        <span id="ruleBadge"></span>
+      </div>
+      <div class="muted" id="ruleSummary" style="font-size:12px"></div>
+      <div class="muted" id="ruleMsg" style="font-size:12px;margin-bottom:8px"></div>
+
+      <div id="ruleEmpty" class="empty">还没有规则：此时所有条码原样保留。</div>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>优先级</th><th>名称</th><th>动作</th><th>长度</th>
+              <th>前缀</th><th>后缀</th><th>正则</th>
+              <th>白名单（逗号分隔，支持 *）</th><th>黑名单</th><th>启用</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="ruleRows"></tbody>
+        </table>
+      </div>
+
+      <h3>规则测试（用界面上当前这份规则试跑，不落盘）</h3>
+      <textarea id="ruleTestCodes" spellcheck="false" style="min-height:90px"
+        placeholder="每行一个条码，例如：&#10;SF123456789012&#10;TEST0001&#10;JD1234567890"></textarea>
+      <div class="toolbar">
+        <button class="btn" id="btnTestRules">测试</button>
+        <span id="ruleTestSummary" class="muted" style="font-size:12px"></span>
+        <span id="ruleProblems"></span>
+      </div>
+      <table>
+        <thead><tr><th>条码</th><th>结果</th><th>命中的规则</th><th>原因</th></tr></thead>
+        <tbody id="ruleTestRows"></tbody>
+      </table>
+
+      <h3>最近被丢弃的条码（现场排查用）</h3>
+      <div class="toolbar">
+        <button class="btn secondary" id="btnLoadFiltered">刷新</button>
+        <span id="filteredSummary" class="muted" style="font-size:12px"></span>
+      </div>
+      <table>
+        <thead><tr><th>时间</th><th>条码</th><th>命中的规则</th><th>包裹</th><th>原因</th></tr></thead>
+        <tbody id="filteredRows"></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
       <h2>一键应用配置</h2>
       <div class="muted" style="font-size:12px;margin-bottom:12px">
         写配置 → 启动 SDK 回读校验 → 不通过自动回滚。同一个按钮走的就是命令行
@@ -142,6 +204,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=2f1f6302"></script>
+<script type="module" src="./js/main.js?v=bee1f896"></script>
 </body>
 </html>

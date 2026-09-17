@@ -10,6 +10,7 @@ import { $ } from "./dom.js";
 import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js";
 import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js";
 import { initConfig, refreshConfig } from "./config.js";
+import { initRules, refreshRules } from "./rules.js";
 
 type PageName = "realtime" | "devices" | "config";
 const PAGES: PageName[] = ["realtime", "devices", "config"];
@@ -22,7 +23,10 @@ function showPage(name: PageName): void {
 
   // 切页时按需拉一次数据（数据不多，够用且简单）
   if (name === "devices") void refreshDevices();
-  if (name === "config") void refreshConfig();
+  if (name === "config") {
+    void refreshConfig();
+    void refreshRules();
+  }
 }
 
 function setConnectionState(connected: boolean): void {
@@ -34,6 +38,7 @@ function bootstrap(): void {
   initRealtime();
   initDevices();
   initConfig();
+  initRules();
 
   for (const page of PAGES) {
     $("tab-" + page).addEventListener("click", () => showPage(page));
