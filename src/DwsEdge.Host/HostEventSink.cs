@@ -121,6 +121,16 @@ namespace DwsEdge.Host
             string text = string.Format(CultureInfo.InvariantCulture,
                 "相机 {0}（UserID={1}）{2}", status.DeviceId, status.UserId, status.Online ? "上线" : "离线");
 
+            if (!status.Online)
+            {
+                text += "，第 " + status.OfflineCount + " 次掉线";
+            }
+            else if (status.ReconnectCount > 0)
+            {
+                text += "，第 " + status.ReconnectCount + " 次恢复（上次离线 "
+                     + (status.LastOfflineDurationMs / 1000.0).ToString("0.0", CultureInfo.InvariantCulture) + " 秒）";
+            }
+
             lock (_sync)
             {
                 WriteConsole(status.Online ? "cam-up" : "cam-down", text);
@@ -320,6 +330,11 @@ namespace DwsEdge.Host
             sb.Append(",\"serialNumber\":").Append(Quote(s.SerialNumber));
             sb.Append(",\"vendor\":").Append(Quote(s.Vendor));
             sb.Append(",\"firmware\":").Append(Quote(s.Firmware));
+            sb.Append(",\"offlineCount\":").Append(s.OfflineCount.ToString(CultureInfo.InvariantCulture));
+            sb.Append(",\"reconnectCount\":").Append(s.ReconnectCount.ToString(CultureInfo.InvariantCulture));
+            sb.Append(",\"lastOfflineAtMs\":").Append(s.LastOfflineAtMs.ToString(CultureInfo.InvariantCulture));
+            sb.Append(",\"lastOfflineDurationMs\":").Append(s.LastOfflineDurationMs.ToString(CultureInfo.InvariantCulture));
+            sb.Append(",\"firstSeenAtMs\":").Append(s.FirstSeenAtMs.ToString(CultureInfo.InvariantCulture));
             sb.Append('}');
             return sb.ToString();
         }

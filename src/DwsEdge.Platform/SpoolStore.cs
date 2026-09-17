@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
@@ -163,10 +164,15 @@ namespace DwsEdge.Platform
                     {
                         _noreadCount++;
                     }
+                    else
+                    {
+                        BumpCameraCodeCount(evt.deviceId, record.time);
+                    }
                 }
                 else if (becameReadable)
                 {
                     _noreadCount = Math.Max(0, _noreadCount - 1);
+                    BumpCameraCodeCount(evt.deviceId, record.time);
                 }
 
                 Trim();
@@ -204,6 +210,21 @@ namespace DwsEdge.Platform
                 if (!string.IsNullOrEmpty(evt.vendor)) { camera.vendor = evt.vendor; }
                 if (!string.IsNullOrEmpty(evt.firmware)) { camera.firmware = evt.firmware; }
 
+                // 掉线/恢复计数取最大值：采集宿主重启后计数会从 0 开始，平台保留历史峰值
+                if (evt.offlineCount > camera.offlineCount) { camera.offlineCount = evt.offlineCount; }
+                if (evt.reconnectCount > camera.reconnectCount) { camera.reconnectCount = evt.reconnectCount; }
+                if (evt.lastOfflineAtMs > camera.lastOfflineAtMs)
+                {
+                    camera.lastOfflineAtMs = evt.lastOfflineAtMs;
+                    camera.lastOfflineTime = FormatTime(evt.lastOfflineAtMs);
+                }
+                if (evt.lastOfflineDurationMs > 0)
+                {
+                    camera.lastOfflineDurationMs = evt.lastOfflineDurationMs;
+                    camera.lastOfflineDurationText =
+                        (evt.lastOfflineDurationMs / 1000.0).ToString("0.0", CultureInfo.InvariantCulture) + " 秒";
+                }
+
                 // 启动快照是基线，不计入"状态变化次数"
                 if (!isSnapshot)
                 {
@@ -212,6 +233,22 @@ namespace DwsEdge.Platform
             }
 
             Publish(new { type = "camera", data = camera });
+        }
+
+        /// <summary>按相机累计"出码包裹数"（调用方需持有 _sync 锁）。</summary>
+        private void BumpCameraCodeCount(string deviceId, string time)
+        {
+            if (string.IsNullOrEmpty(deviceId))
+            {
+                return;
+            }
+
+            CameraRecord camera;
+            if (_cameras.TryGetValue(deviceId, out camera))
+            {
+                camera.codeCount++;
+                camera.lastCodeTime = time;
+            }
         }
 
         internal void CountParseError()

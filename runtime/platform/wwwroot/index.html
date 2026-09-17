@@ -30,6 +30,8 @@
   .code { color: #58a6ff; }
   .noread { color: #f0883e; }
   .muted { color: #6e7681; }
+  tr.offline { background: #2a1a17; }
+  tr.offline td { color: #f0883e; }
   a.img { color: #3fb950; text-decoration: none; }
   a.img:hover { text-decoration: underline; }
   .empty { color: #6e7681; padding: 18px 0; }
@@ -66,7 +68,10 @@
   <div id="camEmpty" class="empty">暂无相机状态：采集宿主启动后会上报相机快照。</div>
   <table>
     <thead>
-      <tr><th>相机</th><th>状态</th><th>型号</th><th>序列号</th><th>状态变化</th><th>最近变化</th></tr>
+      <tr>
+        <th>相机</th><th>状态</th><th>型号</th><th>序列号</th>
+        <th>掉线次数</th><th>恢复次数</th><th>最近离线</th><th>出码数</th><th>最近变化</th>
+      </tr>
     </thead>
     <tbody id="camRows"></tbody>
   </table>
@@ -109,11 +114,15 @@ function renderCameras() {
   camEmptyEl.style.display = list.length ? 'none' : 'block';
   for (const c of list) {
     const tr = document.createElement('tr');
+    if (!c.online) tr.className = 'offline';
     tr.appendChild(cell(c.deviceId, 'code'));
     tr.appendChild(cell(c.online ? '在线' : '离线', c.online ? '' : 'noread'));
     tr.appendChild(cell(c.model));
     tr.appendChild(cell(c.serialNumber));
-    tr.appendChild(cell(c.statusChanges));
+    tr.appendChild(cell(c.offlineCount));
+    tr.appendChild(cell(c.reconnectCount));
+    tr.appendChild(cell(c.lastOfflineDurationText || '—'));
+    tr.appendChild(cell(c.codeCount));
     tr.appendChild(cell(c.lastChangeTime, 'muted'));
     camRowsEl.appendChild(tr);
   }

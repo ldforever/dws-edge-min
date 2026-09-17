@@ -97,5 +97,22 @@ namespace DwsEdge.Core.Model
         public string SerialNumber;
         public string Vendor;
         public string Firmware;
+
+        // ---- 以下由采集宿主按相机累计（重启会从 0 重新计；平台侧取最大值，历史不丢）----
+
+        /// <summary>累计掉线次数。</summary>
+        public int OfflineCount;
+
+        /// <summary>累计恢复（重连成功）次数。</summary>
+        public int ReconnectCount;
+
+        /// <summary>最近一次掉线时刻（Unix 毫秒）。</summary>
+        public long LastOfflineAtMs;
+
+        /// <summary>最近一次离线时长（毫秒）。</summary>
+        public long LastOfflineDurationMs;
+
+        /// <summary>该相机第一次被采集宿主看到的时刻（Unix 毫秒）。</summary>
+        public long FirstSeenAtMs;
     }
 }

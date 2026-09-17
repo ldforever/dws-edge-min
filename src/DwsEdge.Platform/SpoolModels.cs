@@ -25,6 +25,11 @@ namespace DwsEdge.Platform
         public string serialNumber { get; set; }
         public string vendor { get; set; }
         public string firmware { get; set; }
+        public int offlineCount { get; set; }
+        public int reconnectCount { get; set; }
+        public long lastOfflineAtMs { get; set; }
+        public long lastOfflineDurationMs { get; set; }
+        public long firstSeenAtMs { get; set; }
         public List<SpoolCode> codes { get; set; }
         public List<SpoolImage> images { get; set; }
     }
@@ -80,6 +85,19 @@ namespace DwsEdge.Platform
         public string firmware { get; set; }
         /// <summary>最近一次状态来自启动快照（true）还是上下线增量（false）。</summary>
         public bool fromSnapshot { get; set; }
+
+        /// <summary>累计掉线次数 / 恢复次数（取采集宿主上报的最大值，宿主重启不会让计数回落）。</summary>
+        public long offlineCount { get; set; }
+        public long reconnectCount { get; set; }
+
+        /// <summary>最近一次掉线的时间与离线时长。</summary>
+        public long lastOfflineAtMs { get; set; }
+        public long lastOfflineDurationMs { get; set; }
+        public string lastOfflineTime { get; set; }
+        public string lastOfflineDurationText { get; set; }
+
+        /// <summary>该相机最近一次出码的时间（出码包裹数见 codeCount）。</summary>
+        public string lastCodeTime { get; set; }
     }
 
     /// <summary>平台统计。</summary>

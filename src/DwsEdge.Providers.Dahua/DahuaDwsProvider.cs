@@ -42,6 +42,8 @@ namespace DwsEdge.Providers.Dahua
         private bool _stopped;
         private long _eventSeq;
 
+        private readonly CameraRuntimeTracker _cameraTracker = new CameraRuntimeTracker();
+
         private bool _cameraDisconnectCbAttached;
         private bool _allCameraCbAttached;
         private bool _statusHandlerAttached;
@@ -99,6 +101,12 @@ namespace DwsEdge.Providers.Dahua
             _savePerCamera = settings.GetBool("savePerCamera", false);
             _attachAllCameraCodeInfo = settings.GetBool("attachAllCameraCodeInfo", _savePerCamera);
             _queueCapacity = Math.Max(8, settings.GetInt("queueCapacity", 256));
+
+            // 相机掉线/恢复的统计日志直接进宿主日志
+            _cameraTracker.OnLog = delegate(string message, bool warning)
+            {
+                _sink.Log(warning ? LogLevel.Warn : LogLevel.Info, message);
+            };
         }
 
         public string ProviderId
@@ -369,6 +377,8 @@ namespace DwsEdge.Providers.Dahua
                 status.UserId = e.CameraUserID;
                 status.Online = e.IsOnline;
                 status.AtMs = NowMs();
+
+                _cameraTracker.Apply(status, false);
                 _sink.OnCameraStatus(status);
             }
             catch (Exception ex)
@@ -749,6 +759,7 @@ namespace DwsEdge.Providers.Dahua
                             evt.Firmware = info.camDevFirewareVersion;
                         }
 
+                        _cameraTracker.Apply(evt, true);
                         _sink.OnCameraStatus(evt);
                         if (!string.IsNullOrEmpty(tag.key))
                         {
@@ -778,6 +789,7 @@ namespace DwsEdge.Providers.Dahua
                     evt.Vendor = pair.Value.camDevVendor;
                     evt.Firmware = pair.Value.camDevFirewareVersion;
 
+                    _cameraTracker.Apply(evt, true);
                     _sink.OnCameraStatus(evt);
                     sent++;
                 }
