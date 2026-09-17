@@ -12,9 +12,10 @@ import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.j
 import { initConfig, refreshConfig } from "./config.js";
 import { initRules, refreshRules } from "./rules.js";
 import { initDedup, refreshDedup } from "./dedup.js";
+import { initHistory, refreshHistory } from "./history.js";
 
-type PageName = "realtime" | "devices" | "config";
-const PAGES: PageName[] = ["realtime", "devices", "config"];
+type PageName = "realtime" | "devices" | "history" | "config";
+const PAGES: PageName[] = ["realtime", "devices", "history", "config"];
 
 function showPage(name: PageName): void {
   for (const page of PAGES) {
@@ -24,6 +25,7 @@ function showPage(name: PageName): void {
 
   // 切页时按需拉一次数据（数据不多，够用且简单）
   if (name === "devices") void refreshDevices();
+  if (name === "history") void refreshHistory();
   if (name === "config") {
     void refreshConfig();
     void refreshRules();
@@ -42,6 +44,7 @@ function bootstrap(): void {
   initConfig();
   initRules();
   initDedup();
+  initHistory();
 
   for (const page of PAGES) {
     $("tab-" + page).addEventListener("click", () => showPage(page));

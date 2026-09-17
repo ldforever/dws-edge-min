@@ -85,3 +85,5 @@ pre.out { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; pa
 input.rule-input { padding: 3px 6px; font-size: 12px; }
 input.rule-input.num { width: 52px; }
 button.btn.small { padding: 3px 8px; font-size: 12px; }
+/* 历史查询的日期/条件输入 */
+input[type=date] { background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 5px; padding: 4px 6px; font-size: 12px; font-family: inherit; }

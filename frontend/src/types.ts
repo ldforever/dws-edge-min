@@ -336,3 +336,30 @@ export interface DedupStats {
   droppedExpired: number;
   importedLegacy: number;
 }
+
+// ---------------------------------------------------------------- B3 历史查询
+
+/** 历史查询条件（对应 /api/history 的查询串） */
+export interface HistoryFilter {
+  from: string;
+  to: string;
+  code: string;
+  deviceId: string;
+  noread: "" | "true" | "false";
+  dispatchState: "" | "pending" | "sent" | "failed";
+  hasImage: "" | "true" | "false";
+  limit: number;
+  offset: number;
+}
+
+/** GET /api/history 的返回 */
+export interface HistoryResult {
+  /** 命中总数（分页前） */
+  total: number;
+  returned: number;
+  /** 服务端查询耗时（毫秒）—— 用来验证"10 万条 2 秒内" */
+  elapsedMs: number;
+  /** true = 读的是按 traceId 收敛后的索引 */
+  fromIndex: boolean;
+  items: ParcelRecord[];
+}

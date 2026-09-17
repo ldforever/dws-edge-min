@@ -470,6 +470,8 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 | `POST /api/dispatch/ack` | **B1** 下游回报下发结果 `{traceId, success, error}`；幂等，重复 ack 不会重复计数 |
 | `GET /api/dedup` | **B1** 去重指纹归档状态（保护了多少包裹、索引/WAL 大小、保留期、上次整理） |
 | `POST /api/dedup/compact` | **B1** 立即整理归档（合并 WAL、清理过期），返回整理后的状态 |
+| `GET /api/history?from=&to=&code=&deviceId=&noread=&dispatchState=&hasImage=&limit=&offset=` | **B3** 历史查询（走按 traceId 收敛的索引，返回 `total`/`elapsedMs`/`fromIndex`） |
+| `GET /api/history/export?（同上参数）` | **B3** 导出 CSV（UTF-8 BOM，字段含条码/时间/相机/图片路径/无码/下发状态） |
 | `GET /api/devices` | 设备信息页数据：相机清单（方位/清单标识/型号/序列号/在线/未发现）+ 汇总 + 六面聚合（A9） |
 | `GET /api/camera-positions` | 相机方位映射的当前内容（A9） |
 | `POST /api/camera-positions` | 保存方位映射（写 `config\camera-positions.ini`，自动备份） |
@@ -624,7 +626,57 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b2-rules.ps1
 脚本会试跑一份"长度+前缀+正则+黑白名单+优先级"的组合规则、保存后喂事件核对过滤统计、
 直接改文件验证热加载、再验证非法规则会被拒绝，共 40 项断言。
 
-## 八、两个进程的边界
+## 八、历史库与查询导出（B3）
+
+**存什么**：每个包裹一条最终记录，字段覆盖 B3 要求 —— 条码、时间、相机、图片路径、无码标记、下发状态
+（另外还有重量体积、追踪号、下发次数/错误）。
+
+```
+runtime\data\
+├─ parcels-yyyyMMdd.jsonl        快照：每次事件更新追加一行（崩溃安全，断电不丢）
+└─ parcels-yyyyMMdd.index.jsonl  索引：一个 traceId 一行 = 该包裹的最终状态
+```
+
+**为什么要索引**：一个包裹会写 2 行快照（先条码后重量体积），一天 5 万件就是 10 万行；
+查询时逐行解析既慢又占内存。索引把它收敛成"一个包裹一行"，并且**可以随时从快照重建**
+（索引删了、坏了都不影响数据，只是慢一点）。今天正在写的那个文件直接读快照，
+过去封盘的日期读索引；平台启动时会自动把过去几天整理一遍。
+
+**实测性能**（10 万条历史、每条模拟两次回调 = 20 万行快照 106 MB → 索引 47 MB）：
+
+| 查询 | 结果 | 服务端耗时 |
+|---|---|---|
+| 全量（第 1 页 200 条） | 命中 100000 | **757 ms** |
+| 仅无码 | 命中 4000 | **725 ms** |
+| 按相机 `cam-3` | 命中 16667 | < 1 s |
+| 按条码精确匹配 | 命中 1 | < 1 s |
+| 只看有图 | 命中 33334 | < 1 s |
+
+验收标准是"10 万条 2 秒内返回"，实测约 **0.7 秒**（返回里带 `elapsedMs`，界面也会显示，现场可自证）。
+
+**查询条件**：时间范围、条码（部分匹配）、相机（部分匹配）、无码（全部/仅无码/仅有码）、
+下发状态（待下发/已下发/下发失败）、是否有图、分页（offset+limit，返回 `total` 命中总数）。
+
+**导出 CSV**：字段是 `时间, 追踪号, 条码, 条码数, 无码, 相机, 重量, 长, 宽, 高, 体积, 图片数, 图片路径,
+下发状态, 下发时间, 下发尝试, 下发错误, 采集时间戳`，带 UTF-8 BOM（Excel 双击不乱码），
+异步流式写出（Kestrel 默认禁止同步写响应体，同步写会直接 500）。
+
+界面上是顶部 **历史查询** 页签：日期范围（含"今天 / 近 7 天"快捷键）、条码、相机、无码、下发状态、
+图片、每页条数 → 查询 / 上一页 / 下一页 / 导出 CSV，行里有图片链接与下发状态徽标，
+底下一行显示"命中 N 条，显示 a-b · 服务端耗时 x ms（走索引）"。
+
+接口：`GET /api/history?...`、`GET /api/history/export?...`（参数相同，导出不带 limit/offset）。
+
+回归测试（离线，会自己造 10 万条数据）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\test-b3-history.ps1
+```
+
+覆盖：索引收敛、全量/各种过滤/分页、CSV 行数与表头字段、**硬杀进程后重启数据仍在**（断电不丢），
+共 27 项断言。
+
+## 九、两个进程的边界
 
 | | 采集宿主（Edge） | 业务平台（Platform） |
 |---|---|---|
@@ -637,7 +689,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b2-rules.ps1
 通信：V1 用文件 spool（`SpoolTailer` 增量读取，只处理完整行）；V2 换成 gRPC/命名管道时只需替换 `SpoolTailer`，
 `SpoolStore` 与平台 API 不动。
 
-## 九、代码导读
+## 十、代码导读
 
 **采集侧（net48）**
 
@@ -653,6 +705,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b2-rules.ps1
 - `DwsEdge.Core/Rules/BarcodeRule.cs` + `BarcodeFilter.cs`：条码过滤规则的模型与匹配引擎（纯逻辑，不依赖 IO）。
 - `DwsEdge.Platform/BarcodeRuleStore.cs`：规则文件的读写、校验、备份与热加载。
 - `DwsEdge.Platform/DedupStore.cs`：去重指纹归档（按 traceId 的索引 + WAL + 定期整理 + 保留期）。
+- `DwsEdge.Platform/HistoryStore.cs`：历史库（快照 + 按 traceId 收敛的索引）、查询过滤、CSV 导出。
 
 **平台侧（net10）**
 
@@ -668,7 +721,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b2-rules.ps1
 - `frontend/src/realtime.ts` / `devices.ts` / `config.ts`：三个页签各自的渲染逻辑。
 - `frontend/src/sse.ts` / `dom.ts`：实时推送封装与 DOM 小工具。
 
-## 十、常见问题
+## 十一、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -690,7 +743,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b2-rules.ps1
 | 配置页红字"找不到 apply-config.ps1" | 跑一次 `build.ps1`（会把 `tools\*.ps1` 拷到 `runtime\tools`），或手工把 tools 目录放到 runtime 旁边 |
 | 相机显示"未发现" | cfg 里 `enable="1"` 但 SDK 没报；查上电、网线、网段，或该相机被别的软件占用 |
 
-## 十一、下一步（V1 完整版）
+## 十二、下一步（V1 完整版）
 
 采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做），平台侧包裹合并 / 历史库 / 存图访问 /
 统计与实时推送 / 设备信息 / 一键应用配置也都打通了。接着按 V1 需求清单排：

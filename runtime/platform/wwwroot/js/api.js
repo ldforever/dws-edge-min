@@ -54,7 +54,32 @@ export const api = {
     // ---- B1 去重指纹归档 ----
     dedup: () => request("/api/dedup"),
     compactDedup: () => request("/api/dedup/compact", { method: "POST" }),
+    // ---- B3 历史查询与导出 ----
+    history: (filter) => request("/api/history?" + historyQueryString(filter, true)),
+    /** 导出用的 URL（点击后由浏览器直接下载 CSV） */
+    historyExportUrl: (filter) => "/api/history/export?" + historyQueryString(filter, false),
     /** 图片按需读取接口（只允许图片根目录内的文件） */
     imageUrl: (path) => "/api/images?path=" + encodeURIComponent(path)
 };
 export const STREAM_URL = "/api/stream";
+/** 历史查询串：导出时不要 limit/offset（要全量） */
+function historyQueryString(filter, paged) {
+    const params = new URLSearchParams();
+    params.set("from", filter.from);
+    params.set("to", filter.to);
+    if (filter.code)
+        params.set("code", filter.code);
+    if (filter.deviceId)
+        params.set("deviceId", filter.deviceId);
+    if (filter.noread !== "")
+        params.set("noread", filter.noread);
+    if (filter.dispatchState !== "")
+        params.set("dispatchState", filter.dispatchState);
+    if (filter.hasImage !== "")
+        params.set("hasImage", filter.hasImage);
+    if (paged) {
+        params.set("limit", String(filter.limit));
+        params.set("offset", String(filter.offset));
+    }
+    return params.toString();
+}

@@ -1,6 +1,9 @@
 ﻿using System;
 using System.Threading;
 using System.Threading.Tasks;
+using System.IO;
+using System.Text;
+using System.Globalization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
@@ -173,19 +176,36 @@ namespace DwsEdge.Platform
             app.MapPost("/api/config/apply", (ConfigStore cfg, ConfigApplyRequest request) =>
                 cfg.Apply(request));
 
-            app.MapGet("/api/history", (SpoolStore store, string from, string to, string code, string deviceId, bool? noread, int? limit) =>
+            // B3：历史查询（条码 / 相机 / 无码 / 下发状态 / 图片），返回总数与耗时便于自证性能
+            app.MapGet("/api/history", (SpoolStore store, string from, string to, string code, string deviceId,
+                bool? noread, string dispatchState, bool? hasImage, int? limit, int? offset) =>
             {
-                DateTime fromDay = ParseDay(from, DateTime.Today.AddDays(-1));
-                DateTime toDay = ParseDay(to, DateTime.Today);
-                if (toDay < fromDay)
-                {
-                    DateTime swap = fromDay;
-                    fromDay = toDay;
-                    toDay = swap;
-                }
-                int take = limit.HasValue ? Math.Clamp(limit.Value, 1, 2000) : 200;
-                return Results.Json(store.QueryHistory(fromDay, toDay, code, deviceId, noread, take));
+                HistoryQuery query = BuildHistoryQuery(from, to, code, deviceId, noread, dispatchState, hasImage, limit, offset);
+                return Results.Json(store.QueryHistory(query));
             });
+
+            // B3：导出 CSV（流式写出，字段覆盖条码/时间/相机/图片路径/无码/下发状态）
+            app.MapGet("/api/history/export", async (HttpContext context, HistoryStore history,
+                string from, string to, string code, string deviceId,
+                bool? noread, string dispatchState, bool? hasImage) =>
+            {
+                HistoryQuery query = BuildHistoryQuery(from, to, code, deviceId, noread, dispatchState, hasImage, 0, 0);
+
+                string fileName = "dws-history-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".csv";
+                context.Response.ContentType = "text/csv; charset=utf-8";
+                context.Response.Headers["Content-Disposition"] = "attachment; filename=\"" + fileName + "\"";
+
+                // UTF-8 BOM：Excel 直接双击打开不会乱码。
+                // 用异步写：Kestrel 默认 AllowSynchronousIO=false，同步写会 500。
+                StreamWriter writer = new StreamWriter(context.Response.Body, new UTF8Encoding(true));
+                int rows = await history.ExportCsvAsync(query, writer);
+                await writer.FlushAsync();
+
+                ILogger<HistoryStore> log = context.RequestServices.GetRequiredService<ILogger<HistoryStore>>();
+                log.LogInformation("历史导出完成：{0} 行（{1} ~ {2}）", rows,
+                    query.From.ToString("yyyy-MM-dd"), query.To.ToString("yyyy-MM-dd"));
+            });
+
             app.MapGet("/api/images", (SpoolStore store, string path) => store.OpenImage(path));
             app.MapGet("/api/stream", (HttpContext context, SpoolStore store, CancellationToken token) =>
                 store.StreamAsync(context, token));
@@ -199,11 +219,49 @@ namespace DwsEdge.Platform
         private static DateTime ParseDay(string value, DateTime fallback)
         {
             DateTime parsed;
-            if (!string.IsNullOrEmpty(value) && DateTime.TryParse(value, out parsed))
+            if (string.IsNullOrEmpty(value))
+            {
+                return fallback.Date;
+            }
+
+            // 先按接口约定解析 yyyyMMdd（界面和脚本都传这个），再退回通用解析。
+            // 之前只写 DateTime.TryParse，传 "20260916" 时在当前区域设置下会解析失败并静默用默认值，
+            // 导致"查询某一天"实际查成了"昨天到今天"，数字全对不上。
+            if (DateTime.TryParseExact(value, "yyyyMMdd", CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out parsed))
+            {
+                return parsed.Date;
+            }
+            if (DateTime.TryParse(value, CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out parsed))
             {
                 return parsed.Date;
             }
             return fallback.Date;
+        }
+
+        /// <summary>把查询串参数拼成 HistoryQuery（日期反了就自动交换）。</summary>
+        private static HistoryQuery BuildHistoryQuery(string from, string to, string code, string deviceId,
+            bool? noread, string dispatchState, bool? hasImage, int? limit, int? offset)
+        {
+            HistoryQuery query = new HistoryQuery();
+            query.From = ParseDay(from, DateTime.Today.AddDays(-1));
+            query.To = ParseDay(to, DateTime.Today);
+            if (query.To < query.From)
+            {
+                DateTime swap = query.From;
+                query.From = query.To;
+                query.To = swap;
+            }
+
+            query.Code = code;
+            query.DeviceId = deviceId;
+            query.NoRead = noread;
+            query.DispatchState = dispatchState;
+            query.HasImage = hasImage;
+            query.Limit = limit.HasValue ? Math.Clamp(limit.Value, 1, 5000) : 200;
+            query.Offset = offset.HasValue ? Math.Max(0, offset.Value) : 0;
+            return query;
         }
     }
 }

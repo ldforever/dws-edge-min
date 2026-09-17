@@ -1027,6 +1027,9 @@ namespace DwsEdge.Platform
                 }
 
                 _logger.LogInformation("已从历史恢复 {0} 个包裹（最近 {1} 天）", loaded, days);
+
+                // B3：把"已经封盘的过去几天"整理成索引，之后历史查询就走索引（10 万条级别也能秒回）
+                _history.CompactClosedDays(Math.Max(1, days));
             }
             catch (Exception ex)
             {
@@ -1034,16 +1037,14 @@ namespace DwsEdge.Platform
             }
         }
 
-        /// <summary>历史查询：简单查询读内存，带条件或跨天的查询读历史文件。</summary>
-        public List<ParcelRecord> QueryHistory(DateTime from, DateTime to, string code, string deviceId, bool? noread, int limit)
+        /// <summary>
+        /// 历史查询：一律走历史库（带索引）。
+        /// 早先这里对"简单查询"做了内存快捷路径，但那会按内存里的"最近 N 条"返回，
+        /// 跨天时数据不对、总数也是假的 —— 索引已经让查询足够快，不值得为省这点时间牺牲正确性。
+        /// </summary>
+        public HistoryQueryResult QueryHistory(HistoryQuery query)
         {
-            bool simpleQuery = string.IsNullOrEmpty(code) && string.IsNullOrEmpty(deviceId) && !noread.HasValue
-                && (DateTime.Today - from.Date).TotalDays <= 1;
-            if (simpleQuery)
-            {
-                return LatestParcels(limit);
-            }
-            return _history.Query(from, to, code, deviceId, noread, limit);
+            return _history.Query(query);
         }
 
         #endregion

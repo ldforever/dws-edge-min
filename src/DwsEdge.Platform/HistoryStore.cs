@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -9,17 +9,66 @@ using Microsoft.Extensions.Logging;
 
 namespace DwsEdge.Platform
 {
+    /// <summary>B3 历史查询条件。</summary>
+    public sealed class HistoryQuery
+    {
+        public DateTime From { get; set; }
+        public DateTime To { get; set; }
+
+        /// <summary>条码包含匹配（忽略大小写）。</summary>
+        public string Code { get; set; }
+
+        /// <summary>相机标识包含匹配。</summary>
+        public string DeviceId { get; set; }
+
+        /// <summary>true=只看无码，false=只看有码，null=全部。</summary>
+        public bool? NoRead { get; set; }
+
+        /// <summary>下发状态：pending / sent / failed；空=全部。没写过状态的记录按 pending 处理。</summary>
+        public string DispatchState { get; set; }
+
+        /// <summary>true=只看有图的，false=只看没图的，null=全部。</summary>
+        public bool? HasImage { get; set; }
+
+        public int Limit { get; set; }
+        public int Offset { get; set; }
+
+        public HistoryQuery()
+        {
+            From = DateTime.Today.AddDays(-1);
+            To = DateTime.Today;
+            Limit = 200;
+        }
+    }
+
+    /// <summary>B3 查询结果（带总数与耗时，好用来自证"10 万条 2 秒内"）。</summary>
+    public sealed class HistoryQueryResult
+    {
+        /// <summary>命中总数（过滤后、分页前）。</summary>
+        public int total { get; set; }
+
+        public int returned { get; set; }
+        public long elapsedMs { get; set; }
+
+        /// <summary>true=读了"按 traceId 收敛后的索引文件"，false=读了逐条快照。</summary>
+        public bool fromIndex { get; set; }
+
+        public List<ParcelRecord> items { get; set; } = new List<ParcelRecord>();
+    }
+
     /// <summary>
-    /// 历史持久化（V1 用按天 JSONL 文件；以后换 SQLite 时只需替换本类，对外方法不变）：
+    /// 历史持久化（V1 用按天 JSONL 文件；以后换 SQLite 只需替换本类，对外方法不变）：
     ///
-    ///     data/parcels-yyyyMMdd.jsonl   包裹快照：每次事件更新写一行完整记录
-    ///     data/offsets.json             spool 消费位点：重启后只读新增事件，不再全量重放
+    ///     data/parcels-yyyyMMdd.jsonl        包裹快照：每次事件更新追加一行完整记录（崩溃安全）
+    ///     data/parcels-yyyyMMdd.index.jsonl  索引：一个 traceId 一行 = 该包裹的最终状态
+    ///     data/offsets.json                  spool 消费位点
     ///
-    /// B1 的去重指纹不在这里，见 DedupStore（按 traceId 归档在 data\dedup\）。
+    /// 为什么要索引：一个包裹会写 2 行快照（先条码后重量体积），一天 5 万件就是 10 万行。
+    /// 查询时逐行解析全部快照既慢又占内存（10 万条要好几秒）。索引文件把它收敛成"一个包裹一行"，
+    /// 并且**可以在快照增长后重建**（索引坏了/删了都不影响数据，只是慢一点）。
+    /// 今天正在写的那个文件直接读快照（还在追加，索引会一直过期）；过去的日期读索引。
     ///
-    /// 说明：当前开发环境无法离线获取 Microsoft.Data.Sqlite 包，因此先用文件实现；
-    /// 对外只暴露 Append / LoadRecent / Query / LoadOffsets / SaveOffsets 这几个方法，
-    /// 换成 SQLite 时只需替换本类内部实现。
+    /// B1 的去重指纹不在这里，见 DedupStore（data\dedup）。
     /// </summary>
     public sealed class HistoryStore : IDisposable
     {
@@ -36,22 +85,33 @@ namespace DwsEdge.Platform
         private StreamWriter _writer;
         private string _writerDay;
 
+        /// <summary>每个索引文件最近一次尝试重建的时间，避免每次查询都对同一个大文件重复收敛。</summary>
+        private readonly Dictionary<string, DateTime> _lastIndexBuildUtc =
+            new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+
         public HistoryStore(IConfiguration config, ILogger<HistoryStore> logger)
         {
             _logger = logger;
             string dir = config["History:Directory"] ?? "../data";
             DirectoryPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, dir));
             System.IO.Directory.CreateDirectory(DirectoryPath);
+
+            int limit = 5000000;
+            int.TryParse(config["History:ExportMaxRows"], out limit);
+            ExportMaxRows = limit > 0 ? limit : 5000000;
         }
 
         public string DirectoryPath { get; private set; }
+
+        /// <summary>单次导出最多写多少行（防止误操作把内存/磁盘打满）。</summary>
+        public int ExportMaxRows { get; private set; }
 
         public string OffsetsPath
         {
             get { return Path.Combine(DirectoryPath, "offsets.json"); }
         }
 
-        #region 包裹快照写入 / 读取
+        #region 写入
 
         /// <summary>把当前包裹记录写一行快照（每次更新都写，读的时候按 traceId 取最后一条）。</summary>
         public void Append(ParcelRecord record)
@@ -69,8 +129,8 @@ namespace DwsEdge.Platform
                     if (_writer == null || _writerDay != day)
                     {
                         CloseWriter();
-                        string path = Path.Combine(DirectoryPath, "parcels-" + day + ".jsonl");
-                        // bufferSize=1：历史记录逐行落盘，进程崩溃也不会丢最近的包裹
+                        string path = SnapshotPath(DateTime.Today);
+                        // bufferSize=1 + AutoFlush：逐行落盘，突然断电也不会丢最近的包裹
                         _writer = new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite, 1), new UTF8Encoding(false));
                         _writer.AutoFlush = true;
                         _writerDay = day;
@@ -89,106 +149,413 @@ namespace DwsEdge.Platform
             }
         }
 
-        /// <summary>加载最近 N 天的包裹快照，用于平台重启后立即恢复界面数据。</summary>
+        /// <summary>
+        /// 把某一天的快照收敛成索引（一个 traceId 一行，取最后一条）。
+        /// 先写 .tmp 再原子替换，中途失败不会破坏已有索引。
+        /// </summary>
+        public void CompactDay(DateTime day)
+        {
+            string snapshot = SnapshotPath(day);
+            if (!File.Exists(snapshot))
+            {
+                return;
+            }
+
+            string index = IndexPath(snapshot);
+            try
+            {
+                Dictionary<string, ParcelRecord> byTrace = new Dictionary<string, ParcelRecord>(StringComparer.Ordinal);
+                int lines = 0;
+
+                foreach (string line in ReadLinesShared(snapshot))
+                {
+                    lines++;
+                    ParcelRecord record = Parse(line);
+                    if (record == null || string.IsNullOrEmpty(record.traceId))
+                    {
+                        continue;
+                    }
+                    byTrace[record.traceId] = record;   // 后者覆盖前者 = 最新状态
+                }
+
+                StringBuilder sb = new StringBuilder();
+                foreach (KeyValuePair<string, ParcelRecord> pair in byTrace)
+                {
+                    sb.AppendLine(JsonSerializer.Serialize(pair.Value, _json));
+                }
+
+                string tmp = index + ".tmp";
+                File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false));
+                if (File.Exists(index))
+                {
+                    File.Replace(tmp, index, null);
+                }
+                else
+                {
+                    File.Move(tmp, index);
+                }
+
+                lock (_sync)
+                {
+                    _lastIndexBuildUtc[index] = DateTime.UtcNow;
+                }
+                _logger.LogInformation("历史索引已重建：{0} 行快照 → {1} 个包裹（{2}）",
+                    lines, byTrace.Count, Path.GetFileName(index));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("重建历史索引失败（查询会自动回退读快照）：{0}", ex.Message);
+            }
+        }
+
+        /// <summary>平台启动时把"已经封盘的过去几天"整理一遍，之后查询就走索引了。</summary>
+        public void CompactClosedDays(int days)
+        {
+            if (days < 1)
+            {
+                days = 1;
+            }
+
+            for (int i = 1; i <= days; i++)
+            {
+                DateTime day = DateTime.Today.AddDays(-i);
+                string snapshot = SnapshotPath(day);
+                string index = IndexPath(snapshot);
+                if (File.Exists(snapshot) && !IndexIsFresh(snapshot, index))
+                {
+                    CompactDay(day);
+                }
+            }
+        }
+
+        #endregion
+
+        #region 查询
+
+        /// <summary>加载最近 N 天的包裹（平台重启后恢复界面用）。</summary>
         public List<ParcelRecord> LoadRecent(int days, int maxRecords)
         {
             if (days < 1)
             {
                 days = 1;
             }
-            DateTime from = DateTime.Today.AddDays(-(days - 1));
-            return ReadRange(from, DateTime.Today, null, maxRecords);
+
+            HistoryQuery query = new HistoryQuery();
+            query.From = DateTime.Today.AddDays(-(days - 1));
+            query.To = DateTime.Today;
+            query.Limit = maxRecords;
+            query.Offset = 0;
+
+            HistoryQueryResult result = Query(query);
+            return result.items;
         }
 
-        /// <summary>按时间范围/条件查询历史包裹（读取范围覆盖的日文件）。</summary>
-        public List<ParcelRecord> Query(DateTime from, DateTime to, string code, string deviceId, bool? noread, int limit)
+        /// <summary>按条件查询（走索引，10 万条级别也能秒回）。</summary>
+        public HistoryQueryResult Query(HistoryQuery query)
         {
-            return ReadRange(from, to,
-                delegate(ParcelRecord record)
+            DateTime start = DateTime.UtcNow;
+            HistoryQueryResult result = new HistoryQueryResult();
+            if (query == null)
+            {
+                return result;
+            }
+
+            List<ParcelRecord> hits = new List<ParcelRecord>();
+            bool usedIndex = true;
+
+            for (DateTime day = query.From.Date; day <= query.To.Date; day = day.AddDays(1))
+            {
+                bool dayUsedIndex;
+                hits.AddRange(LoadDay(day, query, out dayUsedIndex));
+                if (!dayUsedIndex)
                 {
-                    if (!string.IsNullOrEmpty(deviceId)
-                        && (record.deviceId == null || record.deviceId.IndexOf(deviceId, StringComparison.OrdinalIgnoreCase) < 0))
+                    usedIndex = false;
+                }
+            }
+
+            // 最近的在最前面
+            hits.Sort(delegate(ParcelRecord a, ParcelRecord b)
+            {
+                int byTime = b.capturedAtMs.CompareTo(a.capturedAtMs);
+                if (byTime != 0)
+                {
+                    return byTime;
+                }
+                return string.CompareOrdinal(b.traceId, a.traceId);
+            });
+
+            result.total = hits.Count;
+            result.fromIndex = usedIndex;
+
+            int offset = Math.Max(0, query.Offset);
+            int limit = query.Limit > 0 ? query.Limit : 200;
+            for (int i = offset; i < hits.Count && result.items.Count < limit; i++)
+            {
+                result.items.Add(hits[i]);
+            }
+            result.returned = result.items.Count;
+            result.elapsedMs = (long)(DateTime.UtcNow - start).TotalMilliseconds;
+            return result;
+        }
+
+        /// <summary>
+        /// 导出 CSV（流式写出，不把结果全放进内存）。
+        /// 字段覆盖 B3 要求：条码、时间、相机、图片路径、无码标记、下发状态。
+        ///
+        /// 注意这里特意做成异步写：Kestrel 默认禁止同步写响应体
+        /// （AllowSynchronousIO=false，同步写会直接 500），所以用 WriteLineAsync。
+        /// </summary>
+        public async System.Threading.Tasks.Task<int> ExportCsvAsync(HistoryQuery query, TextWriter writer)
+        {
+            if (query == null || writer == null)
+            {
+                return 0;
+            }
+
+            await writer.WriteLineAsync(string.Join(",",
+                "时间", "追踪号", "条码", "条码数", "无码", "相机", "重量(g)",
+                "长(mm)", "宽(mm)", "高(mm)", "体积(mm3)", "图片数", "图片路径",
+                "下发状态", "下发时间", "下发尝试", "下发错误", "采集时间戳"));
+
+            int written = 0;
+            for (DateTime day = query.From.Date; day <= query.To.Date; day = day.AddDays(1))
+            {
+                bool usedIndex;
+                List<ParcelRecord> records = LoadDay(day, query, out usedIndex);
+                for (int i = 0; i < records.Count; i++)
+                {
+                    await writer.WriteLineAsync(ToCsvRow(records[i]));
+                    written++;
+                    if (written >= ExportMaxRows)
                     {
-                        return false;
+                        return written;
                     }
-                    if (noread.HasValue)
+                }
+            }
+            return written;
+        }
+
+        private static string ToCsvRow(ParcelRecord r)
+        {
+            string codes = r.codes == null ? string.Empty : string.Join(" ", r.codes.ToArray());
+            return string.Join(",",
+                Csv(r.time),
+                Csv(r.traceId),
+                Csv(codes),
+                r.codeCount.ToString(CultureInfo.InvariantCulture),
+                Csv(r.codeCount == 0 ? "是" : "否"),
+                Csv(r.deviceId),
+                r.weightGrams.ToString(CultureInfo.InvariantCulture),
+                Num(r.lengthMm),
+                Num(r.widthMm),
+                Num(r.heightMm),
+                Num(r.volumeMm3),
+                r.imageCount.ToString(CultureInfo.InvariantCulture),
+                Csv(r.firstImagePath),
+                Csv(DispatchStateOf(r)),
+                Csv(r.dispatchedAt),
+                r.dispatchAttempts.ToString(CultureInfo.InvariantCulture),
+                Csv(r.dispatchError),
+                r.capturedAtMs.ToString(CultureInfo.InvariantCulture));
+        }
+
+        private static string Num(double value)
+        {
+            return value.ToString("0.###", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>CSV 转义：含逗号/引号/换行的字段加引号，内部引号翻倍。</summary>
+        private static string Csv(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            bool needQuote = value.IndexOf(',') >= 0 || value.IndexOf('"') >= 0
+                || value.IndexOf('\n') >= 0 || value.IndexOf('\r') >= 0;
+            if (!needQuote)
+            {
+                return value;
+            }
+            return "\"" + value.Replace("\"", "\"\"") + "\"";
+        }
+
+        /// <summary>
+        /// 读某一天里满足条件的包裹（同一天内按 traceId 取最后一条）。
+        /// usedIndex 表示这一天是用"收敛后的索引"还是"逐条快照"读的。
+        /// </summary>
+        private List<ParcelRecord> LoadDay(DateTime day, HistoryQuery query, out bool usedIndex)
+        {
+            List<ParcelRecord> result = new List<ParcelRecord>();
+            string snapshot = SnapshotPath(day);
+            string index = IndexPath(snapshot);
+            bool isToday = day.Date == DateTime.Today;
+
+            // 今天还在追加，索引会一直过期 → 直接读快照；过去的日期读索引（必要时先重建）
+            bool useIndex = !isToday && File.Exists(index) && IndexIsFresh(snapshot, index);
+            if (!isToday && File.Exists(snapshot) && !useIndex)
+            {
+                // 索引缺失或过期：重建一次。但如果刚重建过（10 秒内）就别反复折腾，直接读快照。
+                bool recentlyBuilt;
+                lock (_sync)
+                {
+                    DateTime last;
+                    recentlyBuilt = _lastIndexBuildUtc.TryGetValue(index, out last)
+                        && (DateTime.UtcNow - last).TotalSeconds < 10;
+                }
+                if (!recentlyBuilt)
+                {
+                    CompactDay(day);
+                    useIndex = File.Exists(index) && IndexIsFresh(snapshot, index);
+                }
+            }
+
+            usedIndex = useIndex;
+            string path = useIndex ? index : snapshot;
+            if (!File.Exists(path))
+            {
+                return result;
+            }
+
+            if (useIndex)
+            {
+                foreach (string line in ReadLinesShared(path))
+                {
+                    ParcelRecord record = Parse(line);
+                    if (record != null && Matches(record, query))
                     {
-                        bool isNoread = record.codeCount == 0;
-                        if (isNoread != noread.Value)
+                        result.Add(record);
+                    }
+                }
+            }
+            else
+            {
+                // 快照文件里一个包裹可能有多行 → 取最后一条，再过滤
+                Dictionary<string, ParcelRecord> byTrace = new Dictionary<string, ParcelRecord>(StringComparer.Ordinal);
+                foreach (string line in ReadLinesShared(path))
+                {
+                    ParcelRecord record = Parse(line);
+                    if (record == null || string.IsNullOrEmpty(record.traceId))
+                    {
+                        continue;
+                    }
+                    byTrace[record.traceId] = record;
+                }
+
+                foreach (KeyValuePair<string, ParcelRecord> pair in byTrace)
+                {
+                    if (Matches(pair.Value, query))
+                    {
+                        result.Add(pair.Value);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>条件过滤（B3：条码、相机、无码、下发状态、图片）。</summary>
+        private static bool Matches(ParcelRecord record, HistoryQuery query)
+        {
+            if (record == null)
+            {
+                return false;
+            }
+
+            if (query.NoRead.HasValue && (record.codeCount == 0) != query.NoRead.Value)
+            {
+                return false;
+            }
+
+            if (query.HasImage.HasValue)
+            {
+                bool hasImage = record.imageCount > 0 || !string.IsNullOrEmpty(record.firstImagePath);
+                if (hasImage != query.HasImage.Value)
+                {
+                    return false;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(query.DeviceId)
+                && (record.deviceId == null
+                    || record.deviceId.IndexOf(query.DeviceId, StringComparison.OrdinalIgnoreCase) < 0))
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrEmpty(query.DispatchState))
+            {
+                string want = NormalizeDispatch(query.DispatchState);
+                if (!string.Equals(DispatchStateOf(record), want, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(query.Code))
+            {
+                bool hit = false;
+                if (record.codes != null)
+                {
+                    for (int i = 0; i < record.codes.Count; i++)
+                    {
+                        if (record.codes[i] != null
+                            && record.codes[i].IndexOf(query.Code, StringComparison.OrdinalIgnoreCase) >= 0)
                         {
-                            return false;
+                            hit = true;
+                            break;
                         }
                     }
-                    if (!string.IsNullOrEmpty(code))
-                    {
-                        bool hit = false;
-                        if (record.codes != null)
-                        {
-                            for (int i = 0; i < record.codes.Count; i++)
-                            {
-                                if (record.codes[i] != null && record.codes[i].IndexOf(code, StringComparison.OrdinalIgnoreCase) >= 0)
-                                {
-                                    hit = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!hit)
-                        {
-                            return false;
-                        }
-                    }
+                }
+                if (!hit)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static string NormalizeDispatch(string state)
+        {
+            return string.IsNullOrEmpty(state) ? "pending" : state.Trim().ToLowerInvariant();
+        }
+
+        /// <summary>没写过下发状态的记录按 pending 处理（老数据也能被筛出来）。</summary>
+        private static string DispatchStateOf(ParcelRecord record)
+        {
+            return NormalizeDispatch(record == null ? null : record.dispatchState);
+        }
+
+        private static bool IndexIsFresh(string snapshot, string index)
+        {
+            try
+            {
+                if (!File.Exists(index))
+                {
+                    return false;
+                }
+                if (!File.Exists(snapshot))
+                {
                     return true;
-                },
-                limit);
+                }
+                return File.GetLastWriteTimeUtc(index) >= File.GetLastWriteTimeUtc(snapshot);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
-        private List<ParcelRecord> ReadRange(DateTime from, DateTime to, Func<ParcelRecord, bool> filter, int limit)
+        private string SnapshotPath(DateTime day)
         {
-            Dictionary<string, ParcelRecord> byTrace = new Dictionary<string, ParcelRecord>(StringComparer.Ordinal);
+            return Path.Combine(DirectoryPath, "parcels-" + day.ToString("yyyyMMdd", CultureInfo.InvariantCulture) + ".jsonl");
+        }
 
-            for (DateTime day = from.Date; day <= to.Date; day = day.AddDays(1))
-            {
-                string path = Path.Combine(DirectoryPath, "parcels-" + day.ToString("yyyyMMdd", CultureInfo.InvariantCulture) + ".jsonl");
-                if (!File.Exists(path))
-                {
-                    continue;
-                }
-
-                try
-                {
-                    foreach (string line in File.ReadLines(path, Encoding.UTF8))
-                    {
-                        ParcelRecord record = Parse(line);
-                        if (record == null)
-                        {
-                            continue;
-                        }
-                        if (filter != null && !filter(record))
-                        {
-                            continue;
-                        }
-                        if (!string.IsNullOrEmpty(record.traceId))
-                        {
-                            byTrace[record.traceId] = record;   // 后者覆盖前者 = 取最新快照
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "读取历史失败：{0}", path);
-                }
-            }
-
-            List<ParcelRecord> list = new List<ParcelRecord>(byTrace.Values);
-            list.Sort(delegate(ParcelRecord a, ParcelRecord b) { return b.capturedAtMs.CompareTo(a.capturedAtMs); });
-
-            int max = limit > 0 ? limit : list.Count;
-            if (list.Count > max)
-            {
-                list.RemoveRange(max, list.Count - max);
-            }
-            return list;
+        private static string IndexPath(string snapshotPath)
+        {
+            return snapshotPath.Substring(0, snapshotPath.Length - ".jsonl".Length) + ".index.jsonl";
         }
 
         private ParcelRecord Parse(string line)
@@ -220,8 +587,25 @@ namespace DwsEdge.Platform
             }
         }
 
-        #endregion
+        /// <summary>按行读一个可能正被追加写的文件（共享读）。</summary>
+        private static IEnumerable<string> ReadLinesShared(string path)
+        {
+            using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete))
+            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+            {
+                while (!reader.EndOfStream)
+                {
+                    string line = reader.ReadLine();
+                    if (line != null)
+                    {
+                        yield return line;
+                    }
+                }
+            }
+        }
 
+        #endregion
 
         #region spool 消费位点
 

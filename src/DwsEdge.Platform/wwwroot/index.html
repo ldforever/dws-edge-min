@@ -9,7 +9,7 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=80bdefd8" />
+<link rel="stylesheet" href="./app.css?v=31baa068" />
 </head>
 <body>
 <header>
@@ -20,6 +20,7 @@
   <nav>
     <button id="tab-realtime" class="active">实时监控</button>
     <button id="tab-devices">设备信息</button>
+    <button id="tab-history">历史查询</button>
     <button id="tab-config">配置</button>
   </nav>
   <div class="status"><span id="dot" class="dot"></span><span id="conn">连接中…</span></div>
@@ -93,6 +94,76 @@
       <tbody id="devRows"></tbody>
     </table>
     <footer id="devFoot">—</footer>
+  </section>
+
+  <!-- ==================== 配置（A8） ==================== -->
+  <!-- ==================== 历史查询（B3） ==================== -->
+  <section id="page-history" class="page">
+    <div class="panel">
+      <h2>历史查询</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:10px">
+        查询走服务端"按 traceId 收敛后的索引"（一个包裹一行），10 万条也是秒级；
+        返回里会显示服务端耗时，方便现场核对性能。
+      </div>
+      <div class="toolbar">
+        <label class="chk">起：<input type="date" id="histFrom" /></label>
+        <label class="chk">止：<input type="date" id="histTo" /></label>
+        <button class="btn secondary small" id="btnHistoryToday">今天</button>
+        <button class="btn secondary small" id="btnHistoryWeek">近 7 天</button>
+      </div>
+      <div class="toolbar">
+        <label class="chk">条码：<input type="text" id="histCode" placeholder="支持部分匹配" size="16" /></label>
+        <label class="chk">相机：<input type="text" id="histDevice" placeholder="如 cam-3" size="10" /></label>
+        <label class="chk">无码：
+          <select id="histNoread">
+            <option value="">全部</option>
+            <option value="true">仅无码</option>
+            <option value="false">仅有码</option>
+          </select>
+        </label>
+        <label class="chk">下发：
+          <select id="histDispatch">
+            <option value="">全部</option>
+            <option value="pending">待下发</option>
+            <option value="sent">已下发</option>
+            <option value="failed">下发失败</option>
+          </select>
+        </label>
+        <label class="chk">图片：
+          <select id="histImage">
+            <option value="">全部</option>
+            <option value="true">仅有图</option>
+            <option value="false">仅无图</option>
+          </select>
+        </label>
+        <label class="chk">每页：
+          <select id="histLimit">
+            <option value="20">20</option>
+            <option value="50" selected>50</option>
+            <option value="200">200</option>
+            <option value="1000">1000</option>
+          </select>
+        </label>
+        <button class="btn" id="btnHistoryQuery">查询</button>
+        <button class="btn secondary" id="btnHistoryExport">导出 CSV</button>
+      </div>
+      <div class="toolbar">
+        <button class="btn secondary small" id="btnHistoryPrev">上一页</button>
+        <button class="btn secondary small" id="btnHistoryNext">下一页</button>
+        <span id="histSummary" class="muted" style="font-size:12px"></span>
+      </div>
+
+      <div id="histEmpty" class="empty">没有符合条件的记录。</div>
+      <table>
+        <thead>
+          <tr>
+            <th>时间</th><th>条码</th><th>相机</th><th>无码</th><th>重量(g)</th>
+            <th>长×宽×高</th><th>图片</th><th>下发状态</th><th>追踪号</th>
+          </tr>
+        </thead>
+        <tbody id="histRows"></tbody>
+      </table>
+    </div>
   </section>
 
   <!-- ==================== 配置（A8） ==================== -->
@@ -220,6 +291,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=80bdefd8"></script>
+<script type="module" src="./js/main.js?v=31baa068"></script>
 </body>
 </html>

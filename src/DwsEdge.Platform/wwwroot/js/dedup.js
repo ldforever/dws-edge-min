@@ -5,8 +5,8 @@
  *   * 现在保护着多少个包裹（= 重复上报还会不会被丢掉）；
  *   * 磁盘上有没有堆积（WAL 行数、索引大小、上次整理时间）。
  */
-import { api } from "./api.js?v=80bdefd8";
-import { $, badge, el } from "./dom.js?v=80bdefd8";
+import { api } from "./api.js?v=31baa068";
+import { $, badge, el } from "./dom.js?v=31baa068";
 export function initDedup() {
     $("btnCompactDedup").addEventListener("click", () => void compact());
     $("btnRefreshDedup").addEventListener("click", () => void refreshDedup());

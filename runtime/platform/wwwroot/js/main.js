@@ -4,15 +4,16 @@
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
  * 也没有全局变量：模块之间只通过 import 通信，方便以后换壳（WebView2）或加页面。
  */
-import { api } from "./api.js?v=80bdefd8";
-import { connectStream } from "./sse.js?v=80bdefd8";
-import { $ } from "./dom.js?v=80bdefd8";
-import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=80bdefd8";
-import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=80bdefd8";
-import { initConfig, refreshConfig } from "./config.js?v=80bdefd8";
-import { initRules, refreshRules } from "./rules.js?v=80bdefd8";
-import { initDedup, refreshDedup } from "./dedup.js?v=80bdefd8";
-const PAGES = ["realtime", "devices", "config"];
+import { api } from "./api.js?v=31baa068";
+import { connectStream } from "./sse.js?v=31baa068";
+import { $ } from "./dom.js?v=31baa068";
+import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=31baa068";
+import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=31baa068";
+import { initConfig, refreshConfig } from "./config.js?v=31baa068";
+import { initRules, refreshRules } from "./rules.js?v=31baa068";
+import { initDedup, refreshDedup } from "./dedup.js?v=31baa068";
+import { initHistory, refreshHistory } from "./history.js?v=31baa068";
+const PAGES = ["realtime", "devices", "history", "config"];
 function showPage(name) {
     for (const page of PAGES) {
         $("page-" + page).classList.toggle("active", page === name);
@@ -21,6 +22,8 @@ function showPage(name) {
     // 切页时按需拉一次数据（数据不多，够用且简单）
     if (name === "devices")
         void refreshDevices();
+    if (name === "history")
+        void refreshHistory();
     if (name === "config") {
         void refreshConfig();
         void refreshRules();
@@ -37,6 +40,7 @@ function bootstrap() {
     initConfig();
     initRules();
     initDedup();
+    initHistory();
     for (const page of PAGES) {
         $("tab-" + page).addEventListener("click", () => showPage(page));
     }
