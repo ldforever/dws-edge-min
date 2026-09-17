@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -43,6 +43,31 @@ namespace DwsEdge.Platform
 
         /// <summary>B5 服务端模式：新客户端接入时补发最近 N 条（0 = 不补发）。</summary>
         public int replayRecentCount { get; set; }
+
+        // ---- B6：HTTP 推送模式 ----
+
+        /// <summary>下游接收地址，例如 http://192.168.1.50:8080/dws/parcel</summary>
+        public string url { get; set; } = "";
+
+        /// <summary>HTTP 请求超时（毫秒）。</summary>
+        public int httpTimeoutMs { get; set; } = 5000;
+
+        /// <summary>请求体 Content-Type（模板生成的是文本，默认 text/plain）。</summary>
+        public string contentType { get; set; } = "text/plain; charset=utf-8";
+
+        /// <summary>幂等键用的请求头名，值是包裹的 traceId（下游按它去重）。</summary>
+        public string idempotencyHeader { get; set; } = "Idempotency-Key";
+
+        /// <summary>额外请求头，例如 "Authorization: Bearer xxx"（每行一个）。</summary>
+        public List<string> headers { get; set; } = new List<string>();
+
+        /// <summary>是否 HTTP 模式。</summary>
+        public static bool IsHttpMode(DownstreamOptions options)
+        {
+            return options != null
+                && (string.Equals(options.protocol, "http", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(options.protocol, "http-post", StringComparison.OrdinalIgnoreCase));
+        }
 
         /// <summary>是否服务端模式（平台监听、下游接入）。</summary>
         public static bool IsServerMode(DownstreamOptions options)
@@ -94,6 +119,12 @@ namespace DwsEdge.Platform
         public string listenTarget { get; set; }
         public int clientCount { get; set; }
 
+        // ---- B6：HTTP 模式 ----
+
+        public bool httpMode { get; set; }
+        public string httpTarget { get; set; }
+        public string idempotencyHeader { get; set; }
+
         /// <summary>已接入的下游客户端（id / 远端地址 / 接入时间 / 已发条数 / 字节数 / 最近错误）。</summary>
         public List<object> clients { get; set; } = new List<object>();
     }
@@ -104,6 +135,12 @@ namespace DwsEdge.Platform
     /// </summary>
     public sealed class DownstreamStore
     {
+        /// <summary>HTTP 响应状态的成功判定：2xx 都算成功（其余按失败重试）。</summary>
+        public static bool IsHttpSuccess(int statusCode)
+        {
+            return statusCode >= 200 && statusCode <= 299;
+        }
+
         private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -196,9 +233,39 @@ namespace DwsEdge.Platform
 
             bool isClient = string.Equals(options.protocol, "tcp-client", StringComparison.OrdinalIgnoreCase);
             bool isServer = DownstreamOptions.IsServerMode(options);
-            if (!isClient && !isServer)
+            bool isHttp = DownstreamOptions.IsHttpMode(options);
+            if (!isClient && !isServer && !isHttp)
             {
-                problems.Add("protocol 只支持 tcp-client（平台连下游）或 tcp-server（平台监听、下游接入）");
+                problems.Add("protocol 只支持 tcp-client（平台连下游）/ tcp-server（平台监听）/ http（HTTP 推送）");
+            }
+
+            if (isHttp)
+            {
+                if (string.IsNullOrEmpty(options.url))
+                {
+                    problems.Add("HTTP 模式必须填 url，例如 http://192.168.1.50:8080/dws");
+                }
+                else if (!options.url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                    && !options.url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    problems.Add("url 必须以 http:// 或 https:// 开头");
+                }
+                if (options.httpTimeoutMs < 100 || options.httpTimeoutMs > 120000)
+                {
+                    problems.Add("httpTimeoutMs 建议在 100-120000 之间");
+                }
+                if (string.IsNullOrEmpty(options.idempotencyHeader))
+                {
+                    problems.Add("idempotencyHeader 不能为空（幂等键靠它传给下游）");
+                }
+                for (int i = 0; i < (options.headers == null ? 0 : options.headers.Count); i++)
+                {
+                    string line = options.headers[i];
+                    if (!string.IsNullOrEmpty(line) && line.IndexOf(':') < 0)
+                    {
+                        problems.Add("额外请求头格式应为 \"名称: 值\"，收到：" + line);
+                    }
+                }
             }
             if (string.IsNullOrEmpty(options.host))
             {

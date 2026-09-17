@@ -3,15 +3,15 @@
  *
  * 现场最常干的三件事：改模板看一眼长什么样、测一下连不连得通、看哪条没发出去。
  */
-import { api } from "./api.js?v=f6a72d07";
-import { $, badge, cell, clear, el, notify } from "./dom.js?v=f6a72d07";
+import { api } from "./api.js?v=29f36d59";
+import { $, badge, cell, clear, el, notify } from "./dom.js?v=29f36d59";
 export function initDownstream() {
     $("btnDsSave").addEventListener("click", () => void save());
     $("btnDsTest").addEventListener("click", () => void testConnection());
     $("btnDsPreview").addEventListener("click", () => void preview());
     $("btnDsRefresh").addEventListener("click", () => void refreshDownstream());
     $("dsProtocol").addEventListener("change", () => {
-        applyProtocolLabels($("dsProtocol").value === "tcp-server");
+        applyProtocolLabels($("dsProtocol").value);
     });
 }
 export async function refreshDownstream() {
@@ -26,22 +26,30 @@ export async function refreshDownstream() {
     $("dsHost").value = config.host;
     $("dsPort").value = String(config.port);
     $("dsReplay").value = String(config.replayRecentCount ?? 0);
+    $("dsUrl").value = config.url ?? "";
+    $("dsTimeout").value = String(config.httpTimeoutMs ?? 5000);
+    $("dsIdemHeader").value = config.idempotencyHeader ?? "Idempotency-Key";
+    $("dsHeaders").value = (config.headers ?? []).join("; ");
     $("dsTemplate").value = config.template;
     $("dsEncoding").value = config.encoding ?? "utf-8";
     $("dsRetry").value = String(config.retryIntervalMs);
     $("dsOnlyComplete").checked = config.sendOnlyComplete;
     $("dsFields").textContent = "可用字段：" + res.data.templateFields.map((f) => "{" + f + "}").join(" ");
-    applyProtocolLabels(res.data.stats.serverMode);
+    applyProtocolLabels(config.protocol);
     renderStats(res.data.stats, res.data.file);
     renderClients(res.data.stats);
     await loadLog();
 }
-/** 服务端/客户端两种模式下，host/port 的含义不同，标签跟着变 */
-function applyProtocolLabels(serverMode) {
+/** 三种模式下字段含义不同：标签、可见行跟着变 */
+function applyProtocolLabels(protocol) {
+    const serverMode = protocol === "tcp-server";
+    const httpMode = protocol === "http";
     $("dsHostLabel").textContent = serverMode ? "绑定地址：" : "下游地址：";
     $("dsPortLabel").textContent = serverMode ? "监听端口：" : "下游端口：";
     $("dsHost").setAttribute("placeholder", serverMode ? "0.0.0.0" : "127.0.0.1");
     $("dsReplayLabel").style.display = serverMode ? "" : "none";
+    $("dsHttpRow").style.display = httpMode ? "" : "none";
+    $("dsHeadersRow").style.display = httpMode ? "" : "none";
 }
 function renderClients(stats) {
     const box = $("dsClientsBox");
@@ -83,16 +91,26 @@ function readOptions() {
         maxAttempts: 0,
         sendOnlyComplete: $("dsOnlyComplete").checked,
         sendIntervalMs: 0,
-        replayRecentCount: Number($("dsReplay").value) || 0
+        replayRecentCount: Number($("dsReplay").value) || 0,
+        url: $("dsUrl").value.trim(),
+        httpTimeoutMs: Number($("dsTimeout").value) || 5000,
+        contentType: "text/plain; charset=utf-8",
+        idempotencyHeader: $("dsIdemHeader").value.trim() || "Idempotency-Key",
+        headers: $("dsHeaders").value
+            .split(";")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)
     };
 }
 function renderStats(stats, file) {
     const connected = stats.connected ? "已连接" : (stats.enabled ? "未连接" : "未启用");
     $("dsSummary").textContent =
-        (stats.serverMode
-            ? "服务端模式 · 监听 " + (stats.listenTarget ?? stats.target) + " · " + (stats.listening ? "监听中" : "未监听") +
-                " · 在线客户端 " + stats.clientCount
-            : "客户端模式 · 目标 " + stats.target + " · " + connected) +
+        (stats.httpMode
+            ? "HTTP 模式 · 目标 " + (stats.httpTarget ?? "") + " · 幂等键头 " + (stats.idempotencyHeader ?? "")
+            : stats.serverMode
+                ? "服务端模式 · 监听 " + (stats.listenTarget ?? stats.target) + " · " + (stats.listening ? "监听中" : "未监听") +
+                    " · 在线客户端 " + stats.clientCount
+                : "客户端模式 · 目标 " + stats.target + " · " + connected) +
             (stats.connectedSince ? "（自 " + stats.connectedSince + "）" : "") +
             " · 已下发 " + stats.sent + " 条" +
             " · 失败 " + stats.failed +

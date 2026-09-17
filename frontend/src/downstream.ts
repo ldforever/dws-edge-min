@@ -13,7 +13,7 @@ export function initDownstream(): void {
   $("btnDsPreview").addEventListener("click", () => void preview());
   $("btnDsRefresh").addEventListener("click", () => void refreshDownstream());
   $("dsProtocol").addEventListener("change", () => {
-    applyProtocolLabels($<HTMLSelectElement>("dsProtocol").value === "tcp-server");
+    applyProtocolLabels($<HTMLSelectElement>("dsProtocol").value);
   });
 }
 
@@ -30,24 +30,33 @@ export async function refreshDownstream(): Promise<void> {
   $<HTMLInputElement>("dsHost").value = config.host;
   $<HTMLInputElement>("dsPort").value = String(config.port);
   $<HTMLInputElement>("dsReplay").value = String(config.replayRecentCount ?? 0);
+  $<HTMLInputElement>("dsUrl").value = config.url ?? "";
+  $<HTMLInputElement>("dsTimeout").value = String(config.httpTimeoutMs ?? 5000);
+  $<HTMLInputElement>("dsIdemHeader").value = config.idempotencyHeader ?? "Idempotency-Key";
+  $<HTMLInputElement>("dsHeaders").value = (config.headers ?? []).join("; ");
   $<HTMLTextAreaElement>("dsTemplate").value = config.template;
   $<HTMLSelectElement>("dsEncoding").value = config.encoding ?? "utf-8";
   $<HTMLInputElement>("dsRetry").value = String(config.retryIntervalMs);
   $<HTMLInputElement>("dsOnlyComplete").checked = config.sendOnlyComplete;
   $("dsFields").textContent = "可用字段：" + res.data.templateFields.map((f) => "{" + f + "}").join(" ");
 
-  applyProtocolLabels(res.data.stats.serverMode);
+  applyProtocolLabels(config.protocol);
   renderStats(res.data.stats, res.data.file);
   renderClients(res.data.stats);
   await loadLog();
 }
 
-/** 服务端/客户端两种模式下，host/port 的含义不同，标签跟着变 */
-function applyProtocolLabels(serverMode: boolean): void {
+/** 三种模式下字段含义不同：标签、可见行跟着变 */
+function applyProtocolLabels(protocol: string): void {
+  const serverMode = protocol === "tcp-server";
+  const httpMode = protocol === "http";
+
   $("dsHostLabel").textContent = serverMode ? "绑定地址：" : "下游地址：";
   $("dsPortLabel").textContent = serverMode ? "监听端口：" : "下游端口：";
   $("dsHost").setAttribute("placeholder", serverMode ? "0.0.0.0" : "127.0.0.1");
   $("dsReplayLabel").style.display = serverMode ? "" : "none";
+  $("dsHttpRow").style.display = httpMode ? "" : "none";
+  $("dsHeadersRow").style.display = httpMode ? "" : "none";
 }
 
 function renderClients(stats: DownstreamStats): void {
@@ -92,14 +101,24 @@ function readOptions(): DownstreamOptions {
     maxAttempts: 0,
     sendOnlyComplete: $<HTMLInputElement>("dsOnlyComplete").checked,
     sendIntervalMs: 0,
-    replayRecentCount: Number($<HTMLInputElement>("dsReplay").value) || 0
+    replayRecentCount: Number($<HTMLInputElement>("dsReplay").value) || 0,
+    url: $<HTMLInputElement>("dsUrl").value.trim(),
+    httpTimeoutMs: Number($<HTMLInputElement>("dsTimeout").value) || 5000,
+    contentType: "text/plain; charset=utf-8",
+    idempotencyHeader: $<HTMLInputElement>("dsIdemHeader").value.trim() || "Idempotency-Key",
+    headers: $<HTMLInputElement>("dsHeaders").value
+      .split(";")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
   };
 }
 
 function renderStats(stats: DownstreamStats, file: string): void {
   const connected = stats.connected ? "已连接" : (stats.enabled ? "未连接" : "未启用");
   $("dsSummary").textContent =
-    (stats.serverMode
+    (stats.httpMode
+      ? "HTTP 模式 · 目标 " + (stats.httpTarget ?? "") + " · 幂等键头 " + (stats.idempotencyHeader ?? "")
+      : stats.serverMode
       ? "服务端模式 · 监听 " + (stats.listenTarget ?? stats.target) + " · " + (stats.listening ? "监听中" : "未监听") +
         " · 在线客户端 " + stats.clientCount
       : "客户端模式 · 目标 " + stats.target + " · " + connected) +

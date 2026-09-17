@@ -9,7 +9,7 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=f6a72d07" />
+<link rel="stylesheet" href="./app.css?v=29f36d59" />
 </head>
 <body>
 <header>
@@ -187,6 +187,7 @@
           <select id="dsProtocol">
             <option value="tcp-client">TCP 客户端（平台连下游）</option>
             <option value="tcp-server">TCP 服务端（平台监听、下游接入）</option>
+            <option value="http">HTTP 推送（POST 到下游接口）</option>
           </select>
         </label>
         <label class="chk"><span id="dsHostLabel">下游地址：</span><input type="text" id="dsHost" size="14" placeholder="127.0.0.1" /></label>
@@ -201,6 +202,15 @@
         <label class="chk">重试间隔(ms)：<input type="text" id="dsRetry" size="6" placeholder="5000" /></label>
         <label class="chk"><input type="checkbox" id="dsOnlyComplete" checked /> 只发完整包裹（等重量体积）</label>
         <label class="chk" id="dsReplayLabel">接入时补发最近：<input type="text" id="dsReplay" size="5" placeholder="0" /> 条</label>
+      </div>
+      <div class="toolbar" id="dsHttpRow" style="display:none">
+        <label class="chk">接口地址：<input type="text" id="dsUrl" size="38" placeholder="http://192.168.1.50:8080/dws" /></label>
+        <label class="chk">超时(ms)：<input type="text" id="dsTimeout" size="6" placeholder="5000" /></label>
+        <label class="chk">幂等键头：<input type="text" id="dsIdemHeader" size="16" placeholder="Idempotency-Key" /></label>
+      </div>
+      <div class="toolbar" id="dsHeadersRow" style="display:none">
+        <label class="chk">额外请求头（每行一个，如 <span class="code">Authorization: Bearer xxx</span>）：
+          <input type="text" id="dsHeaders" size="52" placeholder="X-Dws-Source: lightcookr" /></label>
       </div>
 
       <h3>数据格式模板</h3>
@@ -353,6 +363,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=f6a72d07"></script>
+<script type="module" src="./js/main.js?v=29f36d59"></script>
 </body>
 </html>

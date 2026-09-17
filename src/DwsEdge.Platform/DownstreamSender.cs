@@ -97,6 +97,11 @@ namespace DwsEdge.Platform
                         EnsureListening(options);
                         delayMs = SendServerRound(options);
                     }
+                    else if (DownstreamOptions.IsHttpMode(options))
+                    {
+                        // B6：HTTP 推送模式
+                        delayMs = SendHttpRound(options);
+                    }
                     else
                     {
                         delayMs = SendOnce(options);
@@ -206,6 +211,221 @@ namespace DwsEdge.Platform
 
             return 200;
         }
+
+        #region B6：HTTP 推送模式
+
+        private System.Net.Http.HttpClient _http;
+        private string _httpConfigKey;
+
+        /// <summary>按需创建/复用 HttpClient（地址、超时、请求头变了就重建）。</summary>
+        private System.Net.Http.HttpClient EnsureHttpClient(DownstreamOptions options)
+        {
+            string key = options.url + "|" + options.httpTimeoutMs + "|" + options.contentType + "|"
+                + string.Join(",", (options.headers ?? new List<string>()).ToArray());
+            if (_http != null && string.Equals(_httpConfigKey, key, StringComparison.Ordinal))
+            {
+                return _http;
+            }
+
+            CloseHttpClient();
+            System.Net.Http.HttpClientHandler handler = new System.Net.Http.HttpClientHandler();
+            handler.AllowAutoRedirect = false;
+            handler.UseProxy = false;
+
+            System.Net.Http.HttpClient client = new System.Net.Http.HttpClient(handler);
+            client.Timeout = TimeSpan.FromMilliseconds(Math.Max(100, options.httpTimeoutMs));
+            _http = client;
+            _httpConfigKey = key;
+            return client;
+        }
+
+        private void CloseHttpClient()
+        {
+            try
+            {
+                if (_http != null)
+                {
+                    _http.Dispose();
+                }
+            }
+            catch (Exception)
+            {
+            }
+            _http = null;
+            _httpConfigKey = null;
+        }
+
+        /// <summary>
+        /// 跑一轮 HTTP 推送：每条包裹一个 POST，请求头带幂等键（值 = traceId）。
+        /// 2xx = 成功（ack sent）；其他状态码/超时/网络错误 = 失败（ack failed，记录状态码与响应片段，等下一轮重试）。
+        /// </summary>
+        private int SendHttpRound(DownstreamOptions options)
+        {
+            List<ParcelRecord> pending = _store.PendingDispatch(20);
+            if (pending.Count == 0)
+            {
+                return 500;
+            }
+
+            System.Net.Http.HttpClient client;
+            try
+            {
+                client = EnsureHttpClient(options);
+            }
+            catch (Exception ex)
+            {
+                _lastError = ex.Message;
+                return Math.Max(500, options.retryIntervalMs);
+            }
+
+            foreach (ParcelRecord record in pending)
+            {
+                if (record.complete != true && options.sendOnlyComplete)
+                {
+                    continue;
+                }
+                if (options.maxAttempts > 0 && record.dispatchAttempts >= options.maxAttempts)
+                {
+                    continue;
+                }
+
+                string payload = MessageTemplate.Render(options.template, record);
+                string time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                int status = 0;
+                string bodySnippet = null;
+                string error = null;
+
+                try
+                {
+                    System.Net.Http.HttpRequestMessage request =
+                        new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, options.url);
+
+                    // 幂等键：下游按它去重，所以重试不会产生重复业务
+                    request.Headers.TryAddWithoutValidation(options.idempotencyHeader, record.traceId ?? string.Empty);
+                    AddCustomHeaders(request, options);
+
+                    // 注意：StringContent 的第三个参数只能是 media type（"text/plain"），
+                    // 带上 "; charset=utf-8" 会直接抛 "The format of value ... is invalid"。
+                    // charset 由 StringContent 按 encoding 自动补上。
+                    string mediaType = options.contentType ?? "text/plain";
+                    int semicolon = mediaType.IndexOf(';');
+                    if (semicolon > 0)
+                    {
+                        mediaType = mediaType.Substring(0, semicolon).Trim();
+                    }
+                    if (mediaType.Length == 0)
+                    {
+                        mediaType = "text/plain";
+                    }
+
+                    request.Content = new System.Net.Http.StringContent(payload,
+                        DownstreamStore.ResolveEncoding(options.encoding), mediaType);
+
+                    System.Net.Http.HttpResponseMessage response = client.SendAsync(request).GetAwaiter().GetResult();
+                    status = (int)response.StatusCode;
+                    bodySnippet = ReadSnippet(response);
+
+                    if (!DownstreamStore.IsHttpSuccess(status))
+                    {
+                        error = "HTTP " + status + (string.IsNullOrEmpty(bodySnippet) ? "" : "：" + bodySnippet);
+                    }
+                    response.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    error = ex.InnerException != null ? ex.InnerException.Message : ex.Message;
+                }
+
+                if (error == null)
+                {
+                    _store.AckDispatch(record.traceId, true, null);
+                    _sent++;
+                    _bytesSent += DownstreamStore.ResolveEncoding(options.encoding).GetByteCount(payload);
+                    _lastSentAt = time;
+                    _lastError = null;
+                    AddLog(new DispatchLogItem
+                    {
+                        time = time,
+                        traceId = record.traceId,
+                        success = true,
+                        attempt = record.dispatchAttempts + 1,
+                        bytes = DownstreamStore.ResolveEncoding(options.encoding).GetByteCount(payload),
+                        payload = Trim(payload),
+                        message = "HTTP " + status + " 推送成功（幂等键 " + record.traceId + "）"
+                    });
+                    _logger.LogInformation("HTTP 推送成功：{0} → {1}（{2}）", record.traceId, options.url, status);
+                }
+                else
+                {
+                    _failed++;
+                    _retries++;
+                    _lastError = error;
+                    _store.AckDispatch(record.traceId, false, error);
+                    AddLog(new DispatchLogItem
+                    {
+                        time = time,
+                        traceId = record.traceId,
+                        success = false,
+                        attempt = record.dispatchAttempts + 1,
+                        bytes = DownstreamStore.ResolveEncoding(options.encoding).GetByteCount(payload),
+                        payload = Trim(payload),
+                        message = "HTTP 推送失败，等待重试",
+                        error = error
+                    });
+                    _logger.LogWarning("HTTP 推送失败：{0} → {1}；{2}", record.traceId, options.url, error);
+                    return Math.Max(500, options.retryIntervalMs);
+                }
+            }
+
+            return 200;
+        }
+
+        private static void AddCustomHeaders(System.Net.Http.HttpRequestMessage request, DownstreamOptions options)
+        {
+            if (options.headers == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < options.headers.Count; i++)
+            {
+                string line = options.headers[i];
+                if (string.IsNullOrEmpty(line))
+                {
+                    continue;
+                }
+                int colon = line.IndexOf(':');
+                if (colon <= 0)
+                {
+                    continue;
+                }
+                string name = line.Substring(0, colon).Trim();
+                string value = line.Substring(colon + 1).Trim();
+                request.Headers.TryAddWithoutValidation(name, value);
+            }
+        }
+
+        private static string ReadSnippet(System.Net.Http.HttpResponseMessage response)
+        {
+            try
+            {
+                string text = response.Content == null
+                    ? null
+                    : response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                if (string.IsNullOrEmpty(text))
+                {
+                    return null;
+                }
+                text = text.Replace("\r", " ").Replace("\n", " ");
+                return text.Length <= 120 ? text : text.Substring(0, 120) + "…";
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        #endregion
 
         #region B5：TCP 服务端模式
 
@@ -675,6 +895,7 @@ namespace DwsEdge.Platform
             // 地址/编码/模式变了：断开客户端与监听，下次循环按新配置重建
             CloseConnection();
             CloseAllClients();
+            CloseHttpClient();
         }
 
         private bool IsPortInUseBySelf(DownstreamOptions options)
@@ -731,6 +952,9 @@ namespace DwsEdge.Platform
 
             // B5：服务端模式的监听状态与客户端列表
             stats.serverMode = DownstreamOptions.IsServerMode(options);
+            stats.httpMode = DownstreamOptions.IsHttpMode(options);
+            stats.httpTarget = DownstreamOptions.IsHttpMode(options) ? options.url : null;
+            stats.idempotencyHeader = options.idempotencyHeader;
             stats.listening = _listener != null;
             stats.listenTarget = _listenTarget;
             List<object> clients = new List<object>();
@@ -817,6 +1041,7 @@ namespace DwsEdge.Platform
         {
             CloseConnection();
             CloseAllClients();
+            CloseHttpClient();
             base.Dispose();
         }
     }

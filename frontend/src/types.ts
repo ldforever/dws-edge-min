@@ -383,6 +383,16 @@ export interface DownstreamOptions {
   sendIntervalMs: number;
   /** B5 服务端模式：新客户端接入时补发最近 N 条（0 = 不补发） */
   replayRecentCount: number;
+
+  // ---- B6 HTTP 推送 ----
+  /** 下游接收地址，如 http://192.168.1.50:8080/dws */
+  url: string;
+  httpTimeoutMs: number;
+  contentType: string;
+  /** 幂等键用的请求头名，值为包裹 traceId */
+  idempotencyHeader: string;
+  /** 额外请求头，格式 "名称: 值" */
+  headers: string[];
 }
 
 export interface DownstreamStats {
@@ -404,6 +414,11 @@ export interface DownstreamStats {
   listenTarget?: string | null;
   clientCount: number;
   clients: DownstreamClient[];
+
+  /** B6 HTTP 模式 */
+  httpMode: boolean;
+  httpTarget?: string | null;
+  idempotencyHeader?: string | null;
 }
 
 /** B5：已接入的下游客户端 */

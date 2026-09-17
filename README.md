@@ -478,6 +478,7 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 | `POST /api/downstream/preview` | **B4** 用最近一条包裹渲染模板，返回实际报文 |
 | `GET /api/downstream/log?limit=` | **B4** 最近下发记录（成功/失败/字节数/错误） |
 | `POST /api/downstream`（protocol=tcp-server） | **B5** 平台作为 TCP 服务端监听并广播；状态里带 `listening`/`listenTarget`/`clientCount`/`clients` |
+| `POST /api/downstream`（protocol=http） | **B6** HTTP 推送：带 `Idempotency-Key`（值=traceId），非 2xx 自动重试 |
 | `GET /api/devices` | 设备信息页数据：相机清单（方位/清单标识/型号/序列号/在线/未发现）+ 汇总 + 六面聚合（A9） |
 | `GET /api/camera-positions` | 相机方位映射的当前内容（A9） |
 | `POST /api/camera-positions` | 保存方位映射（写 `config\camera-positions.ini`，自动备份） |
@@ -778,7 +779,54 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b5-tcp-server.ps1
 采集继续正常入库、客户端重连后恢复接收、**没有客户端时包裹留在队列且客户端接入后自动补发**，
 共 20 项断言。
 
-## 十一、两个进程的边界
+## 十一、HTTP 推送输出（B6）
+
+除了 TCP，还能把包裹数据用 **HTTP POST** 推给下游。同一份 `downstream.json`，`protocol` 换成 `http`：
+
+```json
+{
+  "enabled": true,
+  "protocol": "http",
+  "url": "http://192.168.1.50:8080/dws/parcel",
+  "template": "{\"code\":\"{code}\",\"time\":\"{time}\",\"weight\":{weight},\"traceId\":\"{traceId}\"}",
+  "contentType": "application/json",
+  "idempotencyHeader": "Idempotency-Key",
+  "headers": ["Authorization: Bearer xxxx"],
+  "httpTimeoutMs": 5000,
+  "retryIntervalMs": 5000,
+  "sendOnlyComplete": true
+}
+```
+
+**幂等键**：每个请求都会带上 `Idempotency-Key: <traceId>`（头名可配）。重试时会用**同一个键**，
+所以下游只要按这个键去重，重复请求就不会产生重复业务 —— 这正是验收里"重复请求不产生重复业务"的做法。
+
+**失败重试**：只有 **2xx** 算成功；其他状态码（含 4xx/5xx）、超时、连不上，都会记成 `failed`
+并把状态码与响应片段记下来，然后按 `retryIntervalMs` 一直重试（`maxAttempts=0` 表示不限次数）。
+队列在历史库里，所以平台重启、下游长时间不可用都不会丢包。
+
+**实测**（脚本自己起 HTTP 接收端，并对指定订单注入 2 次 500）：
+
+| 场景 | 结果 |
+|---|---|
+| 推送 3 个包裹 | 接收端收到 3 条，请求体符合模板，每个请求都带 `Idempotency-Key=<traceId>` |
+| **注入 500（B6-2 前 2 次）** | 接收端先记 2 条 FAIL、再记 1 条 OK → **自动重试并最终成功** |
+| 同一包裹的重试 | 三次请求带的是**同一个幂等键** `B6-2`（下游可按它去重） |
+| 接收端不可用时发 2 个包裹 | 留在待发队列（不丢），`lastError` 里有原因 |
+| 接收端恢复 | 自动补发，最终 5 个追踪号各自成功一次，队列清空 |
+
+界面（配置页 →「下游输出」）模式里多了一个 **HTTP 推送**：填接口地址、超时、幂等键头名、
+额外请求头（如 Authorization），模板照旧；状态行会显示 HTTP 目标与幂等键头名。
+
+回归测试：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\test-b6-http.ps1
+```
+
+共 22 项断言。
+
+## 十二、两个进程的边界
 
 | | 采集宿主（Edge） | 业务平台（Platform） |
 |---|---|---|
@@ -791,7 +839,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b5-tcp-server.ps1
 通信：V1 用文件 spool（`SpoolTailer` 增量读取，只处理完整行）；V2 换成 gRPC/命名管道时只需替换 `SpoolTailer`，
 `SpoolStore` 与平台 API 不动。
 
-## 十二、代码导读
+## 十三、代码导读
 
 **采集侧（net48）**
 
@@ -824,7 +872,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b5-tcp-server.ps1
 - `frontend/src/realtime.ts` / `devices.ts` / `config.ts`：三个页签各自的渲染逻辑。
 - `frontend/src/sse.ts` / `dom.ts`：实时推送封装与 DOM 小工具。
 
-## 十三、常见问题
+## 十四、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -846,7 +894,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b5-tcp-server.ps1
 | 配置页红字"找不到 apply-config.ps1" | 跑一次 `build.ps1`（会把 `tools\*.ps1` 拷到 `runtime\tools`），或手工把 tools 目录放到 runtime 旁边 |
 | 相机显示"未发现" | cfg 里 `enable="1"` 但 SDK 没报；查上电、网线、网段，或该相机被别的软件占用 |
 
-## 十四、下一步（V1 完整版）
+## 十五、下一步（V1 完整版）
 
 采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做），平台侧包裹合并 / 历史库 / 存图访问 /
 统计与实时推送 / 设备信息 / 一键应用配置也都打通了。接着按 V1 需求清单排：
