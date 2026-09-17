@@ -97,6 +97,7 @@ namespace DwsEdge.Platform
                     record.capturedAtMs = evt.capturedAtMs;
                     record.time = FormatTime(evt.capturedAtMs > 0 ? evt.capturedAtMs : evt.receivedAtMs);
                     record.codes = new List<string>();
+                    record.codeDetails = new List<CodeDetail>();
                     record.weightGrams = -1;
                     _byTrace[key] = record;
                     _order.AddLast(key);
@@ -115,11 +116,33 @@ namespace DwsEdge.Platform
                 {
                     for (int i = 0; i < evt.codes.Count; i++)
                     {
-                        string value = evt.codes[i] == null ? null : evt.codes[i].value;
-                        if (!string.IsNullOrEmpty(value) && !record.codes.Contains(value))
+                        SpoolCode code = evt.codes[i];
+                        if (code == null || string.IsNullOrEmpty(code.value))
                         {
-                            record.codes.Add(value);
+                            continue;
                         }
+
+                        CodeDetail existing = FindCodeDetail(record, code.value);
+                        if (existing != null)
+                        {
+                            // 同一个码再次上报：把之前缺失的方位/类型补上
+                            if (string.IsNullOrEmpty(existing.position) && !string.IsNullOrEmpty(code.position))
+                            {
+                                existing.position = code.position;
+                            }
+                            if (string.IsNullOrEmpty(existing.kind) && !string.IsNullOrEmpty(code.kind))
+                            {
+                                existing.kind = code.kind;
+                            }
+                            continue;
+                        }
+
+                        record.codes.Add(code.value);
+                        CodeDetail detail = new CodeDetail();
+                        detail.value = code.value;
+                        detail.kind = code.kind;
+                        detail.position = code.position;
+                        record.codeDetails.Add(detail);
                     }
                 }
 
@@ -249,6 +272,24 @@ namespace DwsEdge.Platform
                 camera.codeCount++;
                 camera.lastCodeTime = time;
             }
+        }
+
+        /// <summary>按条码值查找已记录的完整条码信息。</summary>
+        private static CodeDetail FindCodeDetail(ParcelRecord record, string value)
+        {
+            if (record == null || record.codeDetails == null || string.IsNullOrEmpty(value))
+            {
+                return null;
+            }
+            for (int i = 0; i < record.codeDetails.Count; i++)
+            {
+                CodeDetail detail = record.codeDetails[i];
+                if (detail != null && string.Equals(detail.value, value, StringComparison.Ordinal))
+                {
+                    return detail;
+                }
+            }
+            return null;
         }
 
         internal void CountParseError()

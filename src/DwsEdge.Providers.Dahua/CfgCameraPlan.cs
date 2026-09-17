@@ -127,9 +127,9 @@ namespace DwsEdge.Providers.Dahua
             {
                 problems.Add("ImageAcq 的 num 缺失或不是数字（当前值：" + Num + "）");
             }
-            else if (num < 1 || num > 20)
+            else if (num < 1)
             {
-                problems.Add("num=" + num + " 超出范围（SDK 支持 1-20 台）");
+                problems.Add("num=" + num + " 无效：至少要有 1 台相机");
             }
 
             if (Mode == "2")
@@ -170,6 +170,13 @@ namespace DwsEdge.Providers.Dahua
         public List<string> Warnings()
         {
             List<string> warnings = new List<string>();
+
+            // 不写死相机数量：这里只按 SDK 文档给提醒，不阻断启动
+            if (NumValue > 20)
+            {
+                warnings.Add("num=" + NumValue + " 超过 SDK 文档标注的上限 20 台，请确认当前 SDK 版本确实支持这么多相机");
+            }
+
             if (Mode == "1" && RandWorkMode == "0" && NumValue > 0)
             {
                 warnings.Add("mode=1 且 randWorkMode=0 时，现场实际发现的相机数量必须等于 num=" + NumValue

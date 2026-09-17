@@ -58,19 +58,38 @@ if ($entries.Count -eq 0 -and $Mode -ne 'keep') {
     throw "没有提供相机清单。请用 -CameraList <文件> 或 -Cameras @('ip=x',...)"
 }
 
-# 校验条目格式，并拆成 key/value（写回 cfg 时值要带引号）
+# 校验条目格式，并拆成 key/value/pos（写回 cfg 时值要带引号）
+$knownPositions = @('top', 'bottom', 'left', 'right', 'front', 'rear', 'line', 'spare')
+$invalidPositions = New-Object System.Collections.Generic.List[string]
+
 $valid = New-Object System.Collections.Generic.List[object]
 foreach ($entry in $entries) {
-    $parts = $entry -split '=', 2
+    # 支持 "ip=172.20.10.11,pos=top" 这种写法（pos 可选）
+    $pos = ''
+    $main = $entry
+    $comma = $entry.LastIndexOf(',')
+    if ($comma -gt 0) {
+        $tail = $entry.Substring($comma + 1).Trim()
+        if ($tail -match '(?i)^pos\s*=\s*(.+)$') {
+            $pos = $Matches[1].Trim().Trim('"')
+            $main = $entry.Substring(0, $comma).Trim()
+        }
+    }
+
+    $parts = $main -split '=', 2
     $key = $parts[0].Trim().ToLowerInvariant()
     if ($key -ne 'ip' -and $key -ne 'key' -and $key -ne 'id') {
-        throw "相机条目格式错误：'$entry'，应为 ip=... / key=... / id=..."
+        throw "相机条目格式错误：'$entry'，应为 ip=... / key=... / id=...，可选在逗号后加 pos=top"
     }
     $value = if ($parts.Count -gt 1) { $parts[1].Trim().Trim('"') } else { '' }
     if ($value.Length -eq 0) {
         throw "相机条目的值不能为空：'$entry'"
     }
-    $valid.Add([pscustomobject]@{ Key = $key; Value = $value })
+    if ($pos.Length -gt 0 -and ($knownPositions -notcontains $pos.ToLowerInvariant())) {
+        $invalidPositions.Add($entry)
+    }
+
+    $valid.Add([pscustomobject]@{ Key = $key; Value = $value; Pos = $pos })
 }
 
 $duplicates = $valid | Group-Object { $_.Key + '=' + $_.Value } | Where-Object { $_.Count -gt 1 }
@@ -133,12 +152,19 @@ $newText = $newText.Substring(0, $blockStart) + $blockBuilder.ToString() + $newT
 # ---------- 输出 ----------
 Write-Host ""
 Write-Host ("相机清单（共 {0} 台，模式 mode={1}）" -f $valid.Count, $modeValue) -ForegroundColor Cyan
-foreach ($entry in $valid) { Write-Host ('  <Camera {0}="{1}" enable="1" />' -f $entry.Key, $entry.Value) }
+foreach ($entry in $valid) {
+    $suffix = if ($entry.Pos) { '   pos=' + $entry.Pos } else { '' }
+    Write-Host ('  <Camera {0}="{1}" enable="1" />{2}' -f $entry.Key, $entry.Value, $suffix)
+}
+
+$posEntries = @($valid | Where-Object { $_.Pos -and $_.Pos.Length -gt 0 })
+$posPath = Join-Path $RuntimeDir 'config\camera-positions.ini'
 
 if ($Preview) {
     Write-Host ""
     Write-Host "预览模式：未写入文件。修改后 ImageAcq 为：" -ForegroundColor Yellow
     Write-Host "  $newImageAcq"
+    Write-Host ("将写入方位映射 {0} 条：{1}" -f $posEntries.Count, $posPath) -ForegroundColor Yellow
     return
 }
 
@@ -150,4 +176,26 @@ Write-Host ""
 Write-Host "已写入：$CfgPath" -ForegroundColor Green
 Write-Host "备份：$backup"
 Write-Host ("ImageAcq 已更新为：{0}" -f $newImageAcq)
+
+# 方位映射：相机回调不带方位时，采集宿主用它兜底
+if ($posEntries.Count -gt 0) {
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add('# 相机方位映射（由 tools\make-camera-cfg.ps1 生成）')
+    $lines.Add('# key = 相机 ip / 序列号 / 完整 id；value = 方位（top/bottom/left/right/front/rear）')
+    foreach ($entry in $posEntries) {
+        $lines.Add($entry.Value + '=' + $entry.Pos)
+    }
+    $posDir = Split-Path -Parent $posPath
+    if (!(Test-Path $posDir)) { New-Item -ItemType Directory -Force -Path $posDir | Out-Null }
+    [System.IO.File]::WriteAllLines($posPath, $lines, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host ("已写入方位映射 {0} 条：{1}" -f $posEntries.Count, $posPath) -ForegroundColor Green
+}
+else {
+    Write-Host "清单里没有 pos=，未生成方位映射文件（条码方位将取决于相机回调是否自带 Position）" -ForegroundColor Yellow
+}
+
+if ($invalidPositions.Count -gt 0) {
+    Write-Host ("注意：以下方位不在常用取值(top/bottom/left/right/front/rear/line/spare)内，请确认：" + ($invalidPositions -join '; ')) -ForegroundColor Yellow
+}
+
 Write-Host "下一步：重启采集宿主（DwsEdge.Host）让配置生效；启动时会自动做一次相机配置自检。"

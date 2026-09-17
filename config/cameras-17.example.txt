@@ -1,28 +1,47 @@
 ﻿# 相机清单示例：17 台六面扫
-# 每行一台相机，支持三种写法（与 cfg 里 <Camera> 的属性一致）：
-#   ip=172.20.10.11                  GigE 网口相机用 IP
-#   key=2F0444FPAK00012              USB3 相机用 Key（序列号）
-#   id=Dahua Technology:2F0444FPAK00012   厂商:序列号（全 key）
+#
+# 每行一台相机，支持三种写法（对应 cfg 里 <Camera> 的属性），可选在逗号后加方位 pos=：
+#   ip=172.20.10.11,pos=top                          GigE 网口相机用 IP
+#   key=2F0444FPAK00012,pos=left                      USB3 相机用 Key（序列号）
+#   id=Dahua Technology:2F0444FPAK00012,pos=rear      厂商:序列号（全 key）
+#
+#   pos 取值：top / bottom / left / right / front / rear（线扫用 line，备用用 spare）
+#   pos 会写进 runtime\config\camera-positions.ini，相机回调不带方位时由它兜底。
+#
 # 以 # 开头的行会被忽略；空行也会被忽略。
 #
 # 生成命令：
 #   powershell -ExecutionPolicy Bypass -File .\tools\make-camera-cfg.ps1 -CameraList .\config\cameras-17.example.txt
 #
 # 下面按 顶 / 底 / 左 / 右 / 前 / 后 六面 + 备用，共 17 台（请按现场实际 IP 修改）：
-ip=172.20.10.11
-ip=172.20.10.12
-ip=172.20.10.13
-ip=172.20.10.14
-ip=172.20.10.15
-ip=172.20.10.16
-ip=172.20.10.17
-ip=172.20.10.18
-ip=172.20.10.19
-ip=172.20.10.20
-ip=172.20.10.21
-ip=172.20.10.22
-ip=172.20.10.23
-ip=172.20.10.24
-ip=172.20.10.25
-ip=172.20.10.26
-ip=172.20.10.27
+
+# 顶扫 3 台
+ip=172.20.10.11,pos=top
+ip=172.20.10.12,pos=top
+ip=172.20.10.13,pos=top
+
+# 底扫 2 台
+ip=172.20.10.14,pos=bottom
+ip=172.20.10.15,pos=bottom
+
+# 左侧 3 台
+ip=172.20.10.16,pos=left
+ip=172.20.10.17,pos=left
+ip=172.20.10.18,pos=left
+
+# 右侧 3 台
+ip=172.20.10.19,pos=right
+ip=172.20.10.20,pos=right
+ip=172.20.10.21,pos=right
+
+# 前 2 台
+ip=172.20.10.22,pos=front
+ip=172.20.10.23,pos=front
+
+# 后 2 台
+ip=172.20.10.24,pos=rear
+ip=172.20.10.25,pos=rear
+
+# 备用 2 台
+ip=172.20.10.26,pos=spare
+ip=172.20.10.27,pos=spare

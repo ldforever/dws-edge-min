@@ -26,6 +26,7 @@ namespace DwsEdge.Providers.Dahua
         private const string NoRead = "noread";
 
         private readonly IEventSink _sink;
+        private readonly ProviderSettings _settings;
         private readonly string _cfgPath;
         private readonly string _imageRoot;
         private readonly bool _saveOriginal;
@@ -43,6 +44,7 @@ namespace DwsEdge.Providers.Dahua
         private long _eventSeq;
 
         private readonly CameraRuntimeTracker _cameraTracker = new CameraRuntimeTracker();
+        private CameraPositionMap _cameraPositions;
 
         private bool _cameraDisconnectCbAttached;
         private bool _allCameraCbAttached;
@@ -94,6 +96,7 @@ namespace DwsEdge.Providers.Dahua
             }
 
             _sink = sink;
+            _settings = settings;
             _cfgPath = settings.ResolvePath(settings.Get("cfgPath", @"Cfg\LogisticsBase.cfg"));
             _imageRoot = settings.ResolvePath(settings.Get("imageDir", "images"));
             _saveOriginal = settings.GetBool("saveOriginal", true);
@@ -145,6 +148,9 @@ namespace DwsEdge.Providers.Dahua
 
             // 启动前自检相机声明（num 与 enable 数量、重复声明等），避免等到 SDK 报 3000
             ValidateCameraPlan();
+
+            // 相机方位映射（回调不带方位时用它兜底）
+            LoadCameraPositions();
 
             _queue = new BlockingCollection<WorkItem>(_queueCapacity);
             _running = true;
@@ -267,6 +273,7 @@ namespace DwsEdge.Providers.Dahua
                 evt.ReceivedAtMs = NowMs();
 
                 FillCodes(evt, e);
+                ApplyPositionFallback(evt.Codes, e.CameraID);
                 FillWeightAndVolume(evt, e);
                 evt.TraceId = BuildTraceId(evt);
 
@@ -342,6 +349,8 @@ namespace DwsEdge.Providers.Dahua
 
                     WorkItem item = new WorkItem();
                     item.CameraRead = read;
+
+                    ApplyPositionFallback(read.Codes, info.Key);
 
                     if (_savePerCamera)
                     {
@@ -672,7 +681,7 @@ namespace DwsEdge.Providers.Dahua
 
         /// <summary>
         /// 启动前自检 cfg 里的相机声明：
-        ///   mode=2 时 num 必须等于 enable="1" 的数量；num 必须在 1-20；不能有重复/空声明。
+        ///   mode=2 时 num 必须等于 enable="1" 的数量；num 至少为 1（超过 20 只提醒、不拦截）；不能有重复/空声明。
         /// 不通过就直接抛错，并把问题一次列清楚，省得现场等 SDK 报 3000。
         /// </summary>
         private void ValidateCameraPlan()
@@ -709,6 +718,63 @@ namespace DwsEdge.Providers.Dahua
             }
             sb.Append("。可用 tools\\make-camera-cfg.ps1 重新生成相机清单。");
             throw new ProviderException(sb.ToString());
+        }
+
+        /// <summary>
+        /// 加载"相机 → 方位"映射文件（默认 runtime\config\camera-positions.ini）。
+        /// 大华回调里的 CodesInfo.Position 常常为空，这张表用来兜底。
+        /// </summary>
+        private void LoadCameraPositions()
+        {
+            string path = _settings.ResolvePath(_settings.Get("cameraPositionsFile", @"config\camera-positions.ini"));
+            _cameraPositions = CameraPositionMap.Load(path);
+
+            if (_cameraPositions.Count > 0)
+            {
+                _sink.Log(LogLevel.Info, "已加载相机方位映射 " + _cameraPositions.Count + " 条：" + path);
+            }
+            else
+            {
+                _sink.Log(LogLevel.Info, "未配置相机方位映射（" + path
+                    + "）；若相机回调不带方位，条码方位会为空。可用 tools\\make-camera-cfg.ps1 的 pos= 生成");
+            }
+        }
+
+        /// <summary>回调没给方位时，用相机清单里的方位映射补上。</summary>
+        private void ApplyPositionFallback(List<CodeItem> codes, string cameraId)
+        {
+            if (_cameraPositions == null || codes == null || codes.Count == 0)
+            {
+                return;
+            }
+
+            bool needsFallback = false;
+            for (int i = 0; i < codes.Count; i++)
+            {
+                if (string.IsNullOrEmpty(codes[i].Position))
+                {
+                    needsFallback = true;
+                    break;
+                }
+            }
+            if (!needsFallback)
+            {
+                return;
+            }
+
+            string position = _cameraPositions.Resolve(cameraId);
+            if (string.IsNullOrEmpty(position))
+            {
+                return;
+            }
+
+            for (int i = 0; i < codes.Count; i++)
+            {
+                if (string.IsNullOrEmpty(codes[i].Position))
+                {
+                    codes[i].Position = position;
+                }
+            }
         }
 
         /// <summary>

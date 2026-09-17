@@ -84,13 +84,18 @@ powershell -ExecutionPolicy Bypass -File .\tools\set-trigger-mode.ps1 -Mode soft
 powershell -ExecutionPolicy Bypass -File .\run.ps1 -TriggerOnce -Duration 8
 ```
 
-### 接 17 台相机（六面扫）
+### 接多台相机（相机数量不写死）
+
+> 相机数量由你清单里的行数决定，软件里没有写死：单面 / 双面 / 三面 / 五面 / 六面扫都适用，
+> 常见配置有 6 台、12 台、17 台。`num` 会自动等于清单行数（大华 SDK 文档标注上限 20 台，
+> 超过只会给提醒，不会拦截启动）。
 
 相机清单由 `runtime\Cfg\LogisticsBase.cfg` 的 `<Camera .../>` 声明决定，不要手改，用工具生成：
 
 ```powershell
 # 1) 照着 config\cameras-17.example.txt 改成现场实际的 17 个 IP / Key / Id
 #    每行一台：ip=172.20.10.11 或 key=序列号 或 id=厂商:序列号
+#    可选加方位：ip=172.20.10.11,pos=top（top/bottom/left/right/front/rear）
 
 # 2) 生成配置（自动备份 cfg，mode 自动改成 2，num 自动等于台数）
 powershell -ExecutionPolicy Bypass -File .\tools\make-camera-cfg.ps1 -CameraList .\config\cameras-17.example.txt
@@ -111,6 +116,10 @@ powershell -ExecutionPolicy Bypass -File .\run.ps1 -Duration 10
 
 **启动快照**：采集宿主启动成功后会为每台相机写一条 `camera-status` 快照事件（`isSnapshot=true`，带型号/序列号/厂商/固件），
 业务平台的"相机状态"区立刻就有数据，不用等第一次掉线。
+
+**条码方位兜底**：大华回调里的 `CodesInfo.Position` 常常为空。清单里写了 `pos=` 时，生成工具会额外写出
+`runtime\config\camera-positions.ini`（相机 IP / 序列号 / 完整 id → 方位），采集宿主启动时加载它，
+回调没给方位就自动补上。所以只要清单里标了方位，条码的方位字段就是可靠的。
 
 ### 相机掉线 / 重连统计（A2）
 
@@ -157,7 +166,7 @@ powershell -ExecutionPolicy Bypass -File .\run.ps1 -Duration 10
 |---|---|
 | `GET /api/health` | 健康检查（含图片根目录） |
 | `GET /api/stats` | 事件数、包裹数、无码数、读码率、相机在线数、解析失败数 |
-| `GET /api/parcels?limit=50` | 最新包裹（两次回调已合并成一条） |
+| `GET /api/parcels?limit=50` | 最新包裹（两次回调已合并成一条）；`codes` 是条码值数组，`codeDetails` 带每个码的类型（1d/2d）与方位 |
 | `GET /api/cameras` | 相机在线状态 |
 | `GET /api/images?path=<绝对路径>` | 按需读取图片（只允许图片根目录内的文件，越权返回 400） |
 | `GET /api/stream` | SSE 实时推送（包裹与统计） |

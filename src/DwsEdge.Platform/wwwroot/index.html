@@ -28,6 +28,7 @@
   tr.new { animation: flash 1.2s ease-out; }
   @keyframes flash { from { background: #1f3a2a; } to { background: transparent; } }
   .code { color: #58a6ff; }
+  .tag { color: #8b98a9; font-size: 11px; }
   .noread { color: #f0883e; }
   .muted { color: #6e7681; }
   tr.offline { background: #2a1a17; }
@@ -143,9 +144,24 @@ function addRow(p, flash) {
   time.textContent = p.time || '';
 
   const code = document.createElement('td');
-  if (p.codes && p.codes.length) {
+  const details = (p.codeDetails && p.codeDetails.length)
+    ? p.codeDetails
+    : (p.codes || []).map(function (v) { return { value: v }; });
+  if (details.length) {
     code.className = 'code';
-    code.textContent = p.codes.join(' , ');
+    details.forEach(function (d, i) {
+      if (i > 0) code.appendChild(document.createTextNode(' , '));
+      code.appendChild(document.createTextNode(d.value));
+      const tags = [];
+      if (d.position) tags.push(d.position);
+      if (d.kind && d.kind !== 'unknown') tags.push(String(d.kind).toUpperCase());
+      if (tags.length) {
+        const span = document.createElement('span');
+        span.className = 'tag';
+        span.textContent = ' (' + tags.join('/') + ')';
+        code.appendChild(span);
+      }
+    });
   } else {
     code.className = 'noread';
     code.textContent = 'NOREAD';

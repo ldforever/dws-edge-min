@@ -53,6 +53,15 @@ namespace DwsEdge.Platform
     }
 
     /// <summary>平台对外输出的包裹记录：一个包裹一条，两次回调已合并。</summary>
+    public sealed class CodeDetail
+    {
+        public string value { get; set; }
+        /// <summary>1d / 2d / unknown。</summary>
+        public string kind { get; set; }
+        /// <summary>方位（top/bottom/left/right/front/rear 或厂商给的值）。</summary>
+        public string position { get; set; }
+    }
+
     public sealed class ParcelRecord
     {
         public string traceId { get; set; }
@@ -60,7 +69,10 @@ namespace DwsEdge.Platform
         public string stage { get; set; }
         public long capturedAtMs { get; set; }
         public string time { get; set; }
+        /// <summary>条码值列表（兼容旧的接口消费方）。</summary>
         public List<string> codes { get; set; }
+        /// <summary>完整条码信息：值 + 类型 + 方位。</summary>
+        public List<CodeDetail> codeDetails { get; set; }
         public int codeCount { get; set; }
         public int weightGrams { get; set; }
         public double volumeMm3 { get; set; }
