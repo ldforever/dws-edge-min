@@ -31,6 +31,7 @@ dws-edge-min/
 ├─ tools/set-trigger-mode.ps1    切换大华 cfg 的触发模式（软/硬/狂扫）
 ├─ tools/make-camera-cfg.ps1     生成相机清单（cfg + 方位映射，支持任意台数）
 ├─ tools/check-traceids.ps1      扫描 spool，检查追踪号合并与疑似冲突
+├─ tools/apply-config.ps1        一键应用配置：写配置 → 重启 SDK 校验 → 失败自动回滚
 ├─ config/gateway.ini            采集宿主配置（选 provider + provider 参数）
 ├─ src/
 │  ├─ DwsEdge.Core/              契约与模型（net48 + net10.0 双目标，两边共用）
@@ -122,6 +123,65 @@ powershell -ExecutionPolicy Bypass -File .\run.ps1 -Duration 10
 **条码方位兜底**：大华回调里的 `CodesInfo.Position` 常常为空。清单里写了 `pos=` 时，生成工具会额外写出
 `runtime\config\camera-positions.ini`（相机 IP / 序列号 / 完整 id → 方位），采集宿主启动时加载它，
 回调没给方位就自动补上。所以只要清单里标了方位，条码的方位字段就是可靠的。
+
+### 一键应用配置：写配置 → 重启校验 → 失败自动回滚（A8-1 / A8-2）
+
+现场改配置最怕两件事：**改完没生效**、**改错了软件起不来又没人会改回去**。
+`tools\apply-config.ps1` 把「写配置 + 重启 SDK 校验 + 失败回滚」做成了一条命令：
+
+```powershell
+# 只改触发模式（soft=软触发 / hard=光电硬触发 / free=自由拉流）
+powershell -ExecutionPolicy Bypass -File .\tools\apply-config.ps1 -TriggerMode hard
+
+# 只改相机清单（清单文件写法见上一节）
+powershell -ExecutionPolicy Bypass -File .\tools\apply-config.ps1 -CameraList .\config\cameras-17.example.txt
+
+# 两个一起改（现场最常用）
+powershell -ExecutionPolicy Bypass -File .\tools\apply-config.ps1 -TriggerMode hard -CameraList .\config\cameras-17.example.txt
+
+# 采集宿主正在跑：让它自动停掉再校验（-RestartHost 还会在通过后重新拉起来）
+powershell -ExecutionPolicy Bypass -File .\tools\apply-config.ps1 -TriggerMode soft -StopHost -RestartHost
+
+# 只写配置、不校验（离线改文件时用）
+... -SkipVerify
+```
+
+**它做了什么**
+
+1. 把当前 cfg 复制成回滚点 `LogisticsBase.cfg.rollback-<时间戳>`（改坏了一键回到这里）；
+2. 调 `set-trigger-mode.ps1` / `make-camera-cfg.ps1` 实际改写 cfg（这两个各自也会写 `.bak-<时间戳>`）；
+3. 打印**改前 → 改后**摘要（`mode` / `num` / `enable 相机` / `triggerMode`），一眼看出参数有没有真的变；
+4. 启动 `DwsEdge.Host.exe --verify-config`：宿主按新配置**真的启动一次 SDK**，再把配置回读一遍，
+   大华 provider 还会用 `GetWorkCameraCount()` 核对「SDK 实际工作的相机数 ≥ cfg 里的 num」；
+5. 校验不过 → 自动把回滚点写回，**再校验一次**确认回滚后能不能正常起来。
+
+**退出码**（供脚本/界面调用）
+
+| 退出码 | 含义 | 配置状态 |
+|---|---|---|
+| `0` | 校验通过，配置已生效 | 新配置已写入 |
+| `2` | 新配置校验失败，**已自动回滚**到应用前，回滚后校验通过 | 等于没改过 |
+| `3` | 新配置校验失败，回滚后**仍然起不来**（设备/狗/原生 DLL 的问题，不是配置的问题） | 已回滚，需人工检查 |
+| `1` | 应用这一步就失败（清单格式错、cfg 结构不认识、宿主在跑没加 `-StopHost`） | 已回滚 |
+
+**实测记录**（本机 `provider=simulator`，2026-09-17）：
+
+| 场景 | 结果 |
+|---|---|
+| `-TriggerMode soft`（1→2） | `[verify] PASS`，退出码 0，摘要 `triggerMode : 1 → 2` |
+| 再次 `-TriggerMode soft` | 提示"当前已经是 soft，无需修改"，仍校验 PASS（幂等，不会写坏文件） |
+| 相机清单 1 台改 6 台 + 软触发 | `num : 1 → 6`、`enable 相机 : 1 → 6`、方位映射 6 条，`[verify] PASS`，退出码 0 |
+| 注入"相机拒绝软触发"后 `-TriggerMode soft` | 校验 `[verify] FAIL` → **自动回滚** → 回滚后 `[verify] PASS`，退出码 2，cfg 回到 `triggerMode=1` |
+| 清单故意写错（`switch=...`） | 应用失败即回滚，退出码 1，cfg 内容未变 |
+| 宿主在跑、没加 `-StopHost` | 直接拒绝并给出 PID，退出码 1 |
+| 宿主在跑、加 `-StopHost -RestartHost` | 自动停掉 → 校验 PASS → 自动重启宿主，退出码 0 |
+| 真机 provider 起不来（本机无相机/原生库） | `[verify] FAIL` → 回滚 → 回滚后仍失败 → 退出码 3，cfg 恢复到改前值 |
+
+校验用的注入开关在 `config\gateway.ini` 的 `[simulator]` 段：`rejectTriggerMode=soft|hard|free`（留空=不注入），
+只是用来验证"失败自动回滚"这条链路，真机不需要它。
+
+> 现场注意：校验会**真的启动一次 SDK**，所以校验期间不能有第二个宿主进程在跑（脚本会检测并拦下来），
+> 大华 SDK 也需要加密狗在位——没有狗时校验会失败，回滚仍是安全的，但退出码会是 3。
 
 ### 相机掉线 / 重连统计（A2）
 
@@ -328,13 +388,18 @@ spool\.consumed               平台写出的"已消费到哪一天"标记（供
 | 采集宿主返回 2200 | 没插加密狗 |
 | 软触发没反应 | `triggerMode` 不是 2；用 `tools\set-trigger-mode.ps1 -Mode soft` 改好并重启采集宿主 |
 | 平台没有数据 | 确认 Edge 已产生 `runtime\spool\events-*.jsonl`；平台 `appsettings.json` 的 `Spool:Directory` 默认是 `../spool` |
+| `apply-config.ps1` 报"检测到采集宿主正在运行" | 校验要独占 SDK（再起一个实例会和正在跑的抢相机）；加 `-StopHost` 让脚本先停掉，或自己先停 |
+| `apply-config.ps1` 退出码 3 | 回滚后仍起不来 → 大概率是设备侧问题（加密狗/相机网段/原生 DLL），不是配置问题 |
+| 编译后 `runtime\config\gateway.ini` 没变 | 正常：现场配置不会被编译覆盖（要强制覆盖加 `-ForceConfig`），避免把现场 provider 冲掉 |
 
 ## 八、下一步（V1 完整版）
 
-平台骨架已通，接着按 V1 需求清单补齐：
+采集侧 A1-A8 已落地（A5 里的"面单抠图"按你的要求不做），平台侧包裹合并 / 历史库 / 存图访问 /
+统计与实时推送也已打通。接着按 V1 需求清单排：
 
-1. SQLite 持久化（替换内存态，历史可查）；
-2. 条码过滤规则（长度、前后缀、正则）；
-3. 下游对接（TCP 客户端/服务端、HTTP，带重传与幂等）；
-4. 配置页（相机清单、存图策略、输出参数）；
-5. 把 `SpoolTailer` 换成 gRPC/命名管道，降低延迟。
+1. **A8-3 配置模板**：把当前 cfg 存成模板、按模板生成/对比，给界面"一键应用"复用 `apply-config.ps1` 的同一套逻辑；
+2. **A9 相机清单与信息展示**：型号 / 序列号 / IP·Key / 方位 / 在线状态一屏看清；
+3. 条码过滤规则（长度、前后缀、正则与黑白名单）；
+4. 下游对接（TCP 客户端 / 服务端、HTTP，带重传与幂等）；
+5. 配置页（相机清单、存图策略、输出参数；保存即调用一键应用 + 校验 + 回滚）；
+6. 把 `SpoolTailer` 换成 gRPC / 命名管道，降低延迟（为 ARM 全栈铺路）。

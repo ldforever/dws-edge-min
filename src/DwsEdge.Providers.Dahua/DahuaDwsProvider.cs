@@ -6,6 +6,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using DwsEdge.Core.Abstractions;
+using DwsEdge.Core.Config;
 using DwsEdge.Core.Model;
 using LogisticsBaseCSharp;
 
@@ -20,7 +21,7 @@ namespace DwsEdge.Providers.Dahua
     ///   3. 所有厂商概念（LogisticsWrapper、OutputResult、VslbImage...）都被关在本文件内，
     ///      外面看到的是 ParcelEvent / CameraReadEvent / CameraStatusEvent。
     /// </summary>
-    public sealed class DahuaDwsProvider : IAcquisitionProvider, ITriggerControl
+    public sealed class DahuaDwsProvider : IAcquisitionProvider, ITriggerControl, IConfigVerification
     {
         private const string ProviderName = "dahua-dws";
         private const string NoRead = "noread";
@@ -687,7 +688,7 @@ namespace DwsEdge.Providers.Dahua
         /// </summary>
         private void ValidateCameraPlan()
         {
-            CfgCameraPlan plan = CfgCameraPlan.Read(_cfgPath);
+            CameraPlan plan = CameraPlan.Read(_cfgPath);
 
             _sink.Log(LogLevel.Info, "cfg 相机计划：" + plan.Describe());
             for (int i = 0; i < plan.Cameras.Count; i++)
@@ -719,6 +720,61 @@ namespace DwsEdge.Providers.Dahua
             }
             sb.Append("。可用 tools\\make-camera-cfg.ps1 重新生成相机清单。");
             throw new ProviderException(sb.ToString());
+        }
+
+        /// <summary>
+        /// 应用配置后的回读校验：cfg 是否合规、SDK 是否真的按配置工作（工作相机数量）。
+        /// 供宿主 --verify-config 使用；失败时返回 Problems，宿主据此决定是否回滚配置。
+        /// </summary>
+        public ConfigVerificationReport VerifyConfig()
+        {
+            ConfigVerificationReport report = new ConfigVerificationReport();
+
+            try
+            {
+                CameraPlan plan = CameraPlan.Read(_cfgPath);
+                report.Details.Add("配置回读：" + plan.Describe());
+                for (int i = 0; i < plan.Cameras.Count; i++)
+                {
+                    report.Details.Add("  声明 " + (i + 1) + "：" + plan.Cameras[i]);
+                }
+
+                report.Problems.AddRange(plan.Errors());
+
+                int cameraCount = -1;
+                if (_dws != null)
+                {
+                    try
+                    {
+                        cameraCount = _dws.GetWorkCameraCount();
+                    }
+                    catch (Exception ex)
+                    {
+                        report.Problems.Add("读取工作相机数量失败：" + ex.Message);
+                    }
+                }
+
+                if (cameraCount >= 0)
+                {
+                    report.Details.Add("SDK 上报工作相机数量：" + cameraCount);
+                    int num = plan.NumValue;
+                    if (num > 0 && cameraCount < num)
+                    {
+                        report.Problems.Add("SDK 实际工作相机 " + cameraCount + " 台，少于配置的 num=" + num);
+                    }
+                }
+                else
+                {
+                    report.Problems.Add("未能获取工作相机数量（SDK 未启动或接口不可用）");
+                }
+            }
+            catch (Exception ex)
+            {
+                report.Problems.Add("校验异常：" + ex.Message);
+            }
+
+            report.Success = report.Problems.Count == 0;
+            return report;
         }
 
         /// <summary>

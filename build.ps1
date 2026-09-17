@@ -15,7 +15,8 @@
 param(
     [string]$Configuration = "Release",
     [string]$RuntimeDir = (Join-Path $PSScriptRoot 'runtime'),
-    [switch]$Offline
+    [switch]$Offline,
+    [switch]$ForceConfig
 )
 
 $ErrorActionPreference = 'Stop'
@@ -107,8 +108,22 @@ if (Test-Path $wwwroot) {
     Copy-Item -Path $wwwroot -Destination $platformDir -Recurse -Force
 }
 
-# 配置
-Copy-Item (Join-Path $PSScriptRoot 'config\gateway.ini') (Join-Path $RuntimeDir 'config\gateway.ini') -Force
+# 配置：runtime\config\gateway.ini 是"现场配置"（provider、存图策略、软触发开关都在里面），
+# 已经被改过时不能默默覆盖，否则一键应用/现场调试的设置会被一次编译冲掉。
+$configSource = Join-Path $PSScriptRoot 'config\gateway.ini'
+$configTarget = Join-Path $RuntimeDir 'config\gateway.ini'
+if ((Test-Path $configTarget) -and !$ForceConfig) {
+    Write-Host "  已存在 runtime\config\gateway.ini，保留现场配置（要覆盖请加 -ForceConfig）" -ForegroundColor Yellow
+}
+else {
+    if (Test-Path $configTarget) {
+        $configBackup = "$configTarget.bak-" + (Get-Date -Format 'yyyyMMdd-HHmmss')
+        Copy-Item -LiteralPath $configTarget -Destination $configBackup -Force
+        Write-Host "  原 gateway.ini 已备份：$configBackup" -ForegroundColor DarkGray
+    }
+    Copy-Item $configSource $configTarget -Force
+    Write-Host "  已写入 runtime\config\gateway.ini" -ForegroundColor DarkGray
+}
 
 Write-Host ""
 Write-Host "编译完成。" -ForegroundColor Green

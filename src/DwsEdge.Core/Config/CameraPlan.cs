@@ -4,10 +4,10 @@ using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace DwsEdge.Providers.Dahua
+namespace DwsEdge.Core.Config
 {
     /// <summary>cfg 里声明的一台相机。</summary>
-    internal sealed class CfgCameraEntry
+    public sealed class CameraPlanEntry
     {
         public string Kind;      // ip / key / id
         public string Value;
@@ -22,15 +22,19 @@ namespace DwsEdge.Providers.Dahua
     }
 
     /// <summary>
-    /// 从 LogisticsBase.cfg 读出"相机计划"（ImageAcq 的 mode/num/randWorkMode + Camera 声明），
-    /// 在启动 SDK 之前先做自检，避免现场只能等 SDK 报 3000 才知道配置写错了。
+    /// 从 LogisticsBase.cfg 读出"相机计划"：ImageAcq 的 mode/num/randWorkMode、ReadCodeMode 的 triggerMode、
+    /// 以及所有 Camera 声明。用于启动前自检和"应用配置后回读校验"。
+    ///
+    /// 放在 Core 是因为它只是解析一种配置文件格式（纯数据），不含任何厂商类型，
+    /// 宿主和各 provider 都能复用同一份实现。
     /// </summary>
-    internal sealed class CfgCameraPlan
+    public sealed class CameraPlan
     {
         public string Mode = "";
         public string Num = "";
         public string RandWorkMode = "";
-        public readonly List<CfgCameraEntry> Cameras = new List<CfgCameraEntry>();
+        public string TriggerMode = "";
+        public readonly List<CameraPlanEntry> Cameras = new List<CameraPlanEntry>();
 
         public int NumValue
         {
@@ -57,10 +61,10 @@ namespace DwsEdge.Providers.Dahua
             }
         }
 
-        public static CfgCameraPlan Read(string cfgPath)
+        public static CameraPlan Read(string cfgPath)
         {
-            CfgCameraPlan plan = new CfgCameraPlan();
-            if (!File.Exists(cfgPath))
+            CameraPlan plan = new CameraPlan();
+            if (string.IsNullOrEmpty(cfgPath) || !File.Exists(cfgPath))
             {
                 return plan;
             }
@@ -84,10 +88,16 @@ namespace DwsEdge.Providers.Dahua
                 plan.RandWorkMode = Get(attrs, "randWorkMode");
             }
 
+            Match readCode = Regex.Match(text, "<ReadCodeMode\\b([^>]*)/?>", RegexOptions.IgnoreCase);
+            if (readCode.Success)
+            {
+                plan.TriggerMode = Get(ParseAttributes(readCode.Groups[1].Value), "triggerMode");
+            }
+
             foreach (Match match in Regex.Matches(text, "<Camera\\b([^>]*)/?>", RegexOptions.IgnoreCase))
             {
                 Dictionary<string, string> attrs = ParseAttributes(match.Groups[1].Value);
-                CfgCameraEntry entry = new CfgCameraEntry();
+                CameraPlanEntry entry = new CameraPlanEntry();
 
                 if (!string.IsNullOrEmpty(Get(attrs, "ip")))
                 {
@@ -147,7 +157,7 @@ namespace DwsEdge.Providers.Dahua
             HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < Cameras.Count; i++)
             {
-                CfgCameraEntry entry = Cameras[i];
+                CameraPlanEntry entry = Cameras[i];
                 if (!entry.Enabled)
                 {
                     continue;
@@ -166,17 +176,15 @@ namespace DwsEdge.Providers.Dahua
             return problems;
         }
 
-        /// <summary>提醒项：不阻塞启动，但要提示现场确认。</summary>
+        /// <summary>提醒项：不阻塞启动。</summary>
         public List<string> Warnings()
         {
             List<string> warnings = new List<string>();
 
-            // 不写死相机数量：这里只按 SDK 文档给提醒，不阻断启动
             if (NumValue > 20)
             {
                 warnings.Add("num=" + NumValue + " 超过 SDK 文档标注的上限 20 台，请确认当前 SDK 版本确实支持这么多相机");
             }
-
             if (Mode == "1" && RandWorkMode == "0" && NumValue > 0)
             {
                 warnings.Add("mode=1 且 randWorkMode=0 时，现场实际发现的相机数量必须等于 num=" + NumValue
@@ -186,12 +194,17 @@ namespace DwsEdge.Providers.Dahua
             {
                 warnings.Add("ImageAcq 的 mode=" + Mode + " 不是常见取值（1=自动发现 2=按IP/Key 3=全部智能机 4=全部工业机）");
             }
+            if (TriggerMode != "0" && TriggerMode != "1" && TriggerMode != "2")
+            {
+                warnings.Add("ReadCodeMode 的 triggerMode=" + TriggerMode + " 不是常见取值（0=自由拉流 1=硬触发 2=软触发）");
+            }
             return warnings;
         }
 
         public string Describe()
         {
             return "mode=" + Mode + " num=" + Num + " randWorkMode=" + RandWorkMode
+                 + " triggerMode=" + TriggerMode
                  + " 启用相机=" + EnabledCount + "/" + Cameras.Count;
         }
 
@@ -199,13 +212,12 @@ namespace DwsEdge.Providers.Dahua
         {
             Dictionary<string, string> attrs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            // 标准写法：key="value"
             foreach (Match match in Regex.Matches(text, "([A-Za-z_][\\w\\-\\.]*)\\s*=\\s*\"([^\"]*)\""))
             {
                 attrs[match.Groups[1].Value] = match.Groups[2].Value;
             }
 
-            // 兼容手改时漏掉引号的写法：key=value
+            // 兼容手改时漏掉引号的写法
             foreach (Match match in Regex.Matches(text, "([A-Za-z_][\\w\\-\\.]*)\\s*=\\s*([^\\s\"'>]+)"))
             {
                 string name = match.Groups[1].Value;

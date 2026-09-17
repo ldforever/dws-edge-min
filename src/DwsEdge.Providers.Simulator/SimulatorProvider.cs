@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Threading;
 using DwsEdge.Core.Abstractions;
+using DwsEdge.Core.Config;
 using DwsEdge.Core.Model;
 
 namespace DwsEdge.Providers.Simulator
@@ -20,9 +21,10 @@ namespace DwsEdge.Providers.Simulator
     ///   - 现场没有设备时，验证 DwsEdge.Host / HostEventSink / spool / 将来的业务层；
     ///   - 给 --trigger-once / 交互触发 / 定时触发提供一个不依赖硬件的"靶子"。
     /// </summary>
-    public sealed class SimulatorProvider : IAcquisitionProvider, ITriggerControl
+    public sealed class SimulatorProvider : IAcquisitionProvider, ITriggerControl, IConfigVerification
     {
         private readonly IEventSink _sink;
+        private readonly ProviderSettings _settings;
         private readonly string _imageRoot;
         private readonly string _codePrefix;
         private readonly bool _emitEnriched;
@@ -44,6 +46,7 @@ namespace DwsEdge.Providers.Simulator
             }
 
             _sink = sink;
+            _settings = settings;
             _imageRoot = settings.ResolvePath(settings.Get("imageDir", "images"));
             _codePrefix = settings.Get("codePrefix", "TEST");
             _emitEnriched = settings.GetBool("emitEnriched", true);
@@ -117,6 +120,73 @@ namespace DwsEdge.Providers.Simulator
             _sink.Log(LogLevel.Info, "[simulator] 收到补码请求：" + code
                 + "（时间戳 " + (timeMs > 0 ? timeMs : NowMs()).ToString(CultureInfo.InvariantCulture) + "）");
             return 0;
+        }
+
+        /// <summary>
+        /// 模拟器的配置校验：只校验配置文件本身（不连接相机，因此不校验工作相机数量）。
+        /// 真机的"参数是否生效"校验请用 provider=dahua-dws。
+        ///
+        /// 测试注入：[simulator] rejectTriggerMode=soft|hard|free|0|1|2，
+        /// 让模拟器"拒绝"某个触发模式，用来验证 apply-config.ps1 的"校验失败自动回滚"。
+        /// </summary>
+        public ConfigVerificationReport VerifyConfig()
+        {
+            ConfigVerificationReport report = new ConfigVerificationReport();
+
+            string cfgPath = _settings.ResolvePath(_settings.Get("cfgPath", @"Cfg\LogisticsBase.cfg"));
+            if (!File.Exists(cfgPath))
+            {
+                report.Problems.Add("找不到配置文件：" + cfgPath);
+                report.Success = false;
+                return report;
+            }
+
+            CameraPlan plan = CameraPlan.Read(cfgPath);
+            report.Details.Add("配置回读：" + plan.Describe());
+            report.Details.Add("模拟器不连接相机，工作相机数量不参与校验（真机请用 provider=dahua-dws）");
+            report.Problems.AddRange(plan.Errors());
+
+            string reject = NormalizeTriggerMode(_settings.Get("rejectTriggerMode", null));
+            if (!string.IsNullOrEmpty(reject))
+            {
+                if (reject == plan.TriggerMode)
+                {
+                    report.Problems.Add("测试注入：模拟相机拒绝 triggerMode=" + plan.TriggerMode
+                        + "（[simulator] rejectTriggerMode，仅用于验证自动回滚）");
+                }
+                else
+                {
+                    report.Details.Add("测试注入：rejectTriggerMode=" + reject
+                        + "，当前 triggerMode=" + plan.TriggerMode + " 未被拒绝");
+                }
+            }
+
+            report.Success = report.Problems.Count == 0;
+            return report;
+        }
+
+        /// <summary>把 soft/hard/free 或 0/1/2 归一成 cfg 里的取值；识别不了就返回空串。</summary>
+        private static string NormalizeTriggerMode(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            string text = value.Trim().ToLowerInvariant();
+            if (text == "soft" || text == "2")
+            {
+                return "2";
+            }
+            if (text == "hard" || text == "1")
+            {
+                return "1";
+            }
+            if (text == "free" || text == "0")
+            {
+                return "0";
+            }
+            return string.Empty;
         }
 
         private ParcelEvent BuildParcel(long seq, long capturedAt, string code, ParcelStage stage)
