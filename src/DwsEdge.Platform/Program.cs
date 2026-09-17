@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using System.Globalization;
 using System.Collections.Generic;
 using Microsoft.AspNetCore.Builder;
@@ -51,6 +52,8 @@ namespace DwsEdge.Platform
             // B8：相机状态监控（在线率 / 掉线记录 / 心跳 / 告警）
             builder.Services.AddSingleton<CameraMonitor>();
             builder.Services.AddHostedService<MonitorWatcher>();
+            // B9：账号与接口鉴权（策略 + 账号 + 会话 + 审计）
+            builder.Services.AddSingleton<AuthStore>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<DownstreamSender>());
             builder.Services.AddHostedService<SpoolTailer>();
             builder.Services.AddHostedService<StorageProbe>();
@@ -73,6 +76,36 @@ namespace DwsEdge.Platform
                         ctx.Context.Response.Headers["Cache-Control"] = "no-cache";
                     }
                 }
+            });
+
+            // ------------------------------------------------------------------
+            // B9 接口鉴权（中间件放在所有路由前面）
+            //
+            // 规则（细节见 AuthStore.Check 的注释）：
+            //   * 页面与静态资源永远放行 —— 否则连登录框都打不开；
+            //   * /api/health、/api/auth/login、/api/auth/status 永远放行（存活检查 + 前端判断登录态）；
+            //   * 管理接口（配置/规则/下游/监控阈值/账号）必须登录，未登录 401、角色不够 403；
+            //   * 读接口是否也要登录由 config\auth.json 的 protectRead 决定（默认不拦，现场大屏与第三方读数据不受影响）。
+            // ------------------------------------------------------------------
+            app.Use(async (context, next) =>
+            {
+                AuthStore auth = context.RequestServices.GetRequiredService<AuthStore>();
+                AccessCheck check = auth.Check(context.Request);
+                if (string.Equals(check.kind, "allowed", StringComparison.Ordinal))
+                {
+                    context.Items[AuthStore.SessionItemKey] = check.session;
+                    await next();
+                    return;
+                }
+
+                context.Response.StatusCode = string.Equals(check.kind, "forbidden", StringComparison.Ordinal) ? 403 : 401;
+                context.Response.ContentType = "application/json; charset=utf-8";
+                await context.Response.WriteAsync(JsonSerializer.Serialize(new
+                {
+                    error = check.error,
+                    code = check.kind,
+                    loginUrl = "/api/auth/login"
+                }), context.RequestAborted);
             });
 
             app.MapGet("/api/health", (SpoolStore store) => Results.Json(store.Health()));
@@ -336,6 +369,233 @@ namespace DwsEdge.Platform
 
             app.MapGet("/api/stream", (HttpContext context, SpoolStore store, CancellationToken token) =>
                 store.StreamAsync(context, token));
+
+            // ================================================================
+            // B9 账号与鉴权
+            // ================================================================
+
+            // 登录：成功后同时写 HttpOnly Cookie（浏览器）并返回 token（程序/脚本用 Bearer）
+            app.MapPost("/api/auth/login", (AuthStore auth, HttpContext context, LoginRequest request) =>
+            {
+                if (request == null)
+                {
+                    return Results.BadRequest(new { error = "请求体不能为空" });
+                }
+
+                LoginResult result = auth.Login(request.username, request.password, AuthStore.ClientIp(context.Request));
+                if (!result.ok)
+                {
+                    int status = string.Equals(result.code, "locked", StringComparison.Ordinal) ? 423 : 401;
+                    return Results.Json(new
+                    {
+                        error = result.error,
+                        code = result.code,
+                        remainingAttempts = result.remainingAttempts,
+                        lockedSeconds = result.lockedSeconds
+                    }, statusCode: status);
+                }
+
+                context.Response.Cookies.Append(AuthStore.CookieName, result.token, new CookieOptions
+                {
+                    HttpOnly = true,
+                    SameSite = SameSiteMode.Lax,
+                    Path = "/",
+                    MaxAge = TimeSpan.FromMinutes(result.sessionMinutes)
+                });
+
+                return Results.Json(new
+                {
+                    ok = true,
+                    token = result.token,
+                    username = result.user.username,
+                    role = result.user.role,
+                    mustChangePassword = result.user.mustChangePassword,
+                    expiresAtMs = result.expiresAtMs,
+                    sessionMinutes = result.sessionMinutes,
+                    note = "浏览器用 Cookie、程序用 Authorization: Bearer <token> 或 X-Api-Key（服务令牌）"
+                });
+            });
+
+            app.MapPost("/api/auth/logout", (AuthStore auth, HttpContext context) =>
+            {
+                AuthSession session = context.Items[AuthStore.SessionItemKey] as AuthSession;
+                bool ok = auth.Logout(session != null ? session.token : null);
+                context.Response.Cookies.Delete(AuthStore.CookieName);
+                return Results.Json(new { ok, note = ok ? "已退出登录" : "当前会话已失效" });
+            });
+
+            // 前端每次打开页面问一次：要不要登录、我是谁、初始密码还没改吗
+            app.MapGet("/api/auth/status", (AuthStore auth, HttpContext context) =>
+            {
+                AuthOptions options = auth.Options;
+                AuthSession session = auth.Resolve(context.Request, options);
+                return Results.Json(new
+                {
+                    enabled = options.enabled,
+                    protectRead = options.protectRead,
+                    allowServiceKey = options.allowServiceKey,
+                    authenticated = session != null,
+                    username = session == null ? null : session.username,
+                    role = session == null ? null : session.role,
+                    viaServiceKey = session != null && string.IsNullOrEmpty(session.token),
+                    activeSessions = auth.ActiveSessionCount,
+                    initialPasswordPending = File.Exists(auth.InitialPasswordPath),
+                    initialPasswordFile = auth.InitialPasswordPath
+                });
+            });
+
+            app.MapGet("/api/auth/me", (AuthStore auth, HttpContext context) =>
+            {
+                AuthSession session = context.Items[AuthStore.SessionItemKey] as AuthSession;
+                if (session == null)
+                {
+                    return Results.Json(new { error = "未登录" }, statusCode: 401);
+                }
+                return Results.Json(new
+                {
+                    username = session.username,
+                    role = session.role,
+                    viaServiceKey = string.IsNullOrEmpty(session.token),
+                    expiresAtMs = session.expiresAtMs,
+                    activeSessions = auth.ActiveSessionCount
+                });
+            });
+
+            // 改密码：不填 username 就是改自己的（要原密码）；填了别人 = 管理员重置（需 admin）
+            app.MapPost("/api/auth/password", (AuthStore auth, HttpContext context, ChangePasswordRequest request) =>
+            {
+                AuthSession session = context.Items[AuthStore.SessionItemKey] as AuthSession;
+                if (session == null)
+                {
+                    return Results.Json(new { error = "未登录" }, statusCode: 401);
+                }
+                if (request == null || string.IsNullOrEmpty(request.newPassword))
+                {
+                    return Results.BadRequest(new { error = "newPassword 不能为空" });
+                }
+
+                string target = string.IsNullOrWhiteSpace(request.username) ? session.username : request.username.Trim();
+                bool byAdmin = !string.Equals(target, session.username, StringComparison.OrdinalIgnoreCase);
+                if (byAdmin && !AuthStore.IsAdmin(session.role))
+                {
+                    return Results.Json(new { error = "只有管理员能重置别人的密码" }, statusCode: 403);
+                }
+
+                try
+                {
+                    auth.ChangePassword(target, request.oldPassword, request.newPassword, byAdmin,
+                        session.username, session.token);
+                    return Results.Json(new { ok = true, username = target, byAdmin, note = byAdmin ? "已重置该账号密码" : "密码已修改" });
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapGet("/api/auth/users", (AuthStore auth) => Results.Json(new
+            {
+                file = auth.UsersPath,
+                maxFailures = auth.Options.maxFailures,
+                lockMinutes = auth.Options.lockMinutes,
+                activeSessions = auth.ActiveSessionCount,
+                users = auth.Users()
+            }));
+
+            app.MapPost("/api/auth/users", (AuthStore auth, HttpContext context, AuthUserRequest request) =>
+            {
+                AuthSession session = context.Items[AuthStore.SessionItemKey] as AuthSession;
+                try
+                {
+                    AuthUserView user = auth.AddUser(request != null ? request.username : null,
+                        request != null ? request.password : null, request != null ? request.role : null,
+                        request != null ? request.note : null, session != null ? session.username : null);
+                    return Results.Json(new { ok = true, user, note = "新账号首次登录后请修改密码" });
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapPost("/api/auth/users/update", (AuthStore auth, HttpContext context, AuthUserRequest request) =>
+            {
+                AuthSession session = context.Items[AuthStore.SessionItemKey] as AuthSession;
+                try
+                {
+                    AuthUserView user = auth.UpdateUser(request != null ? request.username : null,
+                        request != null ? request.role : null, request != null ? request.enabled : null,
+                        request != null ? request.note : null, session != null ? session.username : null);
+                    return Results.Json(new { ok = true, user });
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapPost("/api/auth/users/delete", (AuthStore auth, HttpContext context, AuthUserRequest request) =>
+            {
+                AuthSession session = context.Items[AuthStore.SessionItemKey] as AuthSession;
+                try
+                {
+                    auth.DeleteUser(request != null ? request.username : null, session != null ? session.username : null);
+                    return Results.Json(new { ok = true, note = "账号已删除" });
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapPost("/api/auth/users/reset-password", (AuthStore auth, HttpContext context, AuthUserRequest request) =>
+            {
+                AuthSession session = context.Items[AuthStore.SessionItemKey] as AuthSession;
+                try
+                {
+                    auth.ChangePassword(request != null ? request.username : null, null,
+                        request != null ? request.password : null, true,
+                        session != null ? session.username : null, null);
+                    return Results.Json(new { ok = true, username = request != null ? request.username : null, note = "密码已重置" });
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapGet("/api/auth/config", (AuthStore auth) => Results.Json(new
+            {
+                file = auth.ConfigPath,
+                usersFile = auth.UsersPath,
+                initialPasswordFile = auth.InitialPasswordPath,
+                dataDirectory = auth.DataDirectory,
+                options = auth.Options,
+                activeSessions = auth.ActiveSessionCount,
+                note = "保存后立即生效；服务令牌可轮换（轮换后旧的立刻失效）"
+            }));
+
+            app.MapPost("/api/auth/config", (AuthStore auth, AuthOptions request) =>
+            {
+                try
+                {
+                    string backup = auth.SaveOptions(request);
+                    return Results.Json(new { ok = true, file = auth.ConfigPath, backup, options = auth.Options });
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapPost("/api/auth/service-key", (AuthStore auth) =>
+                Results.Json(new { ok = true, serviceKey = auth.RotateServiceKey(), note = "旧令牌已失效，记得到脚本/上位机里更新" }));
+
+            app.MapGet("/api/auth/events", (AuthStore auth, int? limit, string kind) =>
+            {
+                int take = limit.HasValue ? Math.Clamp(limit.Value, 1, 500) : 100;
+                return Results.Json(auth.Events(take, kind));
+            });
 
             ILogger logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Platform");
 

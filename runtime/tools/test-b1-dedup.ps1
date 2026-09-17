@@ -154,6 +154,8 @@ Write-Host ("已写入 spool " + $lines.Count + " 行：" + $spoolFile) -Foregro
 # ---------------------------------------------------------------- 第 1 轮
 Write-Host "`n=== 第 1 轮：正常消费（含 3 条重复事件）===" -ForegroundColor Cyan
 Start-Platform
+. (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'b9-auth-helper.ps1')
+$null = Enable-TestAuth -WorkDir $WorkDir   # B9：管理接口要凭据，脚本用服务令牌
 $stats = Get-Stats
 Add-Check '包裹数（每个包裹一条记录）' 3 $stats.parcels | Out-Null
 Add-Check '合并成功的包裹数（两次回调）' 3 $stats.mergedParcels | Out-Null

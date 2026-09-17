@@ -15,6 +15,7 @@ import { initDedup, refreshDedup } from "./dedup.js";
 import { initHistory, refreshHistory } from "./history.js";
 import { initDownstream, refreshDownstream } from "./downstream.js";
 import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js";
+import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js";
 
 type PageName = "realtime" | "devices" | "history" | "config";
 const PAGES: PageName[] = ["realtime", "devices", "history", "config"];
@@ -37,6 +38,7 @@ function showPage(name: PageName): void {
     void refreshDedup();
     void refreshDownstream();
     void refreshMonitorConfig();
+    void refreshAuthPanel();
   }
 }
 
@@ -54,6 +56,7 @@ function bootstrap(): void {
   initHistory();
   initDownstream();
   initMonitor();
+  initAuth();
 
   for (const page of PAGES) {
     $("tab-" + page).addEventListener("click", () => showPage(page));
@@ -73,11 +76,17 @@ function bootstrap(): void {
     onMonitor: (snapshot) => renderMonitorSnapshot(snapshot),
     onAlert: (alert) => renderAlert(alert),
     onStats: renderStats,
-    onStatus: setConnectionState
+    onStatus: setConnectionState,
+    // B9：推送断了（多半是会话过期）→ 刷一次登录态，需要的话弹回登录框
+    onError: () => {
+      void refreshAuth(true);
+    }
   });
 
   // 首屏也拉一次监控（SSE 会补发，但"页面比平台先起来"或断线期间得靠这个）
   void refreshMonitor();
+  // B9：先问一次登录态，决定要不要弹登录框
+  void refreshAuth();
 }
 
 /** 新包裹到达后刷新统计（合并 500ms 内的多次刷新） */

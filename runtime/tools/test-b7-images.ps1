@@ -117,6 +117,8 @@ try {
     Write-Host ("测试图片：BMP " + $originalBytes + " 字节；JPEG 50000 字节") -ForegroundColor DarkGray
 
     Start-Platform
+    . (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'b9-auth-helper.ps1')
+    $null = Enable-TestAuth -WorkDir $WorkDir   # B9：管理接口要凭据，脚本用服务令牌
 
     # ---------------------------------------------------------------- 1) 元信息
     Write-Host "`n=== 1) 图片元信息 ===" -ForegroundColor Cyan

@@ -138,6 +138,8 @@ $clientB = $null
 
 try {
     Start-Platform
+    . (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'b9-auth-helper.ps1')
+    $null = Enable-TestAuth -WorkDir $WorkDir   # B9：管理接口要凭据，脚本用服务令牌
 
     # ---------------------------------------------------------------- 1) 服务端模式配置
     Write-Host "`n=== 1) 配成 TCP 服务端模式（平台监听） ===" -ForegroundColor Cyan

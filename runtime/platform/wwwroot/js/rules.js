@@ -7,8 +7,8 @@
  *     这样现场可以先把规则调好、看清楚每一条码的判定，再决定保存；
  *   * 保存后平台立即生效（平台每秒检查一次规则文件，不用重启）。
  */
-import { api } from "./api.js?v=c8468a3c";
-import { $, badge, cell, clear, el, notify } from "./dom.js?v=c8468a3c";
+import { api } from "./api.js?v=e44d2a93";
+import { $, badge, cell, clear, el, notify } from "./dom.js?v=e44d2a93";
 const ACTION_KEEP = "keep";
 const ACTION_DROP = "drop";
 let current = null;

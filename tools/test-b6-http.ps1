@@ -131,6 +131,8 @@ try {
     Start-Sleep -Seconds 3
 
     Start-Platform
+    . (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'b9-auth-helper.ps1')
+    $null = Enable-TestAuth -WorkDir $WorkDir   # B9：管理接口要凭据，脚本用服务令牌
 
     # ---------------------------------------------------------------- 1) 配置 HTTP 推送
     Write-Host "`n=== 1) 配成 HTTP 推送模式 ===" -ForegroundColor Cyan

@@ -154,6 +154,8 @@ $spoolFile = Join-Path $WorkDir ('spool\events-' + (Get-Date).ToString('yyyyMMdd
 
 try {
     Start-Platform
+    . (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'b9-auth-helper.ps1')
+    $null = Enable-TestAuth -WorkDir $WorkDir   # B9：管理接口要凭据，脚本用服务令牌
 
     # ---------------------------------------------------------------- 1) 造场景
     Write-Host "`n=== 1) 造场景：5 台相机（正常 / 未发现 / 沉默 / 频繁闪断 / 在线率过低）===" -ForegroundColor Cyan

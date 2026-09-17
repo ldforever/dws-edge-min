@@ -17,6 +17,8 @@ export interface StreamHandlers {
   onAlert: (data: Extract<StreamMessage, { type: "alert" }>["data"]) => void;
   /** 连接状态变化（用于右上角小圆点） */
   onStatus: (connected: boolean) => void;
+  /** B9：推送断了（可能是会话过期）——让界面顺手刷一次登录态 */
+  onError?: () => void;
 }
 
 const RECONNECT_DELAY_MS = 2000;
@@ -28,6 +30,7 @@ export function connectStream(handlers: StreamHandlers): void {
 
   es.onerror = () => {
     handlers.onStatus(false);
+    if (handlers.onError) handlers.onError();
     es.close();
     window.setTimeout(() => connectStream(handlers), RECONNECT_DELAY_MS);
   };

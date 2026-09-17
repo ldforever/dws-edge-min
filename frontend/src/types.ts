@@ -587,3 +587,91 @@ export interface SaveMonitorConfigResponse {
   options: MonitorOptions;
   note?: string;
 }
+
+// ---------------------------------------------------------------- B9 账号与鉴权
+
+/** GET /api/auth/status（公开：前端靠它决定要不要弹登录框） */
+export interface AuthStatus {
+  enabled: boolean;
+  /** 读接口是否也要登录 */
+  protectRead: boolean;
+  allowServiceKey: boolean;
+  authenticated: boolean;
+  username?: string | null;
+  role?: string | null;
+  viaServiceKey?: boolean;
+  activeSessions: number;
+  /** 初始密码文件还在（还没改过密码） */
+  initialPasswordPending: boolean;
+  initialPasswordFile?: string | null;
+}
+
+/** POST /api/auth/login 成功返回 */
+export interface LoginResponse {
+  ok: boolean;
+  token: string;
+  username: string;
+  role: string;
+  mustChangePassword: boolean;
+  expiresAtMs: number;
+  sessionMinutes: number;
+  note?: string;
+}
+
+/** 一个账号（永远不含密码哈希） */
+export interface AuthUserView {
+  username: string;
+  role: string;
+  enabled: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  mustChangePassword: boolean;
+  note?: string | null;
+  locked: boolean;
+  lockedSeconds: number;
+  failedCount: number;
+  lastLoginAt?: string | null;
+  lastLoginIp?: string | null;
+  lastFailureAt?: string | null;
+}
+
+export interface AuthUsersResponse {
+  file: string;
+  maxFailures: number;
+  lockMinutes: number;
+  activeSessions: number;
+  users: AuthUserView[];
+}
+
+/** 鉴权策略 */
+export interface AuthOptions {
+  enabled: boolean;
+  protectRead: boolean;
+  allowServiceKey: boolean;
+  serviceKey: string;
+  serviceKeyRole: string;
+  maxFailures: number;
+  lockMinutes: number;
+  failureWindowMinutes: number;
+  sessionMinutes: number;
+}
+
+export interface AuthConfigResponse {
+  file: string;
+  usersFile: string;
+  initialPasswordFile: string;
+  dataDirectory: string;
+  options: AuthOptions;
+  activeSessions: number;
+  note?: string;
+}
+
+/** 登录/鉴权审计事件 */
+export interface AuthEventRecord {
+  time: string;
+  atMs: number;
+  kind: string;
+  username?: string | null;
+  ip?: string | null;
+  detail?: string | null;
+}

@@ -34,7 +34,7 @@ dws-edge-min/
 ├─ tools/apply-config.ps1        一键应用配置：写配置 → 重启 SDK 校验 → 失败自动回滚
 ├─ config/gateway.ini            采集宿主配置（选 provider + provider 参数）
 ├─ frontend/                     前端 TypeScript 工程（无框架、无打包器）
-│  ├─ src/                       api / sse / dom / realtime / devices / monitor / config / history / rules / dedup / downstream / types
+│  ├─ src/                       api / sse / dom / auth / realtime / devices / monitor / config / history / rules / dedup / downstream / types
 │  └─ build.mjs                  tsc 编译 → wwwroot\js，并拷贝样式
 ├─ src/
 │  ├─ DwsEdge.Core/              契约与模型（net48 + net10.0 双目标，两边共用）
@@ -54,6 +54,7 @@ dws-edge-min/
 │     ├─ DownstreamSender.cs     下游输出（TCP 客户端/服务端、HTTP）
 │     ├─ ThumbnailService.cs     缩略图（纯 C# 处理 BMP）
 │     ├─ CameraMonitor.cs        相机状态监控与告警（B8）
+│     ├─ AuthStore.cs            账号、会话、服务令牌与接口鉴权（B9）
 │     ├─ SpoolModels.cs          事件与输出模型
 │     ├─ appsettings.json        端口、spool 目录、图片根目录
 │     └─ wwwroot/                index.html 骨架 + 编译产物（app.css / js\*.js）
@@ -62,7 +63,7 @@ dws-edge-min/
    ├─ DwsEdge.Core.dll           （net48 版本）
    ├─ providers/                 插件 DLL
    ├─ platform/                  业务平台（含 net10 版 Core、wwwroot）
-   ├─ config/                    gateway.ini（采集）+ barcode-rules.json / downstream.json / monitor.json（平台，保存自动备份）
+   ├─ config/                    gateway.ini（采集）+ barcode-rules.json / downstream.json / monitor.json / auth.json / users.json（平台，保存自动备份）
    └─ images/  spool/  logs/  Log/
 ```
 
@@ -501,6 +502,12 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 | `GET /api/monitor/events?limit=&camera=` | **B8** 掉线、上线、恢复、告警 事件流（可查、可按相机过滤） |
 | `GET /api/monitor/alerts?limit=&activeOnly=` | **B8** 告警列表（默认只看活动告警） |
 | `GET /api/monitor/config` / `POST /api/monitor/config` | **B8** 告警阈值读写（保存自动备份、立即生效） |
+| `POST /api/auth/login` | **B9** 登录（返回 token + 写 HttpOnly Cookie；密码错返回剩余次数、锁定返回 423） |
+| `GET /api/auth/status` / `GET /api/auth/me` / `POST /api/auth/logout` | **B9** 登录态（公开）/ 当前账号 / 退出 |
+| `POST /api/auth/password` | **B9** 改密码（带 username = 管理员重置，会自动解锁） |
+| `GET｜POST /api/auth/users`（含 `update`/`delete`/`reset-password`） | **B9** 账号管理（admin） |
+| `GET｜POST /api/auth/config`、`POST /api/auth/service-key` | **B9** 鉴权策略与令牌轮换（admin） |
+| `GET /api/auth/events?limit=` | **B9** 登录/失败/锁定/改密审计（admin） |
 | `GET /api/stream` | SSE 实时推送（包裹与统计） |
 
 实测结果示例：`{"events":4,"parcels":2,"noread":0,"images":2,"readRate":1,"parseErrors":0}` —— 两次触发共 4 条事件（detected + enriched），
@@ -945,7 +952,108 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b8-monitor.ps1
 实现位置：`src\DwsEdge.Platform\CameraMonitor.cs`（判定与统计）+ `MonitorWatcher`（定时检查并推快照），
 `SpoolStore` 把相机状态与出码事件喂给它；前端在 `frontend\src\monitor.ts`。
 
-## 十四、两个进程的边界
+## 十四、账号登录与接口鉴权（B9）
+
+目标很明确：**未登录不能碰管理接口；密码错误有次数限制**。做法是最小可用、不引第三方库（现场离线）。
+
+### 首次运行会自动生成什么
+
+| 文件 | 内容 |
+|---|---|
+| `runtime\config\users.json` | 账号表：用户名、角色、PBKDF2 哈希、失败计数、锁定截止、最近登录 |
+| `runtime\config\auth.json` | 策略：失败上限、锁定时长、会话时长、读接口保护开关、**服务令牌** |
+| `runtime\config\admin-initial-password.txt` | 首次运行随机生成的 `admin` 初始密码（明文，登录后请改密，文件会自动删除） |
+
+初始密码不写死在代码里，也不打进日志（日志会被拷来拷去）。改过密码后这个文件会被自动删除。
+
+### 密码与失败限制
+
+* 密码只存 **PBKDF2-SHA256**（每个账号独立盐、12 万次迭代、32 字节哈希），校验用固定时间比较；
+  账号文件里搜不到任何明文口令（回归脚本专门断言了这一点）。
+* 强度要求：至少 8 位、同时含字母和数字。
+* 失败限制：默认**连续错 5 次锁定 15 分钟**；每次失败都返回**还剩几次**；到上限返回 `423` 与剩余秒数；
+  锁定期间**密码正确也拒绝**（这是回归里专门验证的一条）。
+* 失败计数有滑动窗口（默认 10 分钟）：窗口内没再失败就清零，避免"很久以前错两次 + 今天错三次"被误锁。
+* 救场手段有两个：管理员在界面上"重置密码"，或者用服务令牌调 `POST /api/auth/users/reset-password`（重置会一并解除锁定）。
+
+### 三种凭据（同一套权限判断）
+
+| 凭据 | 谁用 | 怎么带 |
+|---|---|---|
+| 会话 Cookie（HttpOnly） | 浏览器界面 | 登录后由浏览器自动带上 |
+| Bearer token | 程序 / 上位机 | `Authorization: Bearer <token>`（登录接口会返回） |
+| 服务令牌 | 回归脚本、采集侧集成 | `X-Api-Key: <auth.json 里的 serviceKey>`，可一键轮换（旧令牌立刻失效） |
+
+会话默认 480 分钟；平台重启后会话失效（内存态，需要重新登录）。改密码会把该账号的**其它**会话踢掉，当前这次保留。
+
+### 接口保护范围
+
+| 类别 | 接口 | 未登录 |
+|---|---|---|
+| 永远公开 | `/api/health`、`/api/auth/login`、`/api/auth/status` | 放行（存活检查 + 前端判断登录态） |
+| 管理接口 | `/api/config*`、`/api/rules*`、`/api/downstream*`、`/api/camera-positions`、`/api/monitor/config`、`/api/dedup/compact`、`/api/dispatch/ack` | **401** |
+| 账号接口 | `/api/auth/users*`、`/api/auth/config`、`/api/auth/events` | **401**；且只有 admin 能用 |
+| 读接口 | `/api/stats`、`/api/parcels`、`/api/cameras`、`/api/devices`、`/api/history*`、`/api/images*`、`/api/monitor/summary|cameras|events|alerts`、`/api/stream` | 默认放行；把 `protectRead` 打开就也要登录 |
+
+读接口默认不拦，是因为现场大屏和第三方取数不该被账号卡住；要"全保护"就在界面上勾一下，或者改 `auth.json` 的 `protectRead`。
+
+### 角色
+
+| 角色 | 读数据 | 改配置（规则/下游/监控阈值/一键应用） | 管账号与策略 |
+|---|---|---|---|
+| admin | ✅ | ✅ | ✅ |
+| operator | ✅ | ✅ | ❌ 403 |
+| viewer | ✅ | ❌ 403 | ❌ 403 |
+
+两个安全兜底：**不允许把最后一个启用的管理员降级/禁用/删除**，也不允许管理员把自己删没。
+
+### 审计
+
+登录成功、密码错误、账号锁定、退出/会话过期、改密码、账号增删改、策略变更，全部写
+`runtime\data\auth-events-yyyyMMdd.jsonl`（一条一行），界面上也能看最近 100 条。
+
+### 接口
+
+| 接口 | 说明 |
+|---|---|
+| `POST /api/auth/login` | 登录（返回 token 并写 Cookie；失败返回剩余次数 / 锁定秒数） |
+| `POST /api/auth/logout` / `GET /api/auth/me` / `GET /api/auth/status` | 退出 / 当前账号 / 登录态（status 公开） |
+| `POST /api/auth/password` | 改密码（填 username = 管理员重置） |
+| `GET｜POST /api/auth/users`、`/api/auth/users/update｜delete｜reset-password` | 账号管理（admin） |
+| `GET｜POST /api/auth/config`、`POST /api/auth/service-key` | 策略读写 / 轮换服务令牌（admin） |
+| `GET /api/auth/events?limit=&kind=` | 鉴权审计（admin） |
+
+### 界面
+
+* 未登录弹**登录遮罩**（读接口没保护时还有个"先不登录（只读浏览）"，现场大屏不用账号）；
+* 顶栏显示当前账号与角色，带"退出"；
+* 配置页 **账号与安全**：改自己的密码、管理员改策略 / 加账号 / 禁用 / 重置密码 / 看登录记录 / 轮换服务令牌；
+* 任何管理接口回 401（会话过期、被别人踢下线）→ 自动弹回登录框。
+
+### 回归脚本怎么调管理接口
+
+脚本走"服务令牌"这条路：在第一次 `Start-Platform` 之后调用一次
+`tools\b9-auth-helper.ps1` 里的 `Enable-TestAuth`，之后脚本里所有 `Invoke-RestMethod` /
+`Invoke-WebRequest` 都会自动带上 `X-Api-Key`（B1-B8 脚本已按这个方式接好）。
+
+回归测试：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\test-b9-auth.ps1
+```
+
+覆盖：首次运行生成账号与初始密码、密码不明文落盘、12 个管理接口未登录全 401、
+读接口匿名可用、连续错误返回剩余次数并在第 5 次锁定（锁定期正确密码也进不去）、
+服务令牌读写与重置密码、Cookie 与 Bearer 两条会话路径、登出立即失效、
+改密后旧密码失效、viewer/operator/admin 权限边界、最后一个管理员不能降级/删除、
+策略读写与非法值拒绝、读接口保护开关、服务令牌轮换后旧令牌立刻失效、审计落盘与采集不受影响，
+共 **96 项断言**。
+
+**安全边界（要知道自己在哪）**：V1 是**内网 HTTP**，登录口令在网络上是明文传输的 ——
+它拦的是"局域网里乱点的人"和"没凭据就改配置的脚本"，不是公网攻击。真要出公网，
+下一步要么套 HTTPS 反向代理，要么在采集侧和平台之间加设备证书，这是 C 类里的事。
+
+## 十五、两个进程的边界
 
 | | 采集宿主（Edge） | 业务平台（Platform） |
 |---|---|---|
@@ -958,7 +1066,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b8-monitor.ps1
 通信：V1 用文件 spool（`SpoolTailer` 增量读取，只处理完整行）；V2 换成 gRPC/命名管道时只需替换 `SpoolTailer`，
 `SpoolStore` 与平台 API 不动。
 
-## 十五、代码导读
+## 十六、代码导读
 
 **采集侧（net48）**
 
@@ -977,6 +1085,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b8-monitor.ps1
 - `DwsEdge.Platform/HistoryStore.cs`：历史库（快照 + 按 traceId 收敛的索引）、查询过滤、CSV 导出。
 - `DwsEdge.Platform/DownstreamSender.cs` + `DownstreamStore.cs` + `MessageTemplate.cs`：B4/B5 下游输出（客户端/服务端两种模式、模板、重传、连接活性检测、广播）。
 - `DwsEdge.Platform/CameraMonitor.cs`：B8 相机状态监控（在线率/掉线记录/心跳/五类告警、事件落盘与恢复、阈值热加载）+ `MonitorWatcher`（后台定时判定并推快照）。
+- `DwsEdge.Platform/AuthStore.cs`：B9 账号与鉴权（PBKDF2 密码、失败锁定、会话、服务令牌、访问规则 `Check()`、审计）+ 请求 DTO。
 
 **平台侧（net10）**
 
@@ -991,9 +1100,10 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b8-monitor.ps1
 - `frontend/src/api.ts` + `types.ts`：接口层与 DTO 类型（与后端一一对应）。
 - `frontend/src/realtime.ts` / `devices.ts` / `config.ts`：三个页签各自的渲染逻辑。
 - `frontend/src/monitor.ts`：B8 监控与告警（告警条、每台相机指标、掉线与告警记录、阈值配置）。
+- `frontend/src/auth.ts`：B9 登录遮罩、顶栏用户区、改密、账号管理、策略与审计（401 自动弹回登录）。
 - `frontend/src/sse.ts` / `dom.ts`：实时推送封装与 DOM 小工具。
 
-## 十六、常见问题
+## 十七、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -1018,19 +1128,25 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b8-monitor.ps1
 | 偶尔报"频繁掉线" | 网线接触不良 / 供电不稳 / 网段内有 IP 冲突的典型症状，看 `camera-events-*.jsonl` 里的掉线时间点找规律 |
 | 在线率老是 100% 或一直很低 | 在线率窗口可在"配置 → 监控与告警阈值"里改（默认 60 分钟）；刚上线的相机样本不足时显示 `—` |
 | 不想被告警刷屏 | 把 `offlineAlertSeconds` 调大（闪断就不报），或把"启用监控与告警"关掉（数据仍会继续统计） |
+| 忘记管理员密码 | 用服务令牌救场：`POST /api/auth/users/reset-password`（header `X-Api-Key`，body `{username,password}`）；令牌在 `runtime\config\auth.json` |
+| 账号被锁定了 | 默认锁 15 分钟；管理员在"账号与安全"里点"重置密码"会同时解锁，或改 `auth.json` 的 `lockMinutes` |
+| 脚本/上位机调管理接口报 401 | 带上服务令牌头 `X-Api-Key: <auth.json 的 serviceKey>`；回归脚本用 `tools\b9-auth-helper.ps1` 自动带 |
+| 第三方只想读数据被 401 | 默认读接口是公开的；如果 401，说明有人开了 `protectRead`，关掉或给对方发一个 viewer 账号/服务令牌 |
+| 初始密码文件在哪 | `runtime\config\admin-initial-password.txt`（首次运行生成，改过密码后自动删除）；登录后请尽快改密 |
+| 想彻底不要鉴权（只在隔离的调试环境） | 把 `auth.json` 的 `enabled` 改成 `false`；**现场不要这么干** |
 
-## 十七、下一步（V1 完整版）
+## 十八、下一步（V1 完整版）
 
-采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做）；平台侧 B1-B8 也打通了：
+采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做）；平台侧 B1-B9 也打通了：
 包裹合并与去重（B1）、条码过滤规则（B2）、历史库与导出（B3）、下游 TCP 客户端 / TCP 服务端 /
-HTTP 推送（B4-B6）、图片按需访问与缩略图（B7）、相机状态监控与告警（B8）。
+HTTP 推送（B4-B6）、图片按需访问与缩略图（B7）、相机状态监控与告警（B8）、账号登录与接口鉴权（B9）。
 
 接着按 V1 需求清单排：
 
 1. **A8-3 配置模板**：把当前 cfg 存成模板、按模板生成/对比（界面上"另存为模板/套用模板"）；
 2. 配置页补齐：存图策略、输出参数（相机清单、触发模式、下游、监控阈值已能改）；
 3. **告警外发**：把 B8 的告警接到下游（TCP/HTTP 报文或钉钉/企业微信机器人），现场不用盯屏；
-4. **C 类**：登录与权限、操作审计、多语言/多站点、报表（读码率、在线率按班次统计）；
+4. **C 类**：HTTPS/设备证书（现在是内网 HTTP 明文）、细到接口的操作审计、多语言/多站点、报表（读码率、在线率按班次统计）；
 5. 把 `SpoolTailer` 换成 gRPC / 命名管道，降低延迟（为 ARM 全栈铺路）；
 6. 采集宿主做成 Windows 服务 / 看门狗，配置页的"重启采集宿主"改成调服务管理器（现在是从平台直接拉进程）；
 7. 采集宿主与平台一起做成自启动 + 自动恢复（现场无人值守的前提）。

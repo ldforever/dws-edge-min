@@ -9,6 +9,11 @@
 import type {
   ApplyRequest,
   ApplyResult,
+  AuthConfigResponse,
+  AuthEventRecord,
+  AuthOptions,
+  AuthStatus,
+  AuthUsersResponse,
   BarcodeRuleSet,
   CameraRecord,
   ConfigSummary,
@@ -22,6 +27,7 @@ import type {
   HistoryFilter,
   HistoryResult,
   ImageInfo,
+  LoginResponse,
   MonitorAlertsResponse,
   MonitorCameraStatus,
   MonitorConfigResponse,
@@ -52,7 +58,9 @@ interface RequestOptions {
 }
 
 async function request<T>(url: string, options?: RequestOptions): Promise<ApiResult<T>> {
-  const init: RequestInit = { method: options?.method ?? "GET" };
+  // 同源 Cookie（登录会话）要带上：不写 credentials 时 fetch 对同源默认就会带，
+  // 但这里显式声明，避免以后换成跨源部署时悄悄丢会话。
+  const init: RequestInit = { method: options?.method ?? "GET", credentials: "same-origin" };
   if (options?.json !== undefined) {
     init.headers = { "Content-Type": "application/json" };
     init.body = JSON.stringify(options.json);
@@ -77,11 +85,21 @@ async function request<T>(url: string, options?: RequestOptions): Promise<ApiRes
   }
 
   const result: ApiResult<T> = { status: res.status, data: (parsed as T) ?? null };
+  // B9：会话过期/未登录 —— 交给 auth 模块弹登录框（登录接口自己的 401 不算，那是密码错）
+  if (res.status === 401 && url.indexOf("/api/auth/login") !== 0) {
+    if (unauthorizedHandler) unauthorizedHandler();
+  }
   if (!res.ok) {
     const body = parsed as { error?: string; raw?: string } | null;
     result.message = body?.error ?? body?.raw ?? `HTTP ${res.status}`;
   }
   return result;
+}
+
+/** B9：收到 401 时通知界面（由 auth.ts 注册，用来弹出登录框） */
+let unauthorizedHandler: (() => void) | null = null;
+export function onUnauthorized(handler: () => void): void {
+  unauthorizedHandler = handler;
 }
 
 function describe(e: unknown): string {
@@ -186,7 +204,73 @@ export const api = {
     request<MonitorConfigResponse>("/api/monitor/config"),
 
   saveMonitorConfig: (options: MonitorOptions): Promise<ApiResult<SaveMonitorConfigResponse>> =>
-    request<SaveMonitorConfigResponse>("/api/monitor/config", { method: "POST", json: options })
+    request<SaveMonitorConfigResponse>("/api/monitor/config", { method: "POST", json: options }),
+
+  // ---- B9 账号与鉴权 ----
+  authStatus: (): Promise<ApiResult<AuthStatus>> => request<AuthStatus>("/api/auth/status"),
+
+  login: (username: string, password: string): Promise<ApiResult<LoginResponse>> =>
+    request<LoginResponse>("/api/auth/login", { method: "POST", json: { username, password } }),
+
+  logout: (): Promise<ApiResult<{ ok: boolean; note?: string }>> =>
+    request<{ ok: boolean; note?: string }>("/api/auth/logout", { method: "POST" }),
+
+  me: (): Promise<ApiResult<{ username: string; role: string; viaServiceKey: boolean; expiresAtMs: number }>> =>
+    request<{ username: string; role: string; viaServiceKey: boolean; expiresAtMs: number }>("/api/auth/me"),
+
+  changePassword: (
+    username: string | null,
+    oldPassword: string | null,
+    newPassword: string
+  ): Promise<ApiResult<{ ok: boolean; username: string; byAdmin: boolean; note?: string }>> =>
+    request<{ ok: boolean; username: string; byAdmin: boolean; note?: string }>("/api/auth/password", {
+      method: "POST",
+      json: { username, oldPassword, newPassword }
+    }),
+
+  authUsers: (): Promise<ApiResult<AuthUsersResponse>> => request<AuthUsersResponse>("/api/auth/users"),
+
+  addUser: (
+    username: string,
+    password: string,
+    role: string,
+    note?: string
+  ): Promise<ApiResult<{ ok: boolean; user: unknown }>> =>
+    request<{ ok: boolean; user: unknown }>("/api/auth/users", {
+      method: "POST",
+      json: { username, password, role, note }
+    }),
+
+  updateUser: (
+    username: string,
+    role: string | null,
+    enabled: boolean | null,
+    note?: string | null
+  ): Promise<ApiResult<{ ok: boolean; user: unknown }>> =>
+    request<{ ok: boolean; user: unknown }>("/api/auth/users/update", {
+      method: "POST",
+      json: { username, role, enabled, note }
+    }),
+
+  deleteUser: (username: string): Promise<ApiResult<{ ok: boolean; note?: string }>> =>
+    request<{ ok: boolean; note?: string }>("/api/auth/users/delete", { method: "POST", json: { username } }),
+
+  resetPassword: (username: string, password: string): Promise<ApiResult<{ ok: boolean; note?: string }>> =>
+    request<{ ok: boolean; note?: string }>("/api/auth/users/reset-password", {
+      method: "POST",
+      json: { username, password }
+    }),
+
+  authConfig: (): Promise<ApiResult<AuthConfigResponse>> => request<AuthConfigResponse>("/api/auth/config"),
+
+  saveAuthConfig: (options: AuthOptions): Promise<ApiResult<{ ok: boolean; backup?: string | null }>> =>
+    request<{ ok: boolean; backup?: string | null }>("/api/auth/config", { method: "POST", json: options }),
+
+  rotateServiceKey: (): Promise<ApiResult<{ ok: boolean; serviceKey: string; note?: string }>> =>
+    request<{ ok: boolean; serviceKey: string; note?: string }>("/api/auth/service-key", { method: "POST" }),
+
+  authEvents: (limit: number): Promise<ApiResult<AuthEventRecord[]>> =>
+    request<AuthEventRecord[]>("/api/auth/events?limit=" + limit)
 };
 
 export const STREAM_URL = "/api/stream";

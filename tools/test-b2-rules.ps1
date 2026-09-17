@@ -123,6 +123,8 @@ robocopy $SourceRuntime $WorkDir /E /XD spool data images logs /NFL /NDL /NJH /N
 New-Item -ItemType Directory -Force -Path (Join-Path $WorkDir 'spool'), (Join-Path $WorkDir 'data'), (Join-Path $WorkDir 'images'), (Join-Path $WorkDir 'logs') | Out-Null
 
 Start-Platform
+. (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'b9-auth-helper.ps1')
+$null = Enable-TestAuth -WorkDir $WorkDir   # B9：管理接口要凭据，脚本用服务令牌
 
 try {
 # ---------------------------------------------------------------- 1) 规则测试接口（未配置规则时：全部保留）

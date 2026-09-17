@@ -9,7 +9,7 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=c8468a3c" />
+<link rel="stylesheet" href="./app.css?v=e44d2a93" />
 </head>
 <body>
 <header>
@@ -23,8 +23,28 @@
     <button id="tab-history">历史查询</button>
     <button id="tab-config">配置</button>
   </nav>
-  <div class="status"><span id="dot" class="dot"></span><span id="conn">连接中…</span></div>
+  <div class="status">
+    <span id="dot" class="dot"></span><span id="conn">连接中…</span>
+    <span id="userBox" class="user">未登录</span>
+    <button class="btn secondary small" id="btnLogout" style="display:none">退出</button>
+  </div>
 </header>
+
+<!-- ==================== B9 登录遮罩 ==================== -->
+<div id="loginMask" class="mask hidden">
+  <div class="loginbox">
+    <div class="brand">DWS 物流解码平台</div>
+    <div class="muted" id="loginSub">管理功能需要登录（实时数据不受影响）</div>
+    <div class="row"><label for="loginUser">用户名</label><input type="text" id="loginUser" autocomplete="username" /></div>
+    <div class="row"><label for="loginPass">密码</label><input type="password" id="loginPass" autocomplete="current-password" /></div>
+    <div class="toolbar">
+      <button class="btn" id="btnLogin">登录</button>
+      <button class="btn secondary" id="btnSkipLogin" style="display:none">先不登录（只读浏览）</button>
+      <span id="loginMsg" class="err"></span>
+    </div>
+    <div class="muted" id="loginHint" style="font-size:12px"></div>
+  </div>
+</div>
 
 <main>
   <!-- ==================== 实时监控 ==================== -->
@@ -404,6 +424,95 @@
       <div class="muted" id="monConfigFile" style="font-size:12px"></div>
     </div>
 
+    <!-- ==================== B9 账号与安全 ==================== -->
+    <div class="panel">
+      <h2>账号与安全（B9）</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:12px">
+        管理接口（配置、规则、下游、监控阈值、账号）必须登录才能调用；读接口默认不受影响（可在下面打开全保护）。
+        密码只保存 PBKDF2-SHA256 哈希；连续输错会锁定账号；登录、失败、锁定、改密、账号变更都有审计记录。
+      </div>
+      <div id="authSummary" class="muted" style="font-size:12px;margin-bottom:10px">加载中…</div>
+      <div id="authLoggedOut" class="empty" style="display:none">未登录：请用右上角"退出"旁边的登录入口登录后再管理账号。</div>
+
+      <div id="authLoggedIn" style="display:none">
+        <h3>修改我的密码</h3>
+        <div class="toolbar">
+          <label class="chk">原密码：<input type="password" id="chgOld" size="14" autocomplete="current-password" /></label>
+          <label class="chk">新密码：<input type="password" id="chgNew" size="14" autocomplete="new-password" /></label>
+          <label class="chk">再输一遍：<input type="password" id="chgNew2" size="14" autocomplete="new-password" /></label>
+          <button class="btn" id="btnChangePwd">修改密码</button>
+          <span id="chgMsg"></span>
+        </div>
+        <div class="muted" style="font-size:12px;margin-bottom:8px">
+          要求：至少 8 位、同时含字母和数字。改密后其它设备的会话会失效，当前这次会话保留。
+        </div>
+
+        <div id="authAdminOnly" style="display:none">
+          <h3>登录限制与服务令牌</h3>
+          <div class="toolbar">
+            <label class="chk"><input type="checkbox" id="authEnabled" checked /> 启用鉴权</label>
+            <label class="chk"><input type="checkbox" id="authProtectRead" /> 读接口也要求登录（全保护）</label>
+            <label class="chk"><input type="checkbox" id="authAllowServiceKey" checked /> 允许服务令牌（X-Api-Key）</label>
+          </div>
+          <div class="toolbar">
+            <label class="chk">密码错误次数上限：<input type="text" id="authMaxFail" size="4" /></label>
+            <label class="chk">锁定时长(分钟)：<input type="text" id="authLockMin" size="4" /></label>
+            <label class="chk">失败窗口(分钟)：<input type="text" id="authWindowMin" size="4" /></label>
+            <label class="chk">会话时长(分钟)：<input type="text" id="authSessionMin" size="5" /></label>
+          </div>
+          <div class="toolbar">
+            <button class="btn" id="btnAuthSave">保存并生效</button>
+            <button class="btn secondary" id="btnAuthReload">重新读取</button>
+            <button class="btn secondary" id="btnRotateKey">轮换服务令牌</button>
+            <span id="authBadge"></span>
+            <span id="authMsg" class="muted" style="font-size:12px"></span>
+          </div>
+          <div class="muted" style="font-size:12px">
+            服务令牌（脚本 / 上位机集成用，请求头 <span class="code">X-Api-Key</span>，别当密码用）：
+            <span class="code" id="authServiceKey">—</span>
+          </div>
+          <div class="muted" id="authFile" style="font-size:12px;margin:8px 0"></div>
+
+          <h3>账号</h3>
+          <div class="toolbar">
+            <label class="chk">用户名：<input type="text" id="newUser" size="12" /></label>
+            <label class="chk">初始密码：<input type="text" id="newPass" size="14" /></label>
+            <label class="chk">角色：
+              <select id="newRole">
+                <option value="operator">操作员（可改配置）</option>
+                <option value="viewer">只读（只能看）</option>
+                <option value="admin">管理员（含账号管理）</option>
+              </select>
+            </label>
+            <button class="btn" id="btnAddUser">新增账号</button>
+            <span id="newUserMsg"></span>
+          </div>
+          <div class="scroll-x">
+            <table>
+              <thead>
+                <tr>
+                  <th>用户名</th><th>角色</th><th>状态</th><th>失败/锁定</th>
+                  <th>待改密</th><th>最近登录</th><th>来源 IP</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="authUserRows"></tbody>
+            </table>
+          </div>
+
+          <h3>最近登录 / 鉴权记录</h3>
+          <div class="toolbar">
+            <button class="btn secondary" id="btnLoadAuthEvents">刷新记录</button>
+          </div>
+          <div class="scroll-x">
+            <table>
+              <thead><tr><th>时间</th><th>账号</th><th>事件</th><th>来源 IP</th><th>说明</th></tr></thead>
+              <tbody id="authEventRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="panel">
       <h2>一键应用配置</h2>
       <div class="muted" style="font-size:12px;margin-bottom:12px">
@@ -444,6 +553,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=c8468a3c"></script>
+<script type="module" src="./js/main.js?v=e44d2a93"></script>
 </body>
 </html>

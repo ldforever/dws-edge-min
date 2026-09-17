@@ -100,3 +100,15 @@ a.img:hover img.thumb { border-color: #58a6ff; }
 .alertbar.ok { border-color: #2ea04366; background: #14251b; color: #3fb950; }
 .alertbar.warn { border-color: #d2992266; background: #2a2213; color: #d29922; }
 .alertbar.err { border-color: #f8514966; background: #2a1a17; color: #f85149; }
+
+/* B9：登录遮罩与顶栏用户区 */
+.mask { position: fixed; inset: 0; background: rgba(6, 9, 13, .72); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.mask.hidden { display: none; }
+.loginbox { background: #161c25; border: 1px solid #263041; border-radius: 10px; padding: 22px 24px; width: 360px; box-shadow: 0 12px 40px rgba(0, 0, 0, .5); }
+.loginbox .brand { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
+.loginbox .row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.loginbox .row label { width: 56px; color: #8b98a9; font-size: 13px; }
+.loginbox .row input { flex: 1; }
+.loginbox .toolbar { margin: 16px 0 8px; }
+.err { color: #f0883e; font-size: 12px; }
+.user { font-size: 12px; color: #c9d1d9; }

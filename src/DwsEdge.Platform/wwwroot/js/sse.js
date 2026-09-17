@@ -4,13 +4,15 @@
  * 平台在连接建立时会先补发：最近 20 条包裹 + 统计 + 当前所有相机状态，
  * 所以这里不用自己再拉一遍初始数据；断线后 2 秒自动重连。
  */
-import { STREAM_URL } from "./api.js?v=c8468a3c";
+import { STREAM_URL } from "./api.js?v=e44d2a93";
 const RECONNECT_DELAY_MS = 2000;
 export function connectStream(handlers) {
     const es = new EventSource(STREAM_URL);
     es.onopen = () => handlers.onStatus(true);
     es.onerror = () => {
         handlers.onStatus(false);
+        if (handlers.onError)
+            handlers.onError();
         es.close();
         window.setTimeout(() => connectStream(handlers), RECONNECT_DELAY_MS);
     };

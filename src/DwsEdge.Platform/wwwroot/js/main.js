@@ -4,17 +4,18 @@
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
  * 也没有全局变量：模块之间只通过 import 通信，方便以后换壳（WebView2）或加页面。
  */
-import { api } from "./api.js?v=c8468a3c";
-import { connectStream } from "./sse.js?v=c8468a3c";
-import { $ } from "./dom.js?v=c8468a3c";
-import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=c8468a3c";
-import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=c8468a3c";
-import { initConfig, refreshConfig } from "./config.js?v=c8468a3c";
-import { initRules, refreshRules } from "./rules.js?v=c8468a3c";
-import { initDedup, refreshDedup } from "./dedup.js?v=c8468a3c";
-import { initHistory, refreshHistory } from "./history.js?v=c8468a3c";
-import { initDownstream, refreshDownstream } from "./downstream.js?v=c8468a3c";
-import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=c8468a3c";
+import { api } from "./api.js?v=e44d2a93";
+import { connectStream } from "./sse.js?v=e44d2a93";
+import { $ } from "./dom.js?v=e44d2a93";
+import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=e44d2a93";
+import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=e44d2a93";
+import { initConfig, refreshConfig } from "./config.js?v=e44d2a93";
+import { initRules, refreshRules } from "./rules.js?v=e44d2a93";
+import { initDedup, refreshDedup } from "./dedup.js?v=e44d2a93";
+import { initHistory, refreshHistory } from "./history.js?v=e44d2a93";
+import { initDownstream, refreshDownstream } from "./downstream.js?v=e44d2a93";
+import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=e44d2a93";
+import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=e44d2a93";
 const PAGES = ["realtime", "devices", "history", "config"];
 function showPage(name) {
     for (const page of PAGES) {
@@ -34,6 +35,7 @@ function showPage(name) {
         void refreshDedup();
         void refreshDownstream();
         void refreshMonitorConfig();
+        void refreshAuthPanel();
     }
 }
 function setConnectionState(connected) {
@@ -49,6 +51,7 @@ function bootstrap() {
     initHistory();
     initDownstream();
     initMonitor();
+    initAuth();
     for (const page of PAGES) {
         $("tab-" + page).addEventListener("click", () => showPage(page));
     }
@@ -65,10 +68,16 @@ function bootstrap() {
         onMonitor: (snapshot) => renderMonitorSnapshot(snapshot),
         onAlert: (alert) => renderAlert(alert),
         onStats: renderStats,
-        onStatus: setConnectionState
+        onStatus: setConnectionState,
+        // B9：推送断了（多半是会话过期）→ 刷一次登录态，需要的话弹回登录框
+        onError: () => {
+            void refreshAuth(true);
+        }
     });
     // 首屏也拉一次监控（SSE 会补发，但"页面比平台先起来"或断线期间得靠这个）
     void refreshMonitor();
+    // B9：先问一次登录态，决定要不要弹登录框
+    void refreshAuth();
 }
 /** 新包裹到达后刷新统计（合并 500ms 内的多次刷新） */
 let statsTimer = null;

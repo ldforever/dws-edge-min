@@ -154,6 +154,8 @@ Write-Host ("快照文件：" + $fileMb + " MB（" + ($Records * 2) + " 行，�
 
 try {
     Start-Platform
+    . (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'b9-auth-helper.ps1')
+    $null = Enable-TestAuth -WorkDir $WorkDir   # B9：管理接口要凭据，脚本用服务令牌
 
     # ---------------------------------------------------------------- 1) 索引与查询
     Write-Host "`n=== 1) 索引收敛 + 全量查询 ===" -ForegroundColor Cyan
