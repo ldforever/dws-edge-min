@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using System.IO;
 using System.Text;
 using System.Globalization;
+using System.Collections.Generic;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
@@ -44,7 +45,10 @@ namespace DwsEdge.Platform
             builder.Services.AddSingleton<HistoryStore>();
             builder.Services.AddSingleton<DedupStore>();
             builder.Services.AddSingleton<BarcodeRuleStore>();
+            builder.Services.AddSingleton<DownstreamStore>();
             builder.Services.AddSingleton<ConfigStore>();
+            builder.Services.AddSingleton<DownstreamSender>();
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<DownstreamSender>());
             builder.Services.AddHostedService<SpoolTailer>();
             builder.Services.AddHostedService<StorageProbe>();
 
@@ -160,6 +164,74 @@ namespace DwsEdge.Platform
             {
                 dedup.Compact();
                 return Results.Json(dedup.Stats());
+            });
+
+            // B4：下游 TCP 输出（配置 + 状态 + 测试连接 + 模板预览 + 下发日志）
+            app.MapGet("/api/downstream", (DownstreamStore config, DownstreamSender sender) =>
+            {
+                DownstreamOptions options = config.Current;
+                return Results.Json(new
+                {
+                    file = config.FilePath,
+                    config = options,
+                    stats = sender.Stats(),
+                    templateFields = MessageTemplate.Fields
+                });
+            });
+
+            app.MapPost("/api/downstream", (DownstreamStore config, DownstreamSender sender, DownstreamOptions request) =>
+            {
+                try
+                {
+                    string backup = config.Save(request);
+                    return Results.Json(new
+                    {
+                        ok = true,
+                        file = config.FilePath,
+                        backup,
+                        stats = sender.Stats(),
+                        note = "已立即生效（发送服务会按新配置重连）"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapPost("/api/downstream/test", (DownstreamStore config, DownstreamSender sender, DownstreamOptions request) =>
+            {
+                DownstreamOptions options = request ?? config.Current;
+                return Results.Json(sender.TestConnection(options));
+            });
+
+            // 模板预览：用最近一条包裹渲染，返回报文（把不可见字符转义出来方便看）
+            app.MapPost("/api/downstream/preview", (SpoolStore store, DownstreamPreviewRequest request) =>
+            {
+                string template = request != null ? request.template : null;
+                if (string.IsNullOrEmpty(template))
+                {
+                    template = "{code}|{time}|{camera}|{weight}|{volume}|{traceId}\\r\\n";
+                }
+
+                ParcelRecord sample = store.LatestParcels(1).Count > 0 ? store.LatestParcels(1)[0] : null;
+                string rendered = MessageTemplate.Render(template, sample);
+                List<string> problems = MessageTemplate.Validate(template);
+
+                return Results.Json(new
+                {
+                    usingSample = sample != null,
+                    sample = sample == null ? null : new { sample.traceId, sample.time, codes = sample.codes },
+                    rendered = rendered.Replace("\r", "\\r").Replace("\n", "\\n"),
+                    bytes = System.Text.Encoding.UTF8.GetByteCount(rendered),
+                    problems
+                });
+            });
+
+            app.MapGet("/api/downstream/log", (DownstreamSender sender, int? limit) =>
+            {
+                int take = limit.HasValue ? Math.Clamp(limit.Value, 1, 200) : 50;
+                return Results.Json(sender.RecentLog(take));
             });
 
             // A9：设备信息（相机清单 + 方位 + 型号/序列号 + 在线状态）

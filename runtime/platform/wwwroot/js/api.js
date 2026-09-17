@@ -58,6 +58,15 @@ export const api = {
     history: (filter) => request("/api/history?" + historyQueryString(filter, true)),
     /** 导出用的 URL（点击后由浏览器直接下载 CSV） */
     historyExportUrl: (filter) => "/api/history/export?" + historyQueryString(filter, false),
+    // ---- B4 下游 TCP 输出 ----
+    downstream: () => request("/api/downstream"),
+    saveDownstream: (options) => request("/api/downstream", { method: "POST", json: options }),
+    testDownstream: (options) => request("/api/downstream/test", {
+        method: "POST",
+        json: options
+    }),
+    previewDownstream: (template) => request("/api/downstream/preview", { method: "POST", json: { template } }),
+    downstreamLog: (limit) => request(`/api/downstream/log?limit=${limit}`),
     /** 图片按需读取接口（只允许图片根目录内的文件） */
     imageUrl: (path) => "/api/images?path=" + encodeURIComponent(path)
 };

@@ -14,6 +14,10 @@ import type {
   ConfigSummary,
   DedupStats,
   DeviceView,
+  DownstreamLogItem,
+  DownstreamOptions,
+  DownstreamPreview,
+  DownstreamResponse,
   FilteredCodeRecord,
   HistoryFilter,
   HistoryResult,
@@ -126,6 +130,25 @@ export const api = {
   /** 导出用的 URL（点击后由浏览器直接下载 CSV） */
   historyExportUrl: (filter: HistoryFilter): string =>
     "/api/history/export?" + historyQueryString(filter, false),
+
+  // ---- B4 下游 TCP 输出 ----
+  downstream: (): Promise<ApiResult<DownstreamResponse>> =>
+    request<DownstreamResponse>("/api/downstream"),
+
+  saveDownstream: (options: DownstreamOptions): Promise<ApiResult<{ ok: boolean; note?: string }>> =>
+    request<{ ok: boolean; note?: string }>("/api/downstream", { method: "POST", json: options }),
+
+  testDownstream: (options: DownstreamOptions): Promise<ApiResult<{ ok: boolean; target?: string; error?: string; note?: string }>> =>
+    request<{ ok: boolean; target?: string; error?: string; note?: string }>("/api/downstream/test", {
+      method: "POST",
+      json: options
+    }),
+
+  previewDownstream: (template: string): Promise<ApiResult<DownstreamPreview>> =>
+    request<DownstreamPreview>("/api/downstream/preview", { method: "POST", json: { template } }),
+
+  downstreamLog: (limit: number): Promise<ApiResult<DownstreamLogItem[]>> =>
+    request<DownstreamLogItem[]>(`/api/downstream/log?limit=${limit}`),
 
   /** 图片按需读取接口（只允许图片根目录内的文件） */
   imageUrl: (path: string): string => "/api/images?path=" + encodeURIComponent(path)

@@ -472,6 +472,11 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 | `POST /api/dedup/compact` | **B1** 立即整理归档（合并 WAL、清理过期），返回整理后的状态 |
 | `GET /api/history?from=&to=&code=&deviceId=&noread=&dispatchState=&hasImage=&limit=&offset=` | **B3** 历史查询（走按 traceId 收敛的索引，返回 `total`/`elapsedMs`/`fromIndex`） |
 | `GET /api/history/export?（同上参数）` | **B3** 导出 CSV（UTF-8 BOM，字段含条码/时间/相机/图片路径/无码/下发状态） |
+| `GET /api/downstream` | **B4** 下游输出配置 + 运行状态（连接状态/已发/失败/待发/最近错误/模板问题） |
+| `POST /api/downstream` | **B4** 保存下游配置（自动备份、立即生效） |
+| `POST /api/downstream/test` | **B4** 测试到下游的 TCP 连接 |
+| `POST /api/downstream/preview` | **B4** 用最近一条包裹渲染模板，返回实际报文 |
+| `GET /api/downstream/log?limit=` | **B4** 最近下发记录（成功/失败/字节数/错误） |
 | `GET /api/devices` | 设备信息页数据：相机清单（方位/清单标识/型号/序列号/在线/未发现）+ 汇总 + 六面聚合（A9） |
 | `GET /api/camera-positions` | 相机方位映射的当前内容（A9） |
 | `POST /api/camera-positions` | 保存方位映射（写 `config\camera-positions.ini`，自动备份） |
@@ -676,7 +681,60 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b3-history.ps1
 覆盖：索引收敛、全量/各种过滤/分页、CSV 行数与表头字段、**硬杀进程后重启数据仍在**（断电不丢），
 共 27 项断言。
 
-## 九、两个进程的边界
+## 九、下游 TCP 输出（B4）
+
+把包裹数据按下游协议发出去：**TCP 客户端 + 可配置报文模板 + 失败重传**。
+配置文件 `runtime\config\downstream.json`（首次启动自动生成，默认**不启用**，避免误发）：
+
+```json
+{
+  "enabled": true,
+  "protocol": "tcp-client",
+  "host": "192.168.1.50",
+  "port": 9000,
+  "template": "{code}|{time}|{camera}|{weight}|{volume}|{traceId}\\r\\n",
+  "encoding": "utf-8",
+  "connectTimeoutMs": 3000,
+  "retryIntervalMs": 5000,
+  "maxAttempts": 0,
+  "sendOnlyComplete": true,
+  "sendIntervalMs": 0
+}
+```
+
+**数据格式模板**：字段名写在花括号里，支持 `\r \n \t \\` 转义，所以一行模板就能写出分隔符和换行。
+可用字段：`{traceId} {code} {codes} {codeCount} {noread} {time} {timestamp} {camera} {deviceId}
+{weight} {length} {width} {height} {volume} {image} {imageCount} {position} {dispatchAttempts}`。
+写错的字段名**不会被静默丢掉** —— 渲染时原样保留，"模板预览"和保存校验都会报出来。
+
+**不丢不重是怎么保证的**：
+
+| 机制 | 说明 |
+|---|---|
+| 队列在历史库里 | 包裹的 `dispatchState`（待发/已发/失败）持久化，平台重启后队列自动恢复 |
+| 发成功才标记 | 先写 socket、再 ack 标记 `sent`；下游断线期间只是排队，重连后每条只发一次 |
+| 连接活性检测 | 对端进程被杀时 socket 不会立刻报错，直接写会"假成功"（数据丢进黑洞却标记已发）。所以**写之前先检测对端 FIN/错误**，判定断线就重连、包裹继续排队 |
+| 失败重试 | 发送失败记录 `failed` + 原因，按 `retryIntervalMs` 一直重试（`maxAttempts=0` 表示不限次数） |
+| 幂等键 | 默认模板带 `{traceId}`；唯一可能重复的窗口是"写成功但进程在 ack 前被杀"，下游按 traceId 去重即可 |
+
+**界面**（配置页 →「下游输出（TCP）」）：启用开关、地址/端口、编码、重试间隔、"只发完整包裹"、
+模板编辑框、**测试连接**、**模板预览**（用最近一条包裹渲染，显示出实际报文和字节数）、
+状态行（连接状态/已下发/失败/待发/重试/最近错误）、最近下发记录表。
+
+接口：`GET /api/downstream`（配置+状态）、`POST /api/downstream`（保存，自动备份、立即生效）、
+`POST /api/downstream/test`（测试连接）、`POST /api/downstream/preview`（模板预览）、
+`GET /api/downstream/log?limit=`（最近下发记录）。
+
+回归测试（脚本自己起一个 TCP 服务端，不需要真实下游）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\test-b4-downstream.ps1
+```
+
+覆盖：模板格式与字段、断线期间不丢、恢复后自动补发且**每条只发一次**、换模板立即生效、
+模板校验，共 31 项断言。
+
+## 十、两个进程的边界
 
 | | 采集宿主（Edge） | 业务平台（Platform） |
 |---|---|---|
@@ -689,7 +747,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b3-history.ps1
 通信：V1 用文件 spool（`SpoolTailer` 增量读取，只处理完整行）；V2 换成 gRPC/命名管道时只需替换 `SpoolTailer`，
 `SpoolStore` 与平台 API 不动。
 
-## 十、代码导读
+## 十一、代码导读
 
 **采集侧（net48）**
 
@@ -706,6 +764,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b3-history.ps1
 - `DwsEdge.Platform/BarcodeRuleStore.cs`：规则文件的读写、校验、备份与热加载。
 - `DwsEdge.Platform/DedupStore.cs`：去重指纹归档（按 traceId 的索引 + WAL + 定期整理 + 保留期）。
 - `DwsEdge.Platform/HistoryStore.cs`：历史库（快照 + 按 traceId 收敛的索引）、查询过滤、CSV 导出。
+- `DwsEdge.Platform/DownstreamSender.cs` + `DownstreamStore.cs` + `MessageTemplate.cs`：B4 下游 TCP 输出（模板、重传、连接活性检测）。
 
 **平台侧（net10）**
 
@@ -721,7 +780,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b3-history.ps1
 - `frontend/src/realtime.ts` / `devices.ts` / `config.ts`：三个页签各自的渲染逻辑。
 - `frontend/src/sse.ts` / `dom.ts`：实时推送封装与 DOM 小工具。
 
-## 十一、常见问题
+## 十二、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -743,7 +802,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b3-history.ps1
 | 配置页红字"找不到 apply-config.ps1" | 跑一次 `build.ps1`（会把 `tools\*.ps1` 拷到 `runtime\tools`），或手工把 tools 目录放到 runtime 旁边 |
 | 相机显示"未发现" | cfg 里 `enable="1"` 但 SDK 没报；查上电、网线、网段，或该相机被别的软件占用 |
 
-## 十二、下一步（V1 完整版）
+## 十三、下一步（V1 完整版）
 
 采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做），平台侧包裹合并 / 历史库 / 存图访问 /
 统计与实时推送 / 设备信息 / 一键应用配置也都打通了。接着按 V1 需求清单排：

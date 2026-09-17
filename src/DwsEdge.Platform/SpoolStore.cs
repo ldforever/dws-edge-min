@@ -754,6 +754,23 @@ namespace DwsEdge.Platform
         }
 
         /// <summary>待下发的包裹：状态是 pending/failed，并且已经"完整"（分阶段 provider 要等重量体积）。</summary>
+        public int PendingDispatchCount()
+        {
+            lock (_sync)
+            {
+                int count = 0;
+                foreach (ParcelRecord record in _byTrace.Values)
+                {
+                    if (IsDispatchable(record))
+                    {
+                        count++;
+                    }
+                }
+                return count;
+            }
+        }
+
+        /// <summary>待下发的包裹：状态是 pending/failed，并且已经"完整"（分阶段 provider 要等重量体积）。</summary>
         private static bool IsDispatchable(ParcelRecord record)
         {
             if (record == null || record.complete != true)

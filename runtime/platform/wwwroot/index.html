@@ -9,7 +9,7 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=31baa068" />
+<link rel="stylesheet" href="./app.css?v=665be265" />
 </head>
 <body>
 <header>
@@ -174,6 +174,53 @@
     </div>
 
     <div class="panel">
+      <h2>下游输出（TCP，B4）</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:10px">
+        按模板把包裹数据通过 TCP 客户端发给下游。发成功才标记"已下发"，
+        下游断线期间包裹留在待发队列里，恢复后自动补发；发送失败按下面配置的间隔一直重试。
+        模板里带 <span class="code">{traceId}</span> 时，下游可以按它做去重。
+      </div>
+
+      <div class="toolbar">
+        <label class="chk"><input type="checkbox" id="dsEnabled" /> 启用输出</label>
+        <label class="chk">地址：<input type="text" id="dsHost" size="14" placeholder="127.0.0.1" /></label>
+        <label class="chk">端口：<input type="text" id="dsPort" size="6" placeholder="9000" /></label>
+        <label class="chk">编码：
+          <select id="dsEncoding">
+            <option value="utf-8">UTF-8</option>
+            <option value="gbk">GBK</option>
+            <option value="ascii">ASCII</option>
+          </select>
+        </label>
+        <label class="chk">重试间隔(ms)：<input type="text" id="dsRetry" size="6" placeholder="5000" /></label>
+        <label class="chk"><input type="checkbox" id="dsOnlyComplete" checked /> 只发完整包裹（等重量体积）</label>
+      </div>
+
+      <h3>数据格式模板</h3>
+      <textarea id="dsTemplate" spellcheck="false" style="min-height:70px"
+        placeholder="{code}|{time}|{camera}|{weight}|{volume}|{traceId}\r\n"></textarea>
+      <div class="muted" id="dsFields" style="font-size:12px;margin-top:4px"></div>
+      <div class="toolbar">
+        <button class="btn" id="btnDsSave">保存并生效</button>
+        <button class="btn secondary" id="btnDsTest">测试连接</button>
+        <button class="btn secondary" id="btnDsPreview">模板预览</button>
+        <button class="btn secondary" id="btnDsRefresh">刷新状态</button>
+        <span id="dsBadge"></span>
+      </div>
+      <div class="muted" id="dsMsg" style="font-size:12px"></div>
+      <div id="dsProblems"></div>
+      <pre class="out" id="dsPreview" style="max-height:160px">（点"模板预览"看看按当前模板生成的报文长什么样）</pre>
+      <div class="muted" id="dsFile" style="font-size:12px;margin:8px 0"></div>
+      <div id="dsSummary" class="muted" style="font-size:12px;margin-bottom:8px"></div>
+
+      <h3>最近下发记录</h3>
+      <table>
+        <thead><tr><th>时间</th><th>包裹</th><th>结果</th><th>字节</th><th>说明</th><th>错误</th></tr></thead>
+        <tbody id="dsLogRows"></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
       <h2>去重指纹归档（B1）</h2>
       <div class="muted" style="font-size:12px;margin-bottom:10px">
         平台靠这里记录的"已处理事件指纹"识别重复上报。归档按 <b>traceId 一条</b>，
@@ -291,6 +338,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=31baa068"></script>
+<script type="module" src="./js/main.js?v=665be265"></script>
 </body>
 </html>

@@ -237,6 +237,13 @@ namespace DwsEdge.Platform
         public Dictionary<string, string> positions { get; set; }
     }
 
+    /// <summary>B4：模板预览请求体。</summary>
+    public sealed class DownstreamPreviewRequest
+    {
+        /// <summary>要预览的模板；为空则用默认模板。</summary>
+        public string template { get; set; }
+    }
+
     /// <summary>B1：下游回报下发结果的请求体。</summary>
     public sealed class DispatchAckRequest
     {

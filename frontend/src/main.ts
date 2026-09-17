@@ -13,6 +13,7 @@ import { initConfig, refreshConfig } from "./config.js";
 import { initRules, refreshRules } from "./rules.js";
 import { initDedup, refreshDedup } from "./dedup.js";
 import { initHistory, refreshHistory } from "./history.js";
+import { initDownstream, refreshDownstream } from "./downstream.js";
 
 type PageName = "realtime" | "devices" | "history" | "config";
 const PAGES: PageName[] = ["realtime", "devices", "history", "config"];
@@ -30,6 +31,7 @@ function showPage(name: PageName): void {
     void refreshConfig();
     void refreshRules();
     void refreshDedup();
+    void refreshDownstream();
   }
 }
 
@@ -45,6 +47,7 @@ function bootstrap(): void {
   initRules();
   initDedup();
   initHistory();
+  initDownstream();
 
   for (const page of PAGES) {
     $("tab-" + page).addEventListener("click", () => showPage(page));

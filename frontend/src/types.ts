@@ -363,3 +363,62 @@ export interface HistoryResult {
   fromIndex: boolean;
   items: ParcelRecord[];
 }
+
+// ---------------------------------------------------------------- B4 下游输出
+
+/** 下游 TCP 输出配置（对应 runtime\config\downstream.json） */
+export interface DownstreamOptions {
+  enabled: boolean;
+  protocol: string;
+  host: string;
+  port: number;
+  template: string;
+  encoding: string;
+  connectTimeoutMs: number;
+  retryIntervalMs: number;
+  /** 0 = 一直重试 */
+  maxAttempts: number;
+  /** 分阶段 provider：等重量体积到齐再发 */
+  sendOnlyComplete: boolean;
+  sendIntervalMs: number;
+}
+
+export interface DownstreamStats {
+  enabled: boolean;
+  target: string;
+  connected: boolean;
+  connectedSince?: string | null;
+  sent: number;
+  failed: number;
+  retries: number;
+  bytesSent: number;
+  queueDepth: number;
+  lastSentAt?: string | null;
+  lastError?: string | null;
+  templateProblems: string[];
+}
+
+export interface DownstreamResponse {
+  file: string;
+  config: DownstreamOptions;
+  stats: DownstreamStats;
+  templateFields: string[];
+}
+
+export interface DownstreamLogItem {
+  time: string;
+  traceId?: string | null;
+  success: boolean;
+  attempt: number;
+  bytes: number;
+  message: string;
+  payload?: string | null;
+  error?: string | null;
+}
+
+export interface DownstreamPreview {
+  usingSample: boolean;
+  rendered: string;
+  bytes: number;
+  problems: string[];
+}
