@@ -84,6 +84,34 @@ powershell -ExecutionPolicy Bypass -File .\tools\set-trigger-mode.ps1 -Mode soft
 powershell -ExecutionPolicy Bypass -File .\run.ps1 -TriggerOnce -Duration 8
 ```
 
+### 接 17 台相机（六面扫）
+
+相机清单由 `runtime\Cfg\LogisticsBase.cfg` 的 `<Camera .../>` 声明决定，不要手改，用工具生成：
+
+```powershell
+# 1) 照着 config\cameras-17.example.txt 改成现场实际的 17 个 IP / Key / Id
+#    每行一台：ip=172.20.10.11 或 key=序列号 或 id=厂商:序列号
+
+# 2) 生成配置（自动备份 cfg，mode 自动改成 2，num 自动等于台数）
+powershell -ExecutionPolicy Bypass -File .\tools\make-camera-cfg.ps1 -CameraList .\config\cameras-17.example.txt
+
+# 只看结果、不写文件
+powershell -ExecutionPolicy Bypass -File .\tools\make-camera-cfg.ps1 -CameraList .\config\cameras-17.example.txt -Preview
+
+# 3) 重启采集宿主，启动时会自动做相机配置自检
+powershell -ExecutionPolicy Bypass -File .\run.ps1 -Duration 10
+```
+
+**启动前自检**（不通过直接拒绝启动，不用等 SDK 报 3000）：
+
+- `mode=2` 时 `num` 必须等于 `enable="1"` 的相机数量；
+- `num` 必须在 1-20 之间；
+- 不允许重复声明或 ip/key/id 为空的声明；
+- 启动日志会先打印完整清单：`cfg 相机计划：mode=2 num=17 randWorkMode=1 启用相机=17/17`，随后逐条列出每台相机。
+
+**启动快照**：采集宿主启动成功后会为每台相机写一条 `camera-status` 快照事件（`isSnapshot=true`，带型号/序列号/厂商/固件），
+业务平台的"相机状态"区立刻就有数据，不用等第一次掉线。
+
 > 注意：如果 Visual Studio 正打开这个解决方案并在后台构建，`obj\bin` 会被 MSBuild/VBCSCompiler 占用，
 > `build.ps1` 会报“拒绝访问”。关掉 VS 再编译，或直接在 VS 里生成。
 

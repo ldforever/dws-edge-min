@@ -135,6 +135,9 @@ namespace DwsEdge.Providers.Dahua
             // 先读 cfg 判断触发模式，这样即使后面相机没连上，也能看到"软触发能不能用"的提示
             WarnIfNotSoftTriggerMode();
 
+            // 启动前自检相机声明（num 与 enable 数量、重复声明等），避免等到 SDK 报 3000
+            ValidateCameraPlan();
+
             _queue = new BlockingCollection<WorkItem>(_queueCapacity);
             _running = true;
             _worker = new Thread(WorkerLoop);
@@ -179,6 +182,7 @@ namespace DwsEdge.Providers.Dahua
             }
 
             LogCameraInventory();
+            EmitCameraSnapshot();
             _started = true;
             _sink.Log(LogLevel.Info, "采集已启动，图片目录：" + _imageRoot);
         }
@@ -653,6 +657,136 @@ namespace DwsEdge.Providers.Dahua
             catch (Exception ex)
             {
                 _sink.LogError("读取相机信息失败", ex);
+            }
+        }
+
+        /// <summary>
+        /// 启动前自检 cfg 里的相机声明：
+        ///   mode=2 时 num 必须等于 enable="1" 的数量；num 必须在 1-20；不能有重复/空声明。
+        /// 不通过就直接抛错，并把问题一次列清楚，省得现场等 SDK 报 3000。
+        /// </summary>
+        private void ValidateCameraPlan()
+        {
+            CfgCameraPlan plan = CfgCameraPlan.Read(_cfgPath);
+
+            _sink.Log(LogLevel.Info, "cfg 相机计划：" + plan.Describe());
+            for (int i = 0; i < plan.Cameras.Count; i++)
+            {
+                _sink.Log(LogLevel.Info, "  声明 " + (i + 1) + "：" + plan.Cameras[i]);
+            }
+
+            List<string> warnings = plan.Warnings();
+            for (int i = 0; i < warnings.Count; i++)
+            {
+                _sink.Log(LogLevel.Warn, "相机配置提醒：" + warnings[i]);
+            }
+
+            List<string> errors = plan.Errors();
+            if (errors.Count == 0)
+            {
+                return;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append("cfg 相机配置自检未通过（").Append(_cfgPath).Append("）：");
+            for (int i = 0; i < errors.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append("；");
+                }
+                sb.Append(errors[i]);
+            }
+            sb.Append("。可用 tools\\make-camera-cfg.ps1 重新生成相机清单。");
+            throw new ProviderException(sb.ToString());
+        }
+
+        /// <summary>
+        /// 启动时把相机清单作为"快照事件"推给业务平台（IsSnapshot=true），
+        /// 这样平台一启动就能显示完整的相机状态墙，而不是等到第一次掉线才有数据。
+        /// </summary>
+        private void EmitCameraSnapshot()
+        {
+            try
+            {
+                Dictionary<string, CameraInfo> infoByKey =
+                    new Dictionary<string, CameraInfo>(StringComparer.OrdinalIgnoreCase);
+                IEnumerable<CameraInfo> infos = _dws.GetWorkCameraInfo();
+                if (infos != null)
+                {
+                    foreach (CameraInfo info in infos)
+                    {
+                        string key = !string.IsNullOrEmpty(info.camDevExtraInfo) ? info.camDevExtraInfo : info.camDevID;
+                        if (!string.IsNullOrEmpty(key) && !infoByKey.ContainsKey(key))
+                        {
+                            infoByKey[key] = info;
+                        }
+                    }
+                }
+
+                HashSet<string> sentKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                int sent = 0;
+
+                IEnumerable<CameraTags> statusList = _dws.GetCamerasStatus();
+                if (statusList != null)
+                {
+                    foreach (CameraTags tag in statusList)
+                    {
+                        CameraStatusEvent evt = new CameraStatusEvent();
+                        evt.ProviderId = ProviderName;
+                        evt.DeviceId = tag.key;
+                        evt.UserId = tag.deviceUserID;
+                        evt.Online = tag.isOnline;
+                        evt.AtMs = NowMs();
+                        evt.IsSnapshot = true;
+
+                        CameraInfo info;
+                        if (!string.IsNullOrEmpty(tag.key) && infoByKey.TryGetValue(tag.key, out info))
+                        {
+                            evt.Model = info.camDevModelName;
+                            evt.SerialNumber = info.camDevSerialNumber;
+                            evt.Vendor = info.camDevVendor;
+                            evt.Firmware = info.camDevFirewareVersion;
+                        }
+
+                        _sink.OnCameraStatus(evt);
+                        if (!string.IsNullOrEmpty(tag.key))
+                        {
+                            sentKeys.Add(tag.key);
+                        }
+                        sent++;
+                    }
+                }
+
+                // 工作相机清单里没被状态列表覆盖的，也补一条（视为在线）
+                foreach (KeyValuePair<string, CameraInfo> pair in infoByKey)
+                {
+                    if (sentKeys.Contains(pair.Key))
+                    {
+                        continue;
+                    }
+
+                    CameraStatusEvent evt = new CameraStatusEvent();
+                    evt.ProviderId = ProviderName;
+                    evt.DeviceId = pair.Key;
+                    evt.UserId = pair.Value.camDevID;
+                    evt.Online = true;
+                    evt.AtMs = NowMs();
+                    evt.IsSnapshot = true;
+                    evt.Model = pair.Value.camDevModelName;
+                    evt.SerialNumber = pair.Value.camDevSerialNumber;
+                    evt.Vendor = pair.Value.camDevVendor;
+                    evt.Firmware = pair.Value.camDevFirewareVersion;
+
+                    _sink.OnCameraStatus(evt);
+                    sent++;
+                }
+
+                _sink.Log(LogLevel.Info, "已上报相机快照 " + sent + " 台");
+            }
+            catch (Exception ex)
+            {
+                _sink.LogError("上报相机快照失败", ex);
             }
         }
 

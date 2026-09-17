@@ -78,6 +78,8 @@ namespace DwsEdge.Core.Model
 
     /// <summary>
     /// 相机上下线事件。
+    /// 采集宿主启动时会为每台工作相机发一条"快照"事件，之后状态变化再发增量事件，
+    /// 这样业务平台一启动就能看到完整的相机清单。
     /// </summary>
     public sealed class CameraStatusEvent
     {
@@ -86,5 +88,14 @@ namespace DwsEdge.Core.Model
         public string UserId;
         public bool Online;
         public long AtMs;
+
+        /// <summary>是否来自启动快照（true=启动时的清单，false=上下线增量）。</summary>
+        public bool IsSnapshot;
+
+        // 以下为可选信息，厂商能提供就填，平台用于状态墙展示
+        public string Model;
+        public string SerialNumber;
+        public string Vendor;
+        public string Firmware;
     }
 }

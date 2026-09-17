@@ -315,6 +315,11 @@ namespace DwsEdge.Host
             sb.Append(",\"userId\":").Append(Quote(s.UserId));
             sb.Append(",\"online\":").Append(s.Online ? "true" : "false");
             sb.Append(",\"atMs\":").Append(s.AtMs.ToString(CultureInfo.InvariantCulture));
+            sb.Append(",\"isSnapshot\":").Append(s.IsSnapshot ? "true" : "false");
+            sb.Append(",\"model\":").Append(Quote(s.Model));
+            sb.Append(",\"serialNumber\":").Append(Quote(s.SerialNumber));
+            sb.Append(",\"vendor\":").Append(Quote(s.Vendor));
+            sb.Append(",\"firmware\":").Append(Quote(s.Firmware));
             sb.Append('}');
             return sb.ToString();
         }

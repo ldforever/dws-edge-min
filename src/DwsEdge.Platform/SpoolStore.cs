@@ -181,16 +181,34 @@ namespace DwsEdge.Platform
             lock (_sync)
             {
                 string key = evt.deviceId ?? "unknown";
+                bool isSnapshot = evt.isSnapshot.GetValueOrDefault(false);
+
                 if (!_cameras.TryGetValue(key, out camera))
                 {
                     camera = new CameraRecord();
                     camera.deviceId = key;
                     _cameras[key] = camera;
                 }
-                camera.online = evt.online.GetValueOrDefault(true);
+
+                if (evt.online.HasValue)
+                {
+                    camera.online = evt.online.Value;
+                }
                 camera.atMs = evt.atMs > 0 ? evt.atMs : evt.receivedAtMs;
                 camera.lastChangeTime = FormatTime(camera.atMs);
-                camera.statusChanges++;
+                camera.userId = evt.userId;
+                camera.fromSnapshot = isSnapshot;
+
+                if (!string.IsNullOrEmpty(evt.model)) { camera.model = evt.model; }
+                if (!string.IsNullOrEmpty(evt.serialNumber)) { camera.serialNumber = evt.serialNumber; }
+                if (!string.IsNullOrEmpty(evt.vendor)) { camera.vendor = evt.vendor; }
+                if (!string.IsNullOrEmpty(evt.firmware)) { camera.firmware = evt.firmware; }
+
+                // 启动快照是基线，不计入"状态变化次数"
+                if (!isSnapshot)
+                {
+                    camera.statusChanges++;
+                }
             }
 
             Publish(new { type = "camera", data = camera });
@@ -282,7 +300,12 @@ namespace DwsEdge.Platform
         {
             lock (_sync)
             {
-                return new List<CameraRecord>(_cameras.Values);
+                List<CameraRecord> list = new List<CameraRecord>(_cameras.Values);
+                list.Sort(delegate(CameraRecord a, CameraRecord b)
+                {
+                    return string.Compare(a.deviceId, b.deviceId, StringComparison.OrdinalIgnoreCase);
+                });
+                return list;
             }
         }
 

@@ -62,12 +62,24 @@
     <tbody id="rows"></tbody>
   </table>
 
+  <h2 style="margin-top:24px">相机状态</h2>
+  <div id="camEmpty" class="empty">暂无相机状态：采集宿主启动后会上报相机快照。</div>
+  <table>
+    <thead>
+      <tr><th>相机</th><th>状态</th><th>型号</th><th>序列号</th><th>状态变化</th><th>最近变化</th></tr>
+    </thead>
+    <tbody id="camRows"></tbody>
+  </table>
+
   <footer id="foot">—</footer>
 </main>
 
 <script>
 const rowsEl = document.getElementById('rows');
 const emptyEl = document.getElementById('emptyTip');
+const camRowsEl = document.getElementById('camRows');
+const camEmptyEl = document.getElementById('camEmpty');
+const cameras = new Map();
 const MAX_ROWS = 120;
 const seen = new Set();
 
@@ -81,6 +93,37 @@ function setStats(s) {
 }
 
 function imgUrl(path) { return '/api/images?path=' + encodeURIComponent(path); }
+
+function cell(text, cls) {
+  const td = document.createElement('td');
+  if (cls) td.className = cls;
+  td.textContent = (text === null || text === undefined) ? '' : String(text);
+  return td;
+}
+
+function renderCameras() {
+  const list = Array.from(cameras.values()).sort(function (a, b) {
+    return String(a.deviceId || '').localeCompare(String(b.deviceId || ''));
+  });
+  camRowsEl.innerHTML = '';
+  camEmptyEl.style.display = list.length ? 'none' : 'block';
+  for (const c of list) {
+    const tr = document.createElement('tr');
+    tr.appendChild(cell(c.deviceId, 'code'));
+    tr.appendChild(cell(c.online ? '在线' : '离线', c.online ? '' : 'noread'));
+    tr.appendChild(cell(c.model));
+    tr.appendChild(cell(c.serialNumber));
+    tr.appendChild(cell(c.statusChanges));
+    tr.appendChild(cell(c.lastChangeTime, 'muted'));
+    camRowsEl.appendChild(tr);
+  }
+}
+
+function upsertCamera(c) {
+  if (!c || !c.deviceId) return;
+  cameras.set(c.deviceId, c);
+  renderCameras();
+}
 
 function addRow(p, flash) {
   emptyEl.style.display = 'none';
@@ -136,6 +179,9 @@ async function loadInitial() {
     addInitial(parcels);
     const stats = await (await fetch('/api/stats')).json();
     setStats(stats);
+    const cams = await (await fetch('/api/cameras')).json();
+    for (const c of cams) cameras.set(c.deviceId, c);
+    renderCameras();
   } catch (e) { /* 忽略 */ }
 }
 
@@ -157,6 +203,8 @@ function connect() {
       fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {});
     } else if (msg.type === 'stats') {
       setStats(msg.data);
+    } else if (msg.type === 'camera') {
+      upsertCamera(msg.data);
     }
   };
 }

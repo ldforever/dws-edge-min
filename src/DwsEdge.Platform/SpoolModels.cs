@@ -20,6 +20,11 @@ namespace DwsEdge.Platform
         public double heightMm { get; set; }
         public double volumeMm3 { get; set; }
         public bool? online { get; set; }
+        public bool? isSnapshot { get; set; }
+        public string model { get; set; }
+        public string serialNumber { get; set; }
+        public string vendor { get; set; }
+        public string firmware { get; set; }
         public List<SpoolCode> codes { get; set; }
         public List<SpoolImage> images { get; set; }
     }
@@ -63,11 +68,18 @@ namespace DwsEdge.Platform
     public sealed class CameraRecord
     {
         public string deviceId { get; set; }
+        public string userId { get; set; }
         public bool online { get; set; }
         public long atMs { get; set; }
         public string lastChangeTime { get; set; }
         public long statusChanges { get; set; }
         public long codeCount { get; set; }
+        public string model { get; set; }
+        public string serialNumber { get; set; }
+        public string vendor { get; set; }
+        public string firmware { get; set; }
+        /// <summary>最近一次状态来自启动快照（true）还是上下线增量（false）。</summary>
+        public bool fromSnapshot { get; set; }
     }
 
     /// <summary>平台统计。</summary>
