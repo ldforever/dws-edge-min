@@ -9,7 +9,7 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=bee1f896" />
+<link rel="stylesheet" href="./app.css?v=80bdefd8" />
 </head>
 <body>
 <header>
@@ -100,6 +100,22 @@
     <div class="panel">
       <h2>当前 SDK 配置</h2>
       <div class="kv" id="cfgSummary"><div class="k">加载中…</div><div></div></div>
+    </div>
+
+    <div class="panel">
+      <h2>去重指纹归档（B1）</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:10px">
+        平台靠这里记录的"已处理事件指纹"识别重复上报。归档按 <b>traceId 一条</b>，
+        运行期只追加 WAL，定时（或点下面按钮）合并成索引并清理过期记录，
+        所以磁盘占用只跟"最近保留期内的包裹量"有关，不会随运行时长无限增长。
+      </div>
+      <div class="toolbar">
+        <button class="btn secondary" id="btnRefreshDedup">刷新</button>
+        <button class="btn" id="btnCompactDedup">立即整理</button>
+        <span id="dedupBadge"></span>
+        <span id="dedupMsg" class="muted" style="font-size:12px"></span>
+      </div>
+      <div class="kv" id="dedupSummary"><div class="k">加载中…</div><div></div></div>
     </div>
 
     <div class="panel">
@@ -204,6 +220,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=bee1f896"></script>
+<script type="module" src="./js/main.js?v=80bdefd8"></script>
 </body>
 </html>

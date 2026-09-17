@@ -11,6 +11,7 @@ import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } fr
 import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js";
 import { initConfig, refreshConfig } from "./config.js";
 import { initRules, refreshRules } from "./rules.js";
+import { initDedup, refreshDedup } from "./dedup.js";
 
 type PageName = "realtime" | "devices" | "config";
 const PAGES: PageName[] = ["realtime", "devices", "config"];
@@ -26,6 +27,7 @@ function showPage(name: PageName): void {
   if (name === "config") {
     void refreshConfig();
     void refreshRules();
+    void refreshDedup();
   }
 }
 
@@ -39,6 +41,7 @@ function bootstrap(): void {
   initDevices();
   initConfig();
   initRules();
+  initDedup();
 
   for (const page of PAGES) {
     $("tab-" + page).addEventListener("click", () => showPage(page));

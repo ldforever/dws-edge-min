@@ -4,13 +4,14 @@
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
  * 也没有全局变量：模块之间只通过 import 通信，方便以后换壳（WebView2）或加页面。
  */
-import { api } from "./api.js?v=bee1f896";
-import { connectStream } from "./sse.js?v=bee1f896";
-import { $ } from "./dom.js?v=bee1f896";
-import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=bee1f896";
-import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=bee1f896";
-import { initConfig, refreshConfig } from "./config.js?v=bee1f896";
-import { initRules, refreshRules } from "./rules.js?v=bee1f896";
+import { api } from "./api.js?v=80bdefd8";
+import { connectStream } from "./sse.js?v=80bdefd8";
+import { $ } from "./dom.js?v=80bdefd8";
+import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=80bdefd8";
+import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=80bdefd8";
+import { initConfig, refreshConfig } from "./config.js?v=80bdefd8";
+import { initRules, refreshRules } from "./rules.js?v=80bdefd8";
+import { initDedup, refreshDedup } from "./dedup.js?v=80bdefd8";
 const PAGES = ["realtime", "devices", "config"];
 function showPage(name) {
     for (const page of PAGES) {
@@ -23,6 +24,7 @@ function showPage(name) {
     if (name === "config") {
         void refreshConfig();
         void refreshRules();
+        void refreshDedup();
     }
 }
 function setConnectionState(connected) {
@@ -34,6 +36,7 @@ function bootstrap() {
     initDevices();
     initConfig();
     initRules();
+    initDedup();
     for (const page of PAGES) {
         $("tab-" + page).addEventListener("click", () => showPage(page));
     }

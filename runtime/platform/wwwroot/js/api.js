@@ -51,6 +51,9 @@ export const api = {
         json: { codes, ruleset: ruleSet }
     }),
     filteredCodes: (limit) => request(`/api/rules/filtered?limit=${limit}`),
+    // ---- B1 去重指纹归档 ----
+    dedup: () => request("/api/dedup"),
+    compactDedup: () => request("/api/dedup/compact", { method: "POST" }),
     /** 图片按需读取接口（只允许图片根目录内的文件） */
     imageUrl: (path) => "/api/images?path=" + encodeURIComponent(path)
 };

@@ -39,6 +39,7 @@ namespace DwsEdge.Platform
 
             builder.Services.AddSingleton<SpoolStore>();
             builder.Services.AddSingleton<HistoryStore>();
+            builder.Services.AddSingleton<DedupStore>();
             builder.Services.AddSingleton<BarcodeRuleStore>();
             builder.Services.AddSingleton<ConfigStore>();
             builder.Services.AddHostedService<SpoolTailer>();
@@ -148,6 +149,14 @@ namespace DwsEdge.Platform
             {
                 int take = limit.HasValue ? Math.Clamp(limit.Value, 1, 500) : 100;
                 return Results.Json(store.RecentFilteredCodes(take));
+            });
+
+            // B1：去重指纹归档的状态与手动整理（按 traceId 归档，定期合并 WAL、清理过期）
+            app.MapGet("/api/dedup", (DedupStore dedup) => Results.Json(dedup.Stats()));
+            app.MapPost("/api/dedup/compact", (DedupStore dedup) =>
+            {
+                dedup.Compact();
+                return Results.Json(dedup.Stats());
             });
 
             // A9：设备信息（相机清单 + 方位 + 型号/序列号 + 在线状态）

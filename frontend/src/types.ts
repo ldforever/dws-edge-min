@@ -317,3 +317,22 @@ export interface FilteredCodeRecord {
   rule?: string | null;
   reason: string;
 }
+
+/** B1 去重指纹归档的状态（GET /api/dedup 与 POST /api/dedup/compact 返回） */
+export interface DedupStats {
+  directory: string;
+  /** 索引里的 traceId 条数 */
+  indexEntries: number;
+  indexKeys: number;
+  /** 还没合并进索引的 WAL 行数 */
+  walLines: number;
+  walBytes: number;
+  indexBytes: number;
+  retentionDays: number;
+  compactWhenWalLines: number;
+  compactEveryMinutes: number;
+  lastCompactAt?: string | null;
+  compactions: number;
+  droppedExpired: number;
+  importedLegacy: number;
+}

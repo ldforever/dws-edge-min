@@ -13,8 +13,9 @@ namespace DwsEdge.Platform
     /// 历史持久化（V1 用按天 JSONL 文件；以后换 SQLite 时只需替换本类，对外方法不变）：
     ///
     ///     data/parcels-yyyyMMdd.jsonl   包裹快照：每次事件更新写一行完整记录
-    ///     data/applied-yyyyMMdd.jsonl   B1 去重指纹：平台重启后继续识别"重复上报"
     ///     data/offsets.json             spool 消费位点：重启后只读新增事件，不再全量重放
+    ///
+    /// B1 的去重指纹不在这里，见 DedupStore（按 traceId 归档在 data\dedup\）。
     ///
     /// 说明：当前开发环境无法离线获取 Microsoft.Data.Sqlite 包，因此先用文件实现；
     /// 对外只暴露 Append / LoadRecent / Query / LoadOffsets / SaveOffsets 这几个方法，
@@ -221,133 +222,6 @@ namespace DwsEdge.Platform
 
         #endregion
 
-        #region B1 去重指纹（重启后继续识别重复上报）
-
-        /// <summary>
-        /// 记录一条"已处理事件的内容指纹"。
-        /// 只写 fp: 开头的内容指纹（阶段+条码+重量体积+图片），不写宿主的事件号 ——
-        /// 事件号是每次运行自增的，跨重启没有意义。
-        /// </summary>
-        public void AppendApplied(string traceId, string fingerprint)
-        {
-            if (string.IsNullOrEmpty(traceId) || string.IsNullOrEmpty(fingerprint))
-            {
-                return;
-            }
-
-            string day = DateTime.Now.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
-            string path = Path.Combine(DirectoryPath, "applied-" + day + ".jsonl");
-            try
-            {
-                // 逐行落盘（bufferSize=1）：崩溃时最多丢最后一条指纹，且重复指纹被再次判重也不影响正确性
-                using (FileStream stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite, 1))
-                using (StreamWriter writer = new StreamWriter(stream, new UTF8Encoding(false)))
-                {
-                    writer.WriteLine(JsonSerializer.Serialize(new AppliedLine { t = traceId, k = fingerprint }, _json));
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "写去重指纹失败");
-            }
-        }
-
-        private sealed class AppliedLine
-        {
-            public string t { get; set; }
-            public string k { get; set; }
-        }
-
-        /// <summary>加载最近 N 天的去重指纹（traceId → 指纹集合）。</summary>
-        public Dictionary<string, HashSet<string>> LoadApplied(int days)
-        {
-            Dictionary<string, HashSet<string>> result =
-                new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-            if (days < 1)
-            {
-                days = 1;
-            }
-
-            DateTime from = DateTime.Today.AddDays(-(days - 1));
-            for (DateTime day = from.Date; day <= DateTime.Today; day = day.AddDays(1))
-            {
-                string path = Path.Combine(DirectoryPath, "applied-" + day.ToString("yyyyMMdd", CultureInfo.InvariantCulture) + ".jsonl");
-                if (!File.Exists(path))
-                {
-                    continue;
-                }
-
-                try
-                {
-                    foreach (string line in File.ReadLines(path, Encoding.UTF8))
-                    {
-                        if (string.IsNullOrWhiteSpace(line))
-                        {
-                            continue;
-                        }
-
-                        AppliedLine item;
-                        try
-                        {
-                            item = JsonSerializer.Deserialize<AppliedLine>(line, _json);
-                        }
-                        catch (JsonException)
-                        {
-                            continue;
-                        }
-
-                        if (item == null || string.IsNullOrEmpty(item.t) || string.IsNullOrEmpty(item.k))
-                        {
-                            continue;
-                        }
-
-                        HashSet<string> keys;
-                        if (!result.TryGetValue(item.t, out keys))
-                        {
-                            keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                            result[item.t] = keys;
-                        }
-                        keys.Add(item.k);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "读取去重指纹失败：{0}", path);
-                }
-            }
-
-            return result;
-        }
-
-        /// <summary>清理过期的去重指纹文件（和包裹历史一样按天滚动）。</summary>
-        public void CleanupApplied(int keepDays)
-        {
-            try
-            {
-                if (keepDays < 1)
-                {
-                    keepDays = 1;
-                }
-                DateTime cutoff = DateTime.Today.AddDays(-keepDays);
-                foreach (string file in Directory.GetFiles(DirectoryPath, "applied-*.jsonl"))
-                {
-                    string name = Path.GetFileNameWithoutExtension(file);
-                    DateTime day;
-                    if (DateTime.TryParseExact(name.Substring("applied-".Length), "yyyyMMdd",
-                        CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out day)
-                        && day < cutoff)
-                    {
-                        File.Delete(file);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "清理去重指纹失败");
-            }
-        }
-
-        #endregion
 
         #region spool 消费位点
 

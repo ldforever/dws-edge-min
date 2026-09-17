@@ -45,6 +45,7 @@ namespace DwsEdge.Platform
         private readonly ILogger<SpoolStore> _logger;
         private readonly HistoryStore _history;
         private readonly BarcodeRuleStore _rules;
+        private readonly DedupStore _dedup;
         private readonly string _imagesRoot;
         private readonly int _maxRecords;
 
@@ -77,11 +78,13 @@ namespace DwsEdge.Platform
         private long _diskFreeBytes;
         private int _diskUsedPercent;
 
-        public SpoolStore(IConfiguration config, HistoryStore history, BarcodeRuleStore rules, ILogger<SpoolStore> logger)
+        public SpoolStore(IConfiguration config, HistoryStore history, BarcodeRuleStore rules,
+            DedupStore dedup, ILogger<SpoolStore> logger)
         {
             _logger = logger;
             _history = history;
             _rules = rules;
+            _dedup = dedup;
             string root = config["Images:Root"] ?? "../images";
             _imagesRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, root));
             int max = 5000;
@@ -181,8 +184,8 @@ namespace DwsEdge.Platform
                 {
                     applied.Add(idKey);
                 }
-                // 落盘内容指纹：平台重启后重读 spool 时，靠它把同一条回调继续判成重复
-                _history.AppendApplied(key, fingerprint);
+                // 归档内容指纹（WAL 追加写）：平台重启后重读 spool 时，靠它把同一条回调继续判成重复
+                _dedup.Append(key, fingerprint);
 
                 // B2：把这次被规则丢掉的条码记下来（累计 + 最近列表 + 挂到包裹上，方便解释 NOREAD）
                 if (filtered.Count > 0)
@@ -946,9 +949,9 @@ namespace DwsEdge.Platform
         {
             try
             {
-                // B1：先把"已处理事件指纹"读回来 —— 这是重启后还能识别重复上报的关键。
-                // 指纹文件比包裹历史多留 1 天，避免跨零点时刚好丢掉一天的指纹。
-                Dictionary<string, HashSet<string>> appliedHistory = _history.LoadApplied(days + 1);
+                // B1：先把"已处理事件指纹"从归档里读回来 —— 这是重启后还能识别重复上报的关键。
+                // 归档按 traceId 一条，启动时自动整理（合并 WAL、清理过期），不会随运行时长膨胀。
+                Dictionary<string, HashSet<string>> appliedHistory = _dedup.Load();
                 if (appliedHistory.Count > 0)
                 {
                     foreach (KeyValuePair<string, HashSet<string>> pair in appliedHistory)
@@ -957,7 +960,6 @@ namespace DwsEdge.Platform
                     }
                     _logger.LogInformation("已恢复 {0} 个包裹的去重指纹（重复上报不会被重复计数）", appliedHistory.Count);
                 }
-                _history.CleanupApplied(days + 7);
 
                 List<ParcelRecord> recent = _history.LoadRecent(days, _maxRecords);
                 if (recent == null || recent.Count == 0)

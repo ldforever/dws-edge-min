@@ -12,6 +12,7 @@ import type {
   BarcodeRuleSet,
   CameraRecord,
   ConfigSummary,
+  DedupStats,
   DeviceView,
   FilteredCodeRecord,
   ParcelRecord,
@@ -109,6 +110,12 @@ export const api = {
 
   filteredCodes: (limit: number): Promise<ApiResult<FilteredCodeRecord[]>> =>
     request<FilteredCodeRecord[]>(`/api/rules/filtered?limit=${limit}`),
+
+  // ---- B1 去重指纹归档 ----
+  dedup: (): Promise<ApiResult<DedupStats>> => request<DedupStats>("/api/dedup"),
+
+  compactDedup: (): Promise<ApiResult<DedupStats>> =>
+    request<DedupStats>("/api/dedup/compact", { method: "POST" }),
 
   /** 图片按需读取接口（只允许图片根目录内的文件） */
   imageUrl: (path: string): string => "/api/images?path=" + encodeURIComponent(path)

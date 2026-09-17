@@ -91,6 +91,10 @@ function Get-PendingDispatch {
     return @(Invoke-RestMethod -Uri ($baseUrl + '/api/dispatch/pending?limit=50') -TimeoutSec 10)
 }
 
+function Get-Dedup {
+    return Invoke-RestMethod -Uri ($baseUrl + '/api/dedup') -TimeoutSec 10
+}
+
 # ---------------------------------------------------------------- 准备测试运行时
 Write-Host "测试运行时：$WorkDir" -ForegroundColor Cyan
 Stop-Platform
@@ -207,6 +211,41 @@ foreach ($traceId in @('P1', 'P2', 'P3')) {
     Add-Check ("重读后 " + $traceId + " 的有效回调次数") 2 $updates | Out-Null
 }
 
+# ---------------------------------------------------------------- 第 4 轮：归档与整理
+Write-Host "`n=== 第 4 轮：去重指纹归档（按 traceId）+ 整理 + 保留期 ===" -ForegroundColor Cyan
+$dedup = Get-Dedup
+Add-Check '归档里的 traceId 条数（P1/P2/P3）' 3 $dedup.indexEntries | Out-Null
+Add-Check '归档保留天数' 30 $dedup.retentionDays | Out-Null
+
+$compacted = Invoke-RestMethod -Uri ($baseUrl + '/api/dedup/compact') -Method POST -TimeoutSec 20
+Add-Check '整理后 WAL 行数' 0 $compacted.walLines | Out-Null
+Add-Check '整理后归档条数' 3 $compacted.indexEntries | Out-Null
+Add-Check '整理次数（启动时已整理 + 手动 1 次）' 2 $compacted.compactions | Out-Null
+
+$dedupDir = Join-Path $WorkDir 'data\dedup'
+Add-Check '归档目录里有索引文件' 'True' (Test-Path (Join-Path $dedupDir 'applied-index.jsonl')) | Out-Null
+Add-Check '整理后没有残留 WAL 文件' 0 @(Get-ChildItem $dedupDir -Filter 'wal-*.jsonl' -ErrorAction SilentlyContinue).Count | Out-Null
+
+# 归档整理过之后，再重读一遍 spool：仍然要能判重（说明只靠索引就够了）
+Stop-Platform
+$offsets2 = Join-Path $WorkDir 'data\offsets.json'
+if (Test-Path $offsets2) { Move-Item -LiteralPath $offsets2 -Destination ($offsets2 + '.lost2') -Force }
+Start-Platform
+$stats3 = Get-Stats
+Add-Check '整理后再重读：包裹数' 3 $stats3.parcels | Out-Null
+Add-Check '整理后再重读：仍然全部判重' 9 $stats3.duplicateEvents | Out-Null
+Add-Check '整理后再重读：没有新增推送' 0 $stats3.publishedParcels | Out-Null
+
+# 保留期：手工塞一条"很久以前"的归档记录，重启后应该被清掉
+Stop-Platform
+$oldLine = '{"t":"OLD-TRACE","k":["fp:enriched|OLD|1|0x0x0|0"],"s":1000000000000}'
+[System.IO.File]::AppendAllText((Join-Path $dedupDir 'applied-index.jsonl'), $oldLine + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+Start-Platform
+$afterRetention = Get-Dedup
+Add-Check '过期记录已被清理（累计 1 条）' 1 $afterRetention.droppedExpired | Out-Null
+Add-Check '清理后归档条数仍是 3' 3 $afterRetention.indexEntries | Out-Null
+Add-Check '归档里有指纹明细' 'True' ($afterRetention.indexKeys -ge 6) | Out-Null
+
 Stop-Platform
 
 # ---------------------------------------------------------------- 汇总
@@ -220,3 +259,4 @@ if ($failed.Count -eq 0) {
 
 Write-Host ('B1 回归失败：' + $failed.Count + ' 项 FAIL（共 ' + $results.Count + ' 项）') -ForegroundColor Red
 exit 1
+

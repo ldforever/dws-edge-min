@@ -468,6 +468,8 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 | `GET /api/cameras` | 相机在线状态 |
 | `GET /api/dispatch/pending?limit=` | **B1** 待下发的包裹（一个 traceId 只会出现一次；下游模块从这里取） |
 | `POST /api/dispatch/ack` | **B1** 下游回报下发结果 `{traceId, success, error}`；幂等，重复 ack 不会重复计数 |
+| `GET /api/dedup` | **B1** 去重指纹归档状态（保护了多少包裹、索引/WAL 大小、保留期、上次整理） |
+| `POST /api/dedup/compact` | **B1** 立即整理归档（合并 WAL、清理过期），返回整理后的状态 |
 | `GET /api/devices` | 设备信息页数据：相机清单（方位/清单标识/型号/序列号/在线/未发现）+ 汇总 + 六面聚合（A9） |
 | `GET /api/camera-positions` | 相机方位映射的当前内容（A9） |
 | `POST /api/camera-positions` | 保存方位映射（写 `config\camera-positions.ini`，自动备份） |
@@ -498,8 +500,45 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 刻意不含时间戳、事件号这类"每次送达都会变"的字段 —— 所以第二次回调不会被误判成重复，
 而"同一条回调又送一遍"会被准确识别。
 
-指纹是**落盘**的（`data/applied-yyyyMMdd.jsonl`）。这一点很重要：平台异常退出后 spool 被整段重读时
-（位点回退、offsets.json 丢失），一样能把重复事件丢掉 —— 这是"重复上报不重复计数"最容易翻车的场景。
+指纹是**落盘归档**的。这一点很重要：平台异常退出后 spool 被整段重读时（位点回退、offsets.json 丢失），
+一样能把重复事件丢掉 —— 这是"重复上报不重复计数"最容易翻车的场景。
+
+### 去重指纹归档（按 traceId）
+
+```
+runtime\data\dedup\
+├─ applied-index.jsonl        一个 traceId 一行：{"t":"P1","k":["fp:..."],"s":最后出现时间}
+├─ wal-<时间戳>.jsonl         运行期只追加写：一条 = 一次已处理事件（顺序写、崩溃安全）
+└─ applied-*.jsonl.imported   旧格式（自动导入后改名保留，不删原件）
+```
+
+* **运行期**：只往 WAL 追加，一次顺序写，不重写索引（每个包裹事件一次也扛得住）；
+* **整理**：平台启动时自动一次，之后每 10 分钟检查、WAL 超过 5000 行时整理 —— 把索引写成新的
+  `applied-index.jsonl`（先写 `.tmp` 再原子替换）→ 删掉已合并的 WAL → 按保留期清理；
+* **保留期**：默认 30 天。太久没出现过的 traceId 会被清掉，所以**磁盘占用只跟"最近 30 天有多少包裹"有关，
+  不随运行时长无限增长**；
+* **崩溃安全**：整理过程中断电，最坏情况是 WAL 被重复导入一次 —— 指纹是集合语义，重复导入无害。
+
+实测数字：3 个包裹（各 2 条指纹）= 索引 **380 字节**（约 127 字节/包裹）。
+按现场一天 5 万件算，约 6.4 MB/天、30 天约 190 MB；不做保留期的话一年会涨到 2 GB+
+而且启动要扫越来越多的文件。
+
+> 为什么不用 SQLite：当前开发/现场环境是离线交付，拿不到 NuGet 包源（`dotnet package search` 直接报"未找到包源"）。
+> `DedupStore` 的对外接口只有 `Load / Append / Compact / Stats` 四个方法，以后有包源了换成 SQLite 只改这一个类。
+
+配置在 `runtime\platform\appsettings.json`：
+
+```json
+"Dedup": {
+  "Directory": "data/dedup",
+  "RetentionDays": 30,
+  "CompactWhenWalLines": 5000,
+  "CompactEveryMinutes": 10
+}
+```
+
+界面上（配置页 →「去重指纹归档」）能看到保护的包裹数、索引大小、未合并 WAL、保留期、上次整理时间，
+还有一个「立即整理」按钮；接口是 `GET /api/dedup`、`POST /api/dedup/compact`。
 
 ### 幂等下发
 
@@ -613,6 +652,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b2-rules.ps1
 - `DwsEdge.Core/Config/CameraIdentity.cs`：把 cfg 里的 `ip=/key=/id=` 和 SDK 上报的相机标识对上号。
 - `DwsEdge.Core/Rules/BarcodeRule.cs` + `BarcodeFilter.cs`：条码过滤规则的模型与匹配引擎（纯逻辑，不依赖 IO）。
 - `DwsEdge.Platform/BarcodeRuleStore.cs`：规则文件的读写、校验、备份与热加载。
+- `DwsEdge.Platform/DedupStore.cs`：去重指纹归档（按 traceId 的索引 + WAL + 定期整理 + 保留期）。
 
 **平台侧（net10）**
 
