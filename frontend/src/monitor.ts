@@ -37,6 +37,11 @@ const CODE_LABEL: Record<string, string> = {
   "declared-missing": "清单里没发现"
 };
 
+/** 告警码 → 中文（C2 的相机墙也用同一份文案，避免两处不一致） */
+export function alertLabel(code: string): string {
+  return CODE_LABEL[code] ?? code;
+}
+
 const EVENT_LIMIT = 200;
 
 let eventRowsEl: HTMLTableSectionElement;
@@ -110,12 +115,13 @@ function renderSummary(s: MonitorSummary | undefined): void {
 }
 
 /** 在线率为 -1 表示"刚上线，样本还不够" */
-function fmtRate(rate?: number): string {
+export function fmtRate(rate?: number): string {
   if (rate === undefined || rate === null || rate < 0) return "—";
   return rate.toFixed(1) + "%";
 }
 
-function fmtAge(seconds?: number): string {
+/** 心跳新鲜度（秒 → "3 秒前 / 5 分钟前"） */
+export function fmtAge(seconds?: number): string {
   if (seconds === undefined || seconds === null || seconds < 0) return "—";
   if (seconds < 60) return seconds + " 秒前";
   if (seconds < 3600) return Math.floor(seconds / 60) + " 分钟前";
@@ -142,6 +148,7 @@ function renderCameras(list: MonitorCameraStatus[]): void {
     tr.appendChild(cell(fmtRate(item.onlineRatePercent)));
     tr.appendChild(cell(fmtAge(item.lastHeartbeatAgeSeconds)));
     tr.appendChild(cell(dash(item.lastCodeAt), "muted"));
+    tr.appendChild(cell(item.codeCount ?? 0));
     tr.appendChild(cell(item.offlineCount ?? 0));
     tr.appendChild(cell(fmtDuration(item.currentStateSeconds) + (item.online ? "（在线）" : "（离线）")));
 
@@ -179,7 +186,7 @@ function renderAlertBar(s: MonitorSummary | undefined, list: MonitorAlert[]): vo
   const show = active.slice(0, 3);
   for (const a of show) {
     alertBarEl.appendChild(
-      el("span", "[" + (CODE_LABEL[a.code] ?? a.code) + "] " + a.camera + " " + a.message + "  ", "item")
+          el("span", "[" + (CODE_LABEL[a.code] ?? a.code) + "] " + a.camera + " " + a.message + "  ", "item")
     );
   }
   if (active.length > show.length) {

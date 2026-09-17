@@ -55,6 +55,26 @@ namespace DwsEdge.Platform
         public string severity { get; set; }
     }
 
+    /// <summary>
+    /// C2：一台相机的"计数类"信息（出码数、掉线次数、方位、型号…）。
+    /// 出码数按 B1 去重后的包裹来算，所以权威值由 SpoolStore 提供，监控模块只是把它带出来给界面。
+    /// </summary>
+    public sealed class CameraCounter
+    {
+        public string camera { get; set; }
+        /// <summary>累计出码包裹数（按 traceId 去重后）。</summary>
+        public long codeCount { get; set; }
+        public string lastCodeTime { get; set; }
+        public long offlineCount { get; set; }
+        public bool online { get; set; }
+        /// <summary>SDK 是否真的发现了这台相机；false = 清单里声明了但没接入。</summary>
+        public bool discovered { get; set; } = true;
+        public string position { get; set; }
+        public string positionLabel { get; set; }
+        public string model { get; set; }
+        public string serialNumber { get; set; }
+    }
+
     /// <summary>一条告警。</summary>
     public sealed class CameraAlert
     {
@@ -126,6 +146,18 @@ namespace DwsEdge.Platform
 
         /// <summary>可选：provider 报过"声明了但没发现"的相机（A9），也拿来告警。</summary>
         public Action<string, bool, string> OnLog { get; set; }
+
+        /// <summary>
+        /// C2：相机"出码计数"等权威值的取值回调（由 SpoolStore 提供）。
+        ///
+        /// 为什么不在监控模块里自己数：出码数必须按"包裹去重后的结果"来算（B1），
+        /// 那个账只有 SpoolStore 记得住（还要能从历史恢复），监控模块只负责心跳与在线率。
+        /// 界面上的相机状态墙两样都要，所以在这里留一个取值回调，由 SpoolStore 注入。
+        ///
+        /// 加锁顺序（重要）：本回调会拿 SpoolStore 的锁，所以只允许 "monitor 锁 → store 锁" 这一个方向；
+        /// SpoolStore 调监控模块的方法（ApplyStatus / ApplyCode）都在自己的锁外面调，方向不会反过来。
+        /// </summary>
+        public Func<string, CameraCounter> CounterProvider { get; set; }
 
         public CameraMonitor(IConfiguration config, ILogger<CameraMonitor> logger)
         {
@@ -668,6 +700,13 @@ namespace DwsEdge.Platform
                     CameraState state = pair.Value;
                     double rate = OnlineRate(state, now, options);
                     long currentMs = Math.Max(0, now - state.stateSinceMs);
+                    // C2：带上出码计数等权威值（状态墙要用；取不到就退回监控自己的数据）
+                    CameraCounter counter = null;
+                    if (CounterProvider != null)
+                    {
+                        try { counter = CounterProvider(state.id); }
+                        catch (Exception) { counter = null; }
+                    }
                     List<object> alerts = new List<object>();
                     for (int i = 0; i < _alerts.Count; i++)
                     {
@@ -689,6 +728,15 @@ namespace DwsEdge.Platform
                         lastHeartbeatAt = FormatMs(state.lastHeartbeatMs),
                         lastHeartbeatAgeSeconds = state.lastHeartbeatMs > 0 ? (now - state.lastHeartbeatMs) / 1000 : -1,
                         lastCodeAt = FormatMs(state.lastCodeMs),
+                        codeCount = counter == null ? 0 : counter.codeCount,
+                        lastCodeTime = counter == null ? null : counter.lastCodeTime,
+                        offlineCountTotal = counter == null ? 0 : counter.offlineCount,
+                        discovered = counter == null ? true : counter.discovered,
+                        position = counter == null ? null : counter.position,
+                        positionLabel = counter == null ? null : counter.positionLabel,
+                        model = counter == null ? null : counter.model,
+                        serialNumber = counter == null ? null : counter.serialNumber,
+                        onlineFromCounters = counter != null && counter.online,
                         offlineCount = state.offlineTimes.Count,
                         alertCount = alerts.Count,
                         alerts

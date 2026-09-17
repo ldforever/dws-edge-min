@@ -130,3 +130,27 @@ h2.withtoolbar { display: flex; align-items: center; gap: 10px; }
 .pcard-meta { font-size: 11px; color: #8b98a9; }
 .pcard-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .pcard-extra { font-size: 11px; color: #6e7681; }
+
+/* C2：相机状态墙 —— 每台相机一格，异常用颜色一眼区分 */
+.camwall { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 10px; margin-bottom: 8px; }
+.camcell { background: #1a212b; border: 1px solid #263041; border-left-width: 4px; border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+.camcell:hover { border-color: #58a6ff; }
+.camcell.online { border-left-color: #3fb950; }
+.camcell.offline { border-left-color: #f85149; background: #241a18; }
+.camcell.missing { border-left-color: #d29922; background: #26210f; }
+.camcell.alarm { border-color: #f8514988; }
+.camcell.warn { border-color: #d2992288; }
+.camhead { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.camhead .campos { font-size: 11px; color: #8b98a9; flex: 0 0 auto; }
+.camhead .camname { font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.camhead .camstate { font-size: 11px; flex: 0 0 auto; color: #3fb950; }
+.camcell.offline .camhead .camstate { color: #f85149; }
+.camcell.missing .camhead .camstate { color: #d29922; }
+.camnums { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+.camnum { text-align: center; }
+.camnum .n { font-size: 16px; font-weight: 600; line-height: 1.2; }
+.camnum .l { font-size: 10px; color: #6e7681; }
+.camnum.big .n { font-size: 20px; color: #58a6ff; }
+.camnum.bad .n { color: #f0883e; }
+.camline { font-size: 11px; color: #8b98a9; }
+.camalerts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }

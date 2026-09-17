@@ -4,7 +4,7 @@
  * 平台在连接建立时会先补发：最近 20 条包裹 + 统计 + 当前所有相机状态，
  * 所以这里不用自己再拉一遍初始数据；断线后 2 秒自动重连。
  */
-import { STREAM_URL } from "./api.js?v=bdee5c5f";
+import { STREAM_URL } from "./api.js?v=4e5f5a2b";
 const RECONNECT_DELAY_MS = 2000;
 export function connectStream(handlers) {
     const es = new EventSource(STREAM_URL);
@@ -33,6 +33,9 @@ export function connectStream(handlers) {
                 break;
             case "stats":
                 handlers.onStats(msg.data);
+                break;
+            case "camera-count":
+                handlers.onCameraCount(msg.data);
                 break;
             case "monitor":
                 handlers.onMonitor(msg.data);

@@ -81,6 +81,8 @@ namespace DwsEdge.Platform
         private long _diskTotalBytes;
         private long _diskFreeBytes;
         private int _diskUsedPercent;
+        /// <summary>C2：上一次推"相机计数"的时间（节流用）。</summary>
+        private long _lastCounterPublishMs;
 
         public SpoolStore(IConfiguration config, HistoryStore history, BarcodeRuleStore rules,
             DedupStore dedup, CameraMonitor monitor, ILogger<SpoolStore> logger)
@@ -90,6 +92,11 @@ namespace DwsEdge.Platform
             _rules = rules;
             _dedup = dedup;
             _monitor = monitor;
+            // C2：把"出码计数"的权威值借给监控模块 —— 相机状态墙要把在线率和出码数放一起看
+            if (_monitor != null)
+            {
+                _monitor.CounterProvider = CameraCounterOf;
+            }
             string root = config["Images:Root"] ?? "../images";
             _imagesRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, root));
             _runtimeRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, config["Runtime:Root"] ?? ".."));
@@ -387,6 +394,9 @@ namespace DwsEdge.Platform
             if (_monitor != null)
             {
                 _monitor.ApplyCode(evt.deviceId, evt.capturedAtMs > 0 ? evt.capturedAtMs : evt.receivedAtMs);
+                // C2：出码计数变了要马上让界面看到（相机状态墙的"这台相机在不在干活"就靠它）。
+                // 内部有节流：密集过包时最多每 0.7 秒推一次，剩下的由 B8 的 5 秒快照兜底。
+                PublishCameraCounters();
             }
 
             _publishedParcels++;
@@ -1476,6 +1486,98 @@ namespace DwsEdge.Platform
             Publish(new { type = "monitor", data = monitor.Snapshot(50) });
         }
 
+        /// <summary>
+        /// C2：某台相机的"计数类"权威值（出码数等），供监控模块带进相机状态墙。
+        /// 由 CameraMonitor.CounterProvider 回调进来，所以调用方可能正持有 monitor 的锁 ——
+        /// 这里只拿 _sync，不会反向再进 monitor，加锁顺序是单向的。
+        /// </summary>
+        private CameraCounter CameraCounterOf(string deviceId)
+        {
+            if (string.IsNullOrEmpty(deviceId))
+            {
+                return null;
+            }
+
+            lock (_sync)
+            {
+                CameraRecord camera;
+                if (!_cameras.TryGetValue(deviceId, out camera))
+                {
+                    return null;
+                }
+
+                CameraCounter counter = new CameraCounter();
+                counter.camera = camera.deviceId;
+                counter.codeCount = camera.codeCount;
+                counter.lastCodeTime = camera.lastCodeTime;
+                counter.offlineCount = camera.offlineCount;
+                counter.online = camera.online;
+                counter.discovered = camera.discovered;
+                counter.position = camera.position;
+                counter.positionLabel = camera.positionLabel;
+                counter.model = camera.model;
+                counter.serialNumber = camera.serialNumber;
+                return counter;
+            }
+        }
+
+        /// <summary>所有相机的计数（接口用；顺序与界面的相机墙一致：按方位、再按相机名）。</summary>
+        public List<CameraCounter> CameraCounters()
+        {
+            List<CameraCounter> list = new List<CameraCounter>();
+            List<string> keys = new List<string>();
+            lock (_sync)
+            {
+                foreach (KeyValuePair<string, CameraRecord> pair in _cameras)
+                {
+                    keys.Add(pair.Key);
+                }
+            }
+            for (int i = 0; i < keys.Count; i++)
+            {
+                CameraCounter counter = CameraCounterOf(keys[i]);
+                if (counter != null)
+                {
+                    list.Add(counter);
+                }
+            }
+            list.Sort(delegate(CameraCounter a, CameraCounter b)
+            {
+                int orderA = PositionOrderOf(a.position);
+                int orderB = PositionOrderOf(b.position);
+                if (orderA != orderB) { return orderA.CompareTo(orderB); }
+                return string.Compare(a.camera, b.camera, StringComparison.OrdinalIgnoreCase);
+            });
+            return list;
+        }
+
+        private static int PositionOrderOf(string position)
+        {
+            return string.IsNullOrEmpty(position) ? 99 : CameraPositions.Order(position);
+        }
+
+        /// <summary>
+        /// C2：把"出码计数"这类会随手一包就变的轻量数据单独推一条（`type=camera-count`），
+        /// 比每次重推整份监控快照省带宽。节流 300ms：密集过包时中间几包会被合并掉，
+        /// 但"最后的值"一定会通过 B8 的周期快照（默认 5 秒）补上，所以验收要求的 5 秒内刷新有两条路保底。
+        /// </summary>
+        public void PublishCameraCounters()
+        {
+            if (_subscribers.IsEmpty)
+            {
+                return;
+            }
+
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (now - _lastCounterPublishMs < 300)
+            {
+                return;
+            }
+            _lastCounterPublishMs = now;
+
+            Publish(new { type = "camera-count", data = CameraCounters() });
+        }
+
         public async Task StreamAsync(HttpContext context, CancellationToken token)
         {
             context.Response.Headers["Content-Type"] = "text/event-stream";
@@ -1515,6 +1617,11 @@ namespace DwsEdge.Platform
                         new { type = "monitor", data = _monitor.Snapshot(50) }, _json);
                     await context.Response.WriteAsync("data: " + snapshot + "\n\n", token);
                 }
+
+                // C2：相机计数（出码数）补一份 —— 状态墙上的"出码"不能等下一次过包才出现
+                string counters = JsonSerializer.Serialize(
+                    new { type = "camera-count", data = CameraCounters() }, _json);
+                await context.Response.WriteAsync("data: " + counters + "\n\n", token);
                 await context.Response.Body.FlushAsync(token);
 
                 while (!token.IsCancellationRequested)

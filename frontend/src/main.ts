@@ -7,7 +7,15 @@
 import { api } from "./api.js";
 import { connectStream } from "./sse.js";
 import { $ } from "./dom.js";
-import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js";
+import {
+  applyCameraCounters,
+  applyMonitorStats,
+  initRealtime,
+  loadInitial,
+  renderParcel,
+  renderStats,
+  upsertCamera
+} from "./realtime.js";
 import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js";
 import { initConfig, refreshConfig } from "./config.js";
 import { initRules, refreshRules } from "./rules.js";
@@ -73,8 +81,14 @@ function bootstrap(): void {
       upsertCamera(c);
       scheduleDevicesRefresh();
     },
-    onMonitor: (snapshot) => renderMonitorSnapshot(snapshot),
+    onMonitor: (snapshot) => {
+      renderMonitorSnapshot(snapshot);
+      // C2：同一份快照也喂给实时页的相机状态墙（在线率/心跳/告警）
+      applyMonitorStats(snapshot.cameras ?? []);
+    },
     onAlert: (alert) => renderAlert(alert),
+    // C2：出码计数（出一包就变），单独推、单独更新数字
+    onCameraCount: (counters) => applyCameraCounters(counters),
     onStats: renderStats,
     onStatus: setConnectionState,
     // B9：推送断了（多半是会话过期）→ 刷一次登录态，需要的话弹回登录框

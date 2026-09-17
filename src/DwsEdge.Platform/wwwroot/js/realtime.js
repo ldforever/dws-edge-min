@@ -8,8 +8,9 @@
  *     点缩略图看原图；喜欢表格的现场可以切回表格，选择记在浏览器里；
  *   * 相机状态表与"设备信息"页共用同一份数据源（平台推送的 camera 事件）。
  */
-import { api } from "./api.js?v=bdee5c5f";
-import { $, cell, clear, el, gb, imageCell, positionLabel, dash } from "./dom.js?v=bdee5c5f";
+import { api } from "./api.js?v=4e5f5a2b";
+import { $, cell, clear, el, gb, imageCell, positionLabel, dash } from "./dom.js?v=4e5f5a2b";
+import { alertLabel, fmtAge, fmtRate } from "./monitor.js?v=4e5f5a2b";
 const MAX_ROWS = 120;
 /** 卡片墙最多留多少张（一屏大概 6-12 张，多出来的往下滚） */
 const MAX_CARDS = 30;
@@ -17,8 +18,12 @@ const MAX_CARDS = 30;
 const INITIAL_PARCELS = 50;
 /** 视图选择存在浏览器里，现场刷新页面不用每次重新点 */
 const VIEW_KEY = "dws.view.parcels";
+/** 相机状态墙的视图选择（C2） */
+const CAM_VIEW_KEY = "dws.view.cameras";
 const rowByTrace = new Map();
 const cameras = new Map();
+/** C2：B8 那边推来的每台指标（在线率/心跳/告警），和 cameras 按 deviceId 合并成状态墙 */
+const monitorStats = new Map();
 let rowsEl;
 let emptyEl;
 let camRowsEl;
@@ -26,6 +31,9 @@ let camEmptyEl;
 let cardWallEl;
 let cardEmptyEl;
 let tableViewEl;
+let camWallEl;
+let camTableWrapEl;
+let camWallSummaryEl;
 const cards = new Map();
 export function initRealtime() {
     rowsEl = $("rows");
@@ -35,16 +43,40 @@ export function initRealtime() {
     cardWallEl = $("cardWall");
     cardEmptyEl = $("cardEmpty");
     tableViewEl = $("tableView");
+    camWallEl = $("camWall");
+    camTableWrapEl = $("camTableWrap");
+    camWallSummaryEl = $("camWallSummary");
     $("viewCards").addEventListener("click", () => setView("cards"));
     $("viewTable").addEventListener("click", () => setView("table"));
+    $("camViewCards").addEventListener("click", () => setCamView("cards"));
+    $("camViewTable").addEventListener("click", () => setCamView("table"));
     let saved = "";
+    let savedCam = "";
     try {
         saved = window.localStorage.getItem(VIEW_KEY) ?? "";
+        savedCam = window.localStorage.getItem(CAM_VIEW_KEY) ?? "";
     }
     catch {
         saved = ""; // 隐私模式/壳里可能不让用 localStorage，忽略即可
+        savedCam = "";
     }
     setView(saved === "table" ? "table" : "cards");
+    setCamView(savedCam === "table" ? "table" : "cards");
+}
+/** C2：相机状态墙 / 表格 两种视图切换（和过包区一样记住选择） */
+function setCamView(view) {
+    const cardsOn = view === "cards";
+    camWallEl.style.display = cardsOn ? "" : "none";
+    camWallSummaryEl.style.display = cardsOn ? "" : "none";
+    camTableWrapEl.style.display = cardsOn ? "none" : "";
+    $("camViewCards").className = "btn small" + (cardsOn ? "" : " secondary");
+    $("camViewTable").className = "btn small" + (cardsOn ? " secondary" : "");
+    try {
+        window.localStorage.setItem(CAM_VIEW_KEY, view);
+    }
+    catch {
+        // 忽略
+    }
 }
 /** 切换"卡片墙 / 表格"两种视图 */
 function setView(view) {
@@ -304,8 +336,9 @@ function upsertCard(key, p, flash) {
 export function upsertCamera(camera) {
     if (!camera?.deviceId)
         return;
-    cameras.set(camera.deviceId, camera);
+    cameras.set(camera.deviceId, { ...cameras.get(camera.deviceId), ...camera });
     renderCameras();
+    renderCameraWall();
 }
 export function replaceCameras(list) {
     cameras.clear();
@@ -314,6 +347,61 @@ export function replaceCameras(list) {
             cameras.set(c.deviceId, c);
     }
     renderCameras();
+    renderCameraWall();
+}
+/**
+ * C2：收下 B8 的监控快照（在线率/心跳/活动告警），和相机基础状态合起来渲染状态墙。
+ * 由 main.ts 在收到 SSE 的 type=monitor 时调用（monitor.ts 只负责设备信息页那块表）。
+ */
+export function applyMonitorStats(list) {
+    for (const item of list ?? []) {
+        if (!item?.camera)
+            continue;
+        monitorStats.set(item.camera, item);
+        // 监控快照里带着权威的出码计数，顺手补进 cameras（有些相机可能还没收到 camera 事件）
+        const known = cameras.get(item.camera);
+        if (known) {
+            if (typeof item.codeCount === "number")
+                known.codeCount = item.codeCount;
+            if (item.lastCodeTime)
+                known.lastCodeTime = item.lastCodeTime;
+            if (typeof item.offlineCountTotal === "number")
+                known.offlineCount = item.offlineCountTotal;
+        }
+    }
+    renderCameras();
+    renderCameraWall();
+}
+/** C2：收下轻量的"相机计数"推送（出一包就变的那部分），只更新数字，不做整表刷新 */
+export function applyCameraCounters(list) {
+    for (const item of list ?? []) {
+        if (!item?.camera)
+            continue;
+        let known = cameras.get(item.camera);
+        if (!known) {
+            known = {
+                deviceId: item.camera,
+                online: item.online,
+                discovered: item.discovered,
+                position: item.position ?? undefined,
+                positionLabel: item.positionLabel ?? undefined,
+                model: item.model ?? undefined,
+                serialNumber: item.serialNumber ?? undefined,
+                offlineCount: item.offlineCount,
+                codeCount: item.codeCount
+            };
+            cameras.set(item.camera, known);
+        }
+        known.codeCount = item.codeCount;
+        known.lastCodeTime = item.lastCodeTime ?? known.lastCodeTime;
+        known.offlineCount = item.offlineCount;
+        if (item.position && !known.position) {
+            known.position = item.position;
+            known.positionLabel = item.positionLabel ?? undefined;
+        }
+    }
+    renderCameras();
+    renderCameraWall();
 }
 /** 状态文案：在线 / 离线 / 未发现（清单里声明了但 SDK 没报） */
 export function statusText(c) {
@@ -344,9 +432,92 @@ function renderCameras() {
         tr.appendChild(cell(c.reconnectCount ?? 0));
         tr.appendChild(cell(dash(c.lastOfflineDurationText)));
         tr.appendChild(cell(c.codeCount ?? 0));
+        tr.appendChild(cell(dash(c.lastCodeTime), "muted"));
         tr.appendChild(cell(c.lastChangeTime, "muted"));
         camRowsEl.appendChild(tr);
     }
+}
+// ---------------------------------------------------------------- C2 相机状态墙
+/** 一台相机的"异常摘要"：没有异常返回 null（墙上的红黄底色和徽标都用它） */
+function cameraProblem(c, alerts) {
+    if (c.discovered === false)
+        return "未发现";
+    if (!c.online)
+        return "离线";
+    if (alerts.length > 0)
+        return alertLabel(alerts[0].code);
+    return null;
+}
+function numberBox(value, label, className) {
+    const box = el("div", undefined, "camnum" + (className ? " " + className : ""));
+    box.appendChild(el("div", value, "n"));
+    box.appendChild(el("div", label, "l"));
+    return box;
+}
+/**
+ * C2 相机状态墙的一格：方位 + 相机 + 在线状态 + 出码数 + 掉线次数 + 心跳 + 在线率 + 告警徽标。
+ * 数据是两路合起来的：相机基础状态（type=camera / /api/cameras）+ 监控指标（type=monitor）+ 计数（type=camera-count）。
+ */
+function cameraCell(c) {
+    const m = monitorStats.get(c.deviceId);
+    const alerts = m?.alerts ?? [];
+    const missing = c.discovered === false;
+    const offline = missing || !c.online;
+    const critical = alerts.some((a) => a.severity === "critical");
+    const root = el("div", undefined, "camcell " + (missing ? "missing" : offline ? "offline" : "online") +
+        (alerts.length > 0 ? (critical ? " alarm" : " warn") : ""));
+    root.dataset.camera = c.deviceId;
+    root.dataset.codeCount = String(c.codeCount ?? 0);
+    root.title = "点击查看这台相机的详情（设备信息页）";
+    const head = el("div", undefined, "camhead");
+    head.appendChild(el("span", positionLabel(c.position), "campos"));
+    head.appendChild(el("span", c.declaredLabel ?? c.deviceId, "camname code"));
+    head.appendChild(el("span", missing ? "未发现" : c.online ? "在线" : "离线", "camstate"));
+    root.appendChild(head);
+    const nums = el("div", undefined, "camnums");
+    nums.appendChild(numberBox(String(c.codeCount ?? 0), "出码", "big"));
+    nums.appendChild(numberBox(String(c.offlineCount ?? 0), "掉线", (c.offlineCount ?? 0) > 0 ? "bad" : undefined));
+    nums.appendChild(numberBox(m ? fmtAge(m.lastHeartbeatAgeSeconds) : "—", "心跳"));
+    nums.appendChild(numberBox(m ? fmtRate(m.onlineRatePercent) : "—", "在线率"));
+    root.appendChild(nums);
+    root.appendChild(el("div", "最近出码 " + dash(c.lastCodeTime), "camline"));
+    const identity = [c.model, c.serialNumber].filter((v) => !!v).join(" · ");
+    if (identity)
+        root.appendChild(el("div", identity, "camline muted"));
+    if (alerts.length > 0) {
+        const box = el("div", undefined, "camalerts");
+        for (const a of alerts) {
+            box.appendChild(el("span", alertLabel(a.code), "badge " + (a.severity === "critical" ? "err" : "warn")));
+        }
+        root.appendChild(box);
+    }
+    root.addEventListener("click", () => {
+        $("tab-devices").click();
+    });
+    return root;
+}
+/** C2：渲染相机状态墙（每台一格）+ 一行汇总（在线/累计出码/异常台数） */
+function renderCameraWall() {
+    if (!camWallEl)
+        return;
+    const list = Array.from(cameras.values()).sort((a, b) => {
+        const pa = a.positionOrder ?? 99;
+        const pb = b.positionOrder ?? 99;
+        if (pa !== pb)
+            return pa - pb;
+        return a.deviceId.localeCompare(b.deviceId);
+    });
+    clear(camWallEl);
+    camEmptyEl.style.display = list.length ? "none" : "block";
+    for (const c of list) {
+        camWallEl.appendChild(cameraCell(c));
+    }
+    const online = list.filter((c) => c.online && c.discovered !== false).length;
+    const codes = list.reduce((sum, c) => sum + (c.codeCount ?? 0), 0);
+    const bad = list.filter((c) => cameraProblem(c, monitorStats.get(c.deviceId)?.alerts ?? []) !== null).length;
+    camWallSummaryEl.textContent = list.length > 0
+        ? "在线 " + online + " / " + list.length + "　累计出码 " + codes + "　异常 " + bad + " 台"
+        : "";
 }
 export async function loadInitial() {
     const parcels = await api.parcels(INITIAL_PARCELS);
@@ -364,4 +535,8 @@ export async function loadInitial() {
     const cams = await api.cameras();
     if (cams.data)
         replaceCameras(cams.data);
+    // C2：出码计数单独取一次（相机状态墙首屏就要显示"这台相机出过多少码"）
+    const counters = await api.cameraCounters();
+    if (counters.data)
+        applyCameraCounters(counters.data);
 }

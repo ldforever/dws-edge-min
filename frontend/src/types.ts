@@ -243,7 +243,24 @@ export type StreamMessage =
   /** B8：监控快照（在线率/心跳/活动告警），平台按检查间隔周期推送 */
   | { type: "monitor"; data: MonitorSnapshot }
   /** B8：单条告警产生/恢复 */
-  | { type: "alert"; data: MonitorAlert };
+  | { type: "alert"; data: MonitorAlert }
+  /** C2：相机计数（出码数等）—— 出一包就变，单独推，节流 700ms */
+  | { type: "camera-count"; data: CameraCounter[] };
+
+/** C2：一台相机的计数类信息（相机状态墙用） */
+export interface CameraCounter {
+  camera: string;
+  /** 累计出码包裹数（按 traceId 去重后） */
+  codeCount: number;
+  lastCodeTime?: string | null;
+  offlineCount: number;
+  online: boolean;
+  discovered: boolean;
+  position?: string | null;
+  positionLabel?: string | null;
+  model?: string | null;
+  serialNumber?: string | null;
+}
 
 // ---------------------------------------------------------------- B2 条码过滤规则
 
@@ -515,6 +532,17 @@ export interface MonitorCameraStatus {
   offlineCount: number;
   alertCount: number;
   alerts: MonitorAlertBrief[];
+
+  // ---- C2：相机状态墙要的"计数类"字段（由 SpoolStore 提供权威值）----
+  /** 累计出码包裹数（按 traceId 去重后） */
+  codeCount?: number;
+  lastCodeTime?: string | null;
+  offlineCountTotal?: number;
+  discovered?: boolean;
+  position?: string | null;
+  positionLabel?: string | null;
+  model?: string | null;
+  serialNumber?: string | null;
 }
 
 /** GET /api/monitor/summary */

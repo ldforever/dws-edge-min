@@ -117,6 +117,9 @@ namespace DwsEdge.Platform
             });
             app.MapGet("/api/cameras", (SpoolStore store) => Results.Json(store.Cameras()));
 
+            // C2：相机状态墙的"计数"部分（出码数 / 掉线次数 / 方位）—— 轻量，界面首屏与周期刷新都用它
+            app.MapGet("/api/cameras/counters", (SpoolStore store) => Results.Json(store.CameraCounters()));
+
             // B1：幂等下发 —— 下游从这里取"待下发"，处理完回报 ack（同一个 traceId 只会出现一次）
             app.MapGet("/api/dispatch/pending", (SpoolStore store, int? limit) =>
             {

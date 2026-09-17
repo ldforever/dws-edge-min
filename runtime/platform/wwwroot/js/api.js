@@ -50,6 +50,8 @@ export const api = {
     stats: () => request("/api/stats"),
     parcels: (limit) => request(`/api/parcels?limit=${limit}`),
     cameras: () => request("/api/cameras"),
+    /** C2：相机计数（出码数/掉线次数/方位），相机状态墙首屏用 */
+    cameraCounters: () => request("/api/cameras/counters"),
     devices: () => request("/api/devices"),
     positions: () => request("/api/camera-positions"),
     savePositions: (positions) => request("/api/camera-positions", { method: "POST", json: { positions } }),

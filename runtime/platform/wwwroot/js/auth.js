@@ -7,8 +7,8 @@
  *   * 配置页"账号与安全" —— 改自己的密码、管理员改策略 / 管账号 / 看登录记录 / 轮换服务令牌；
  *   * 401 统一处理 —— 任何接口回 401（会话过期、被别人踢下线）都自动弹回登录框。
  */
-import { api, onUnauthorized } from "./api.js?v=bdee5c5f";
-import { $, badge, cell, clear, el, notify } from "./dom.js?v=bdee5c5f";
+import { api, onUnauthorized } from "./api.js?v=4e5f5a2b";
+import { $, badge, cell, clear, el, notify } from "./dom.js?v=4e5f5a2b";
 const ROLE_LABEL = {
     admin: "管理员",
     operator: "操作员",

@@ -15,6 +15,7 @@ import type {
   AuthStatus,
   AuthUsersResponse,
   BarcodeRuleSet,
+  CameraCounter,
   CameraRecord,
   ConfigSummary,
   DedupStats,
@@ -114,6 +115,9 @@ export const api = {
     request<ParcelRecord[]>(`/api/parcels?limit=${limit}`),
 
   cameras: (): Promise<ApiResult<CameraRecord[]>> => request<CameraRecord[]>("/api/cameras"),
+
+  /** C2：相机计数（出码数/掉线次数/方位），相机状态墙首屏用 */
+  cameraCounters: (): Promise<ApiResult<CameraCounter[]>> => request<CameraCounter[]>("/api/cameras/counters"),
 
   devices: (): Promise<ApiResult<DeviceView>> => request<DeviceView>("/api/devices"),
 

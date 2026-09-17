@@ -10,8 +10,8 @@
  *   * SSE 的 type=monitor 快照（平台按检查间隔推，界面上的秒数/在线率会自己走，不用轮询）；
  *   * /api/monitor/* 接口（切页、点刷新时拉一次，断线后也能补上）。
  */
-import { api } from "./api.js?v=bdee5c5f";
-import { $, badge, cell, clear, dash, el } from "./dom.js?v=bdee5c5f";
+import { api } from "./api.js?v=4e5f5a2b";
+import { $, badge, cell, clear, dash, el } from "./dom.js?v=4e5f5a2b";
 const EVENT_LABEL = {
     offline: "掉线",
     online: "上线",
@@ -26,6 +26,10 @@ const CODE_LABEL = {
     "low-online-rate": "在线率过低",
     "declared-missing": "清单里没发现"
 };
+/** 告警码 → 中文（C2 的相机墙也用同一份文案，避免两处不一致） */
+export function alertLabel(code) {
+    return CODE_LABEL[code] ?? code;
+}
 const EVENT_LIMIT = 200;
 let eventRowsEl;
 let camRowsEl;
@@ -95,12 +99,13 @@ function renderSummary(s) {
     $("monAlerts").textContent = String(s.activeAlerts ?? 0);
 }
 /** 在线率为 -1 表示"刚上线，样本还不够" */
-function fmtRate(rate) {
+export function fmtRate(rate) {
     if (rate === undefined || rate === null || rate < 0)
         return "—";
     return rate.toFixed(1) + "%";
 }
-function fmtAge(seconds) {
+/** 心跳新鲜度（秒 → "3 秒前 / 5 分钟前"） */
+export function fmtAge(seconds) {
     if (seconds === undefined || seconds === null || seconds < 0)
         return "—";
     if (seconds < 60)
@@ -129,6 +134,7 @@ function renderCameras(list) {
         tr.appendChild(cell(fmtRate(item.onlineRatePercent)));
         tr.appendChild(cell(fmtAge(item.lastHeartbeatAgeSeconds)));
         tr.appendChild(cell(dash(item.lastCodeAt), "muted"));
+        tr.appendChild(cell(item.codeCount ?? 0));
         tr.appendChild(cell(item.offlineCount ?? 0));
         tr.appendChild(cell(fmtDuration(item.currentStateSeconds) + (item.online ? "（在线）" : "（离线）")));
         const alertTd = el("td");

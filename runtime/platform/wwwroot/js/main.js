@@ -4,18 +4,18 @@
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
  * 也没有全局变量：模块之间只通过 import 通信，方便以后换壳（WebView2）或加页面。
  */
-import { api } from "./api.js?v=bdee5c5f";
-import { connectStream } from "./sse.js?v=bdee5c5f";
-import { $ } from "./dom.js?v=bdee5c5f";
-import { initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=bdee5c5f";
-import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=bdee5c5f";
-import { initConfig, refreshConfig } from "./config.js?v=bdee5c5f";
-import { initRules, refreshRules } from "./rules.js?v=bdee5c5f";
-import { initDedup, refreshDedup } from "./dedup.js?v=bdee5c5f";
-import { initHistory, refreshHistory } from "./history.js?v=bdee5c5f";
-import { initDownstream, refreshDownstream } from "./downstream.js?v=bdee5c5f";
-import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=bdee5c5f";
-import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=bdee5c5f";
+import { api } from "./api.js?v=4e5f5a2b";
+import { connectStream } from "./sse.js?v=4e5f5a2b";
+import { $ } from "./dom.js?v=4e5f5a2b";
+import { applyCameraCounters, applyMonitorStats, initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=4e5f5a2b";
+import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=4e5f5a2b";
+import { initConfig, refreshConfig } from "./config.js?v=4e5f5a2b";
+import { initRules, refreshRules } from "./rules.js?v=4e5f5a2b";
+import { initDedup, refreshDedup } from "./dedup.js?v=4e5f5a2b";
+import { initHistory, refreshHistory } from "./history.js?v=4e5f5a2b";
+import { initDownstream, refreshDownstream } from "./downstream.js?v=4e5f5a2b";
+import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=4e5f5a2b";
+import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=4e5f5a2b";
 const PAGES = ["realtime", "devices", "history", "config"];
 function showPage(name) {
     for (const page of PAGES) {
@@ -65,8 +65,14 @@ function bootstrap() {
             upsertCamera(c);
             scheduleDevicesRefresh();
         },
-        onMonitor: (snapshot) => renderMonitorSnapshot(snapshot),
+        onMonitor: (snapshot) => {
+            renderMonitorSnapshot(snapshot);
+            // C2：同一份快照也喂给实时页的相机状态墙（在线率/心跳/告警）
+            applyMonitorStats(snapshot.cameras ?? []);
+        },
         onAlert: (alert) => renderAlert(alert),
+        // C2：出码计数（出一包就变），单独推、单独更新数字
+        onCameraCount: (counters) => applyCameraCounters(counters),
         onStats: renderStats,
         onStatus: setConnectionState,
         // B9：推送断了（多半是会话过期）→ 刷一次登录态，需要的话弹回登录框

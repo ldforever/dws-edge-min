@@ -11,6 +11,8 @@ export interface StreamHandlers {
   onParcel: (data: Extract<StreamMessage, { type: "parcel" }>["data"]) => void;
   onCamera: (data: Extract<StreamMessage, { type: "camera" }>["data"]) => void;
   onStats: (data: Extract<StreamMessage, { type: "stats" }>["data"]) => void;
+  /** C2：相机计数（出码数等）变化 */
+  onCameraCount: (data: Extract<StreamMessage, { type: "camera-count" }>["data"]) => void;
   /** B8：监控快照（在线率/心跳/活动告警） */
   onMonitor: (data: Extract<StreamMessage, { type: "monitor" }>["data"]) => void;
   /** B8：单条告警产生/恢复，用来即时弹提示 */
@@ -52,6 +54,9 @@ export function connectStream(handlers: StreamHandlers): void {
         break;
       case "stats":
         handlers.onStats(msg.data);
+        break;
+      case "camera-count":
+        handlers.onCameraCount(msg.data);
         break;
       case "monitor":
         handlers.onMonitor(msg.data);
