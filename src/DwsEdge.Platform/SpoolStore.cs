@@ -47,6 +47,8 @@ namespace DwsEdge.Platform
         private readonly BarcodeRuleStore _rules;
         private readonly DedupStore _dedup;
         private readonly string _imagesRoot;
+        private readonly string _runtimeRoot;
+        private ThumbnailService _thumbs;
         private readonly int _maxRecords;
 
         /// <summary>最近被规则丢弃的条码（诊断用，环形缓冲，最新在前）。</summary>
@@ -87,6 +89,7 @@ namespace DwsEdge.Platform
             _dedup = dedup;
             string root = config["Images:Root"] ?? "../images";
             _imagesRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, root));
+            _runtimeRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, config["Runtime:Root"] ?? ".."));
             int max = 5000;
             int.TryParse(config["Images:MaxRecords"], out max);
             _maxRecords = Math.Max(100, max);
@@ -1312,6 +1315,77 @@ namespace DwsEdge.Platform
         }
 
         /// <summary>按需读取本地图片；只允许读取配置的图片根目录下的文件。</summary>
+        public string ResolveImagePath(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                return null;
+            }
+
+            string full;
+            try
+            {
+                full = Path.GetFullPath(path);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+
+            string root = _imagesRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+            return File.Exists(full) ? full : null;
+        }
+
+        /// <summary>
+        /// B7：按需取缩略图。BMP 原图会真的缩小（纯 C# 降采样，结果缓存到 cache\thumbs），
+        /// JPEG 原图因为离线环境没有解码库，回退成直接返回原图（响应头里会标注）。
+        /// 整个过程都在平台进程里做，采集进程一点不受影响。
+        /// </summary>
+        public IResult OpenThumbnail(string path, int width)
+        {
+            string full = ResolveImagePath(path);
+            if (full == null)
+            {
+                return Results.BadRequest(new { error = "只允许访问图片目录内已存在的文件" });
+            }
+
+            if (_thumbs == null)
+            {
+                _thumbs = new ThumbnailService(Path.Combine(_runtimeRoot, "cache", "thumbs"),
+                    delegate(string message, bool warning) { _logger.LogWarning(message); });
+            }
+
+            ThumbnailService.ThumbResult result = _thumbs.Get(full, width);
+            return Results.File(result.bytes, result.format == "bmp" ? "image/bmp" : "image/jpeg",
+                lastModified: File.GetLastWriteTimeUtc(full), enableRangeProcessing: false);
+        }
+
+        /// <summary>B7：图片元信息（尺寸/大小/后缀），前端用来决定怎么显示。</summary>
+        public object ImageInfo(string path)
+        {
+            string full = ResolveImagePath(path);
+            if (full == null)
+            {
+                return new { ok = false, error = "只允许访问图片目录内已存在的文件" };
+            }
+
+            FileInfo info = new FileInfo(full);
+            return new
+            {
+                ok = true,
+                path = full,
+                name = info.Name,
+                bytes = info.Length,
+                modified = info.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                extension = info.Extension.TrimStart('.').ToLowerInvariant(),
+                thumbSupported = info.Extension.Equals(".bmp", StringComparison.OrdinalIgnoreCase)
+            };
+        }
+
         public IResult OpenImage(string path)
         {
             if (string.IsNullOrEmpty(path))

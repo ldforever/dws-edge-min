@@ -279,6 +279,11 @@ namespace DwsEdge.Platform
             });
 
             app.MapGet("/api/images", (SpoolStore store, string path) => store.OpenImage(path));
+
+            // B7：缩略图（BMP 真缩小并缓存；JPEG 回退原图）+ 图片元信息
+            app.MapGet("/api/images/thumb", (SpoolStore store, string path, int? w) =>
+                store.OpenThumbnail(path, w.HasValue ? Math.Clamp(w.Value, 32, 1600) : 320));
+            app.MapGet("/api/images/info", (SpoolStore store, string path) => Results.Json(store.ImageInfo(path)));
             app.MapGet("/api/stream", (HttpContext context, SpoolStore store, CancellationToken token) =>
                 store.StreamAsync(context, token));
 
