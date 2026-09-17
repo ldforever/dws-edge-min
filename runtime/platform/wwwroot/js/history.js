@@ -6,8 +6,8 @@
  *   * 返回里带 total（命中总数）和 elapsedMs（服务端耗时），界面直接显示，方便现场自证性能；
  *   * 导出是打开一个下载链接（CSV，UTF-8 BOM，Excel 直接能开）。
  */
-import { api } from "./api.js?v=29f36d59";
-import { $, cell, clear, el, notify, positionLabel } from "./dom.js?v=29f36d59";
+import { api } from "./api.js?v=54253388";
+import { $, cell, clear, el, imageCell, notify, positionLabel } from "./dom.js?v=54253388";
 let lastResult = null;
 export function initHistory() {
     $("btnHistoryQuery").addEventListener("click", () => {
@@ -139,18 +139,8 @@ function renderRow(record) {
         ? Math.round(lengthMm) + "×" + Math.round(record.widthMm ?? 0) + "×" + Math.round(record.heightMm ?? 0)
         : "—";
     tr.appendChild(sizeTd);
-    const imgTd = el("td");
-    if (record.firstImagePath) {
-        const a = el("a", "查看 (" + record.imageCount + ")", "img");
-        a.href = api.imageUrl(record.firstImagePath);
-        a.target = "_blank";
-        imgTd.appendChild(a);
-    }
-    else {
-        imgTd.className = "muted";
-        imgTd.textContent = "—";
-    }
-    tr.appendChild(imgTd);
+    // B7：直接显示缩略图（点击看原图）
+    tr.appendChild(imageCell(record.firstImagePath, record.imageCount ?? 0, 120));
     const stateTd = el("td");
     const state = record.dispatchState ?? "pending";
     const label = state === "sent" ? "已下发" : state === "failed" ? "下发失败" : "待下发";

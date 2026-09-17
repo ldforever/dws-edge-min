@@ -96,3 +96,33 @@ export function notify(message: string): void {
 export function openImage(url: string): void {
   window.open(url, "_blank");
 }
+
+/**
+ * B7：图片单元格 —— 直接显示缩略图（按需加载），点击看原图。
+ * 缩略图由平台生成并缓存，列表里不会去拉几十张原图。
+ */
+export function imageCell(path: string | null | undefined, imageCount: number, thumbWidth = 160): HTMLTableCellElement {
+  const td = el("td");
+  if (!path) {
+    td.className = "muted";
+    td.textContent = "—";
+    return td;
+  }
+
+  const link = el("a", undefined, "img");
+  link.href = "/api/images?path=" + encodeURIComponent(path);
+  link.target = "_blank";
+  link.title = "点击查看原图：" + path;
+
+  const img = el("img", undefined, "thumb");
+  img.src = "/api/images/thumb?w=" + thumbWidth + "&path=" + encodeURIComponent(path);
+  img.loading = "lazy";
+  img.alt = "包裹图片";
+  link.appendChild(img);
+  td.appendChild(link);
+
+  if (imageCount > 1) {
+    td.appendChild(el("span", "×" + imageCount, "tag"));
+  }
+  return td;
+}

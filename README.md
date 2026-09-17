@@ -485,7 +485,9 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 | `GET /api/config` | 当前 SDK 配置摘要（provider、mode/num、触发模式、相机清单、方位条数、脚本是否就绪、最近一次应用结果） |
 | `POST /api/config/apply` | 一键应用配置：调 `tools\apply-config.ps1` 做 写配置 → 重启校验 → 失败回滚，返回退出码与完整输出（A8） |
 | `GET /api/history?from=&to=&code=&deviceId=&noread=&limit=` | 历史查询（读历史文件，支持时间范围、条码、相机、无码过滤） |
-| `GET /api/images?path=<绝对路径>` | 按需读取图片（只允许图片根目录内的文件，越权返回 400） |
+| `GET /api/images?path=<绝对路径>` | 按需读取原图（只允许图片根目录内的文件，越权返回 400） |
+| `GET /api/images/thumb?path=&w=160` | **B7** 缩略图（BMP 真缩小并缓存；JPEG 回退原图） |
+| `GET /api/images/info?path=` | **B7** 图片元信息（字节/时间/后缀/是否支持缩略图） |
 | `GET /api/stream` | SSE 实时推送（包裹与统计） |
 
 实测结果示例：`{"events":4,"parcels":2,"noread":0,"images":2,"readRate":1,"parseErrors":0}` —— 两次触发共 4 条事件（detected + enriched），
@@ -826,7 +828,43 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b6-http.ps1
 
 共 22 项断言。
 
-## 十二、两个进程的边界
+## 十二、图片按需访问与缩略图（B7）
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/images?path=` | 原图（只允许图片根目录内的文件，越权返回 400） |
+| `GET /api/images/thumb?path=&w=160` | **缩略图**：BMP 原图按块平均真缩小，结果缓存；JPEG 回退原图 |
+| `GET /api/images/info?path=` | 元信息（名称/字节/修改时间/后缀/是否支持缩略图） |
+
+**为什么不引图像库**：现场是离线交付，拿不到 NuGet 包（`System.Drawing.Common` / `ImageSharp` 都取不到）。
+而采集侧落盘的原图本来就是 **BMP**（大华 SDK 的原始图按 BMP 写），BMP 是无压缩位图 ——
+读像素、按块平均、再写 BMP，**纯算术就能做，零依赖**。
+
+**实测**（800×600 BMP 原图 1,440,054 字节 → `w=200` 缩略图 90,054 字节，200×150）：
+首次生成 156 ms，缓存命中 121 ms（这时耗时其实是 HTTP 传输 90KB 的开销，不是计算）。
+判断"命中缓存"不能看耗时，而是看**缓存文件有没有被重写** —— 回归脚本就是按这个断言的。
+
+**不占用采集进程**：图片的缩略、缓存、传输全在平台进程里做，采集宿主只管落盘；
+顺带一个约束：接口只读图片根目录内的文件（白名单），越权与不存在的文件分别返回 400 / 404。
+
+**前端**：实时过包页与历史查询页的图片列现在**直接显示缩略图**（`<img loading="lazy">`，
+实时页 160px、历史页 120px），点击缩略图看原图 —— 列表加载不会再拉几十张原图。
+浏览器里实测：`img.thumb` 的实际解码尺寸 160×120，外层链接指向 `/api/images?path=...`。
+
+**已知取舍**：SDK 直接给 JPEG 时离线没有解码器，`thumb` 会**回退成原图**
+（`/api/images/info` 里 `thumbSupported=false` 就是提示）。以后有包源了接上
+System.Drawing.Common / ImageSharp 即可覆盖 JPEG，接口与前端都不用改。
+
+回归测试：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\test-b7-images.ps1
+```
+
+覆盖：元信息、缩略图尺寸/体积、缓存不重算、白名单越权、文件不存在、JPEG 回退、
+**并发 8 个取图请求**、以及取图期间采集照常入库，共 19 项断言。
+
+## 十三、两个进程的边界
 
 | | 采集宿主（Edge） | 业务平台（Platform） |
 |---|---|---|
@@ -839,7 +877,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b6-http.ps1
 通信：V1 用文件 spool（`SpoolTailer` 增量读取，只处理完整行）；V2 换成 gRPC/命名管道时只需替换 `SpoolTailer`，
 `SpoolStore` 与平台 API 不动。
 
-## 十三、代码导读
+## 十四、代码导读
 
 **采集侧（net48）**
 
@@ -872,7 +910,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b6-http.ps1
 - `frontend/src/realtime.ts` / `devices.ts` / `config.ts`：三个页签各自的渲染逻辑。
 - `frontend/src/sse.ts` / `dom.ts`：实时推送封装与 DOM 小工具。
 
-## 十四、常见问题
+## 十五、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -894,7 +932,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-b6-http.ps1
 | 配置页红字"找不到 apply-config.ps1" | 跑一次 `build.ps1`（会把 `tools\*.ps1` 拷到 `runtime\tools`），或手工把 tools 目录放到 runtime 旁边 |
 | 相机显示"未发现" | cfg 里 `enable="1"` 但 SDK 没报；查上电、网线、网段，或该相机被别的软件占用 |
 
-## 十五、下一步（V1 完整版）
+## 十六、下一步（V1 完整版）
 
 采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做），平台侧包裹合并 / 历史库 / 存图访问 /
 统计与实时推送 / 设备信息 / 一键应用配置也都打通了。接着按 V1 需求清单排：

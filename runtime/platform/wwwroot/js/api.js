@@ -68,7 +68,10 @@ export const api = {
     previewDownstream: (template) => request("/api/downstream/preview", { method: "POST", json: { template } }),
     downstreamLog: (limit) => request(`/api/downstream/log?limit=${limit}`),
     /** 图片按需读取接口（只允许图片根目录内的文件） */
-    imageUrl: (path) => "/api/images?path=" + encodeURIComponent(path)
+    imageUrl: (path) => "/api/images?path=" + encodeURIComponent(path),
+    /** B7：缩略图（BMP 真缩小并缓存，JPEG 回退原图） */
+    imageThumbUrl: (path, width) => "/api/images/thumb?w=" + width + "&path=" + encodeURIComponent(path),
+    imageInfo: (path) => request("/api/images/info?path=" + encodeURIComponent(path))
 };
 export const STREAM_URL = "/api/stream";
 /** 历史查询串：导出时不要 limit/offset（要全量） */

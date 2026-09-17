@@ -7,7 +7,7 @@
  *   * 相机状态表与"设备信息"页共用同一份数据源（平台推送的 camera 事件）。
  */
 import { api } from "./api.js";
-import { $, cell, clear, el, gb, positionLabel, dash } from "./dom.js";
+import { $, cell, clear, el, gb, imageCell, positionLabel, dash } from "./dom.js";
 import type { CameraRecord, CodeDetail, ParcelRecord, Stats } from "./types.js";
 
 const MAX_ROWS = 120;
@@ -115,17 +115,8 @@ export function renderParcel(p: ParcelRecord, flash: boolean): void {
   }
   tr.appendChild(stageTd);
 
-  const imgTd = el("td");
-  if ((p.imageCount ?? 0) > 0 && p.firstImagePath) {
-    const a = el("a", "查看 (" + p.imageCount + ")", "img");
-    a.href = api.imageUrl(p.firstImagePath);
-    a.target = "_blank";
-    imgTd.appendChild(a);
-  } else {
-    imgTd.className = "muted";
-    imgTd.textContent = "—";
-  }
-  tr.appendChild(imgTd);
+  // B7：直接显示缩略图（点击看原图），列表里不再拉原图
+  tr.appendChild(imageCell((p.imageCount ?? 0) > 0 ? p.firstImagePath : null, p.imageCount ?? 0));
 
   rowsEl.insertBefore(tr, rowsEl.firstChild);
   rowByTrace.set(key, tr);

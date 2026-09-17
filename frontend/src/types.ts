@@ -431,6 +431,19 @@ export interface DownstreamClient {
   lastError?: string | null;
 }
 
+/** B7：图片元信息（GET /api/images/info） */
+export interface ImageInfo {
+  ok: boolean;
+  error?: string;
+  path?: string;
+  name?: string;
+  bytes?: number;
+  modified?: string;
+  extension?: string;
+  /** BMP 才能真的生成缩略图；JPEG 会回退原图 */
+  thumbSupported?: boolean;
+}
+
 export interface DownstreamResponse {
   file: string;
   config: DownstreamOptions;

@@ -21,6 +21,7 @@ import type {
   FilteredCodeRecord,
   HistoryFilter,
   HistoryResult,
+  ImageInfo,
   ParcelRecord,
   PositionsResponse,
   RuleTestResponse,
@@ -151,7 +152,14 @@ export const api = {
     request<DownstreamLogItem[]>(`/api/downstream/log?limit=${limit}`),
 
   /** 图片按需读取接口（只允许图片根目录内的文件） */
-  imageUrl: (path: string): string => "/api/images?path=" + encodeURIComponent(path)
+  imageUrl: (path: string): string => "/api/images?path=" + encodeURIComponent(path),
+
+  /** B7：缩略图（BMP 真缩小并缓存，JPEG 回退原图） */
+  imageThumbUrl: (path: string, width: number): string =>
+    "/api/images/thumb?w=" + width + "&path=" + encodeURIComponent(path),
+
+  imageInfo: (path: string): Promise<ApiResult<ImageInfo>> =>
+    request<ImageInfo>("/api/images/info?path=" + encodeURIComponent(path))
 };
 
 export const STREAM_URL = "/api/stream";

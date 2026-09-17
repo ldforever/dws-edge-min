@@ -7,7 +7,7 @@
  *   * 导出是打开一个下载链接（CSV，UTF-8 BOM，Excel 直接能开）。
  */
 import { api } from "./api.js";
-import { $, cell, clear, el, notify, positionLabel } from "./dom.js";
+import { $, cell, clear, el, imageCell, notify, positionLabel } from "./dom.js";
 import type { CodeDetail, HistoryFilter, HistoryResult, ParcelRecord } from "./types.js";
 
 let lastResult: HistoryResult | null = null;
@@ -153,17 +153,8 @@ function renderRow(record: ParcelRecord): HTMLTableRowElement {
     : "—";
   tr.appendChild(sizeTd);
 
-  const imgTd = el("td");
-  if (record.firstImagePath) {
-    const a = el("a", "查看 (" + record.imageCount + ")", "img");
-    a.href = api.imageUrl(record.firstImagePath);
-    a.target = "_blank";
-    imgTd.appendChild(a);
-  } else {
-    imgTd.className = "muted";
-    imgTd.textContent = "—";
-  }
-  tr.appendChild(imgTd);
+  // B7：直接显示缩略图（点击看原图）
+  tr.appendChild(imageCell(record.firstImagePath, record.imageCount ?? 0, 120));
 
   const stateTd = el("td");
   const state = record.dispatchState ?? "pending";
