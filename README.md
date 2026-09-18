@@ -34,6 +34,7 @@ dws-edge-min/
 ├─ tools/apply-config.ps1        一键应用配置：写配置 → 重启 SDK 校验 → 失败自动回滚
 ├─ tools/test-c1-cards.ps1       实时过包卡片墙自检（造数据 + 起平台 + 校验，可用浏览器看效果）
 ├─ tools/test-c2-wall.ps1        相机状态墙回归（含 SSE 实时性校验，-KeepRunning 可留平台看）
+├─ tools/test-c5-config.ps1      配置页回归（存图策略 / 相机清单 / 备份回滚）
 ├─ config/gateway.ini            采集宿主配置（选 provider + provider 参数）
 ├─ frontend/                     前端 TypeScript 工程（无框架、无打包器）
 │  ├─ src/                       api / sse / dom / auth / realtime（C1 卡片墙）/ devices / monitor / config / history / rules / dedup / downstream / types
@@ -507,6 +508,9 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 | `GET /api/monitor/alerts?limit=&activeOnly=` | **B8** 告警列表（默认只看活动告警） |
 | `GET /api/monitor/config` / `POST /api/monitor/config` | **B8** 告警阈值读写（保存自动备份、立即生效） |
 | `GET /api/cameras/counters` | **C2** 相机计数（出码数/掉线次数/方位），相机状态墙首屏用 |
+| `GET｜POST /api/config/storage` | **C5** 存图策略读写（校验 + 自动备份；写 gateway.ini，重启采集宿主生效） |
+| `GET /api/config/backups` | **C5** 列出 `config\` 与 `Cfg\` 下的配置备份（含生效方式） |
+| `POST /api/config/rollback` | **C5** 用某个备份还原（回滚前会把当前内容另存） |
 | `POST /api/auth/login` | **B9** 登录（返回 token + 写 HttpOnly Cookie；密码错返回剩余次数、锁定返回 423） |
 | `GET /api/auth/status` / `GET /api/auth/me` / `POST /api/auth/logout` | **B9** 登录态（公开）/ 当前账号 / 退出 |
 | `POST /api/auth/password` | **B9** 改密码（带 username = 管理员重置，会自动解锁） |
@@ -1164,7 +1168,79 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-c2-wall.ps1 -KeepRunning  
 **真连一次 SSE 验证建连补发与出码后推送里都带 codeCount**、5 秒内最终值到位（节流兜底）、
 掉线后状态与计数同步、以及部署产物里确实带相机墙，共 **29 项断言**。
 
-## 十七、两个进程的边界
+## 十七、配置页（简版）（C5）
+
+配置页把四块现场最常改的东西做成了图形化，验收要求是三条：**保存即生效、可回滚、非法参数有提示**。
+
+| 配置块 | 在哪 | 生效方式 | 回滚 |
+|---|---|---|---|
+| 相机清单（接入方式 + 值 + 方位） | 本页表格编辑（文本模式保留） | 一键应用：写 cfg → 启动 SDK 校验 → 不通过自动回滚 | 自动：Cfg 的 `.bak-` 备份 + 失败自动回滚 |
+| 存图策略（存哪些图/保几天/磁盘水位） | 本页表单（C5 新增） | 写 `config\gateway.ini`，**重启采集宿主**后生效 | 自动备份 + 本页"备份与回滚"一键还原 |
+| 输出对接参数（TCP 客户端/服务端、HTTP） | 下游输出面板（B4/B5/B6） | 保存即生效（发送服务按新配置重连） | 自动备份 + 一键还原 |
+| 条码规则（长度/前后缀/正则/黑白名单） | 条码过滤规则面板（B2） | 保存即生效（热加载，最多 1 秒） | 自动备份 + 一键还原 |
+
+### 存图策略（新）
+
+写进 `config\gateway.ini` 的两处：provider 段的"存哪些图"，`[storage]` 段的"留多久"。
+
+| 参数 | 含义 | 取值 |
+|---|---|---|
+| 保存原图 / 面单图 | 这两类图是否落盘 | 开 / 关 |
+| 保存每台相机各自的图 | 需要同时回传每台相机的码信息（否则拿不到相机标识） | 开 / 关（组合校验） |
+| 图片保存天数 | 超过天数的日期目录整目录删除 | 0-3650（0 = 永久保留） |
+| 磁盘水位(%) | 达到后从最旧的日期目录开始删 | 0 或 10-99（0 = 关闭） |
+| 清理间隔(分钟) | 清理线程运行间隔 | 1-1440 |
+| 事件文件保留(天) | spool 事件保留天数（平台消费过的才删） | 0-3650 |
+| 图片目录 | 相对 runtime 的路径 | 留空 = 沿用 provider；不能含 `..`、不能绝对路径 |
+
+保存时**只改这几个键**：注释、空行、其他段原样保留（现场配置里全是说明性注释，被冲掉就没法排障了）。
+
+### 相机清单表格
+
+原来是一个大文本框，现在主入口是表格：每行 = 接入方式（ip / key / id）+ 值 + 方位下拉（顶面/底面/左侧/右侧/前侧/后侧/线体/备用），
+可以增删行、点"校验清单"先看问题。前端校验规则：
+
+* 值不能为空（空行自动忽略）；
+* `ip` 必须是合法 IPv4（写错网段是现场"相机连不上"的头号原因，这里直接红字拦下来；要写主机名请改用 id/key）；
+* 同一 kind 下不允许重复；
+* 台数不在 12-17 时给"提醒"（不拦，狂扫或测试环境可能少）；
+* 后端还会再校验一次（格式非法回 400 并指出第几行）。
+
+### 备份与回滚（新）
+
+`GET /api/config/backups` 把 `config\` 与 `Cfg\` 下的 `*.bak-时间戳` 全列出来，每行标注**还原目标**与**生效方式**
+（平台配置热加载、采集宿主配置要重启宿主、SDK 配置要重新"一键应用"）。
+点"回滚"还原时，**先把当前内容另存一份**（`.before-rollback-时间戳`），点错也能再救回来。
+接口只接受文件名（不接受路径），`..`、没有 `.bak-` 标记的都会被 400 拒掉。
+
+### 实测（浏览器里点出来的）
+
+| 项 | 实测 |
+|---|---|
+| 相机清单表格 | 3 行 `[ip] 172.20.10.11 [顶面]`，可增删改 |
+| 清单校验 | 正常：`✓ 清单校验通过（3 台）` + 提醒"3 台不在 12-17"；重复行：`✗ 第 3 行与第 2 行重复`；`ip=abc`：`✗ 不是合法的 IP` |
+| 存图策略校验 | 天数 `-1` → `✗ 图片保存天数要在 0-3650 之间`；目录 `..\..\evil` → `✗ 不能包含 ..`；被拒后文件一个字没变 |
+| 存图策略保存 | 改成 30 天 → `已保存 1 项`，输入框回读 30，并提示"要重启采集宿主才生效" |
+| 备份列表 | 26 份（`LogisticsBase.cfg.bak-*` 与 `gateway.ini.bak-*`），带时间、大小、生效方式 |
+| 回滚 | 回滚 gateway.ini 后保存天数从 14 回到 7；回滚前的内容另存为 `.before-rollback-*` |
+
+回归测试：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\test-c5-config.ps1
+powershell -ExecutionPolicy Bypass -File .\tools\test-c5-config.ps1 -KeepRunning   # 留着用浏览器看
+```
+
+覆盖：存图策略读取/保存/回读、注释与其他段不被冲掉、非法值逐项被拒且文件不变、
+相机清单非法格式（提示到第几行）与合法应用（写进 cfg 并能读回方位）、
+备份列表内容、回滚与"回滚前另存"、非法备份名被拒，共 **61 项断言**（含 8 项前端产物检查）。
+
+**顺带修掉的一个真 bug**：存图开关（`saveOriginal` 等）是相机 provider 的参数。
+测试环境把 `provider` 改成 `simulator` 后，旧实现会把这些键插进 `[simulator]` 段 ——
+文件看着改了，但没有任何代码读它们，现场表现就是"改了没生效"。
+现在会先找"已经有这些键的段"（一般是 `[dahua-dws]`），界面也会写明"存图开关写进 [dahua-dws]"。
+
+## 十八、两个进程的边界
 
 | | 采集宿主（Edge） | 业务平台（Platform） |
 |---|---|---|
@@ -1177,7 +1253,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-c2-wall.ps1 -KeepRunning  
 通信：V1 用文件 spool（`SpoolTailer` 增量读取，只处理完整行）；V2 换成 gRPC/命名管道时只需替换 `SpoolTailer`，
 `SpoolStore` 与平台 API 不动。
 
-## 十八、代码导读
+## 十九、代码导读
 
 **采集侧（net48）**
 
@@ -1197,6 +1273,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-c2-wall.ps1 -KeepRunning  
 - `DwsEdge.Platform/DownstreamSender.cs` + `DownstreamStore.cs` + `MessageTemplate.cs`：B4/B5 下游输出（客户端/服务端两种模式、模板、重传、连接活性检测、广播）。
 - `DwsEdge.Platform/CameraMonitor.cs`：B8 相机状态监控（在线率/掉线记录/心跳/五类告警、事件落盘与恢复、阈值热加载）+ `MonitorWatcher`（后台定时判定并推快照）。
 - `DwsEdge.Platform/AuthStore.cs`：B9 账号与鉴权（PBKDF2 密码、失败锁定、会话、服务令牌、访问规则 `Check()`、审计）+ 请求 DTO。
+- `DwsEdge.Platform/ConfigStore.cs`：A8 一键应用 + A9 方位映射 + **C5 存图策略读写、INI 键级改写、配置备份与回滚**。
 
 **平台侧（net10）**
 
@@ -1212,9 +1289,10 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-c2-wall.ps1 -KeepRunning  
 - `frontend/src/realtime.ts` / `devices.ts` / `config.ts`：三个页签各自的渲染逻辑。
 - `frontend/src/monitor.ts`：B8 监控与告警（告警条、每台相机指标、掉线与告警记录、阈值配置）。
 - `frontend/src/auth.ts`：B9 登录遮罩、顶栏用户区、改密、账号管理、策略与审计（401 自动弹回登录）。
+- `frontend/src/config.ts`：配置页（一键应用 + **C5 相机清单表格、存图策略、备份回滚**）。
 - `frontend/src/sse.ts` / `dom.ts`：实时推送封装与 DOM 小工具。
 
-## 十九、常见问题
+## 二十、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -1251,8 +1329,12 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-c2-wall.ps1 -KeepRunning  
 | 出码数看着不动 | 出码数按"去重后的包裹"算，且只在有包裹经过时才涨；看"最近出码"时间比看数字更直观（时间会跟着走） |
 | 相机墙上某台一直是"未发现" | cfg 清单里 `enable="1"` 但 SDK 没报：查上电、网线、网段，或该相机被别的软件占用 |
 | 在线率显示 `—` | 刚上线、样本还不够（在线率窗口默认 60 分钟）；等一会儿或调小"在线率窗口" |
+| 改了存图策略但没生效 | 存图策略是采集宿主读的：要重启采集宿主。界面保存后会明确提示，别只看文件变了 |
+| 相机清单里写 `ip=主机名` 报警 | 选了 `ip` 就要求合法 IPv4；要写主机名/序列号，把接入方式改成 `id` 或 `key` |
+| 配置改错了想退回去 | "配置 → 配置备份与回滚"里选对应的 `.bak-` 一键还原；回滚前会自动把当前内容再存一份 |
+| 备份目录越堆越多 | 备份就是文本文件（几 KB），需要清理时手工删 `config\*.bak-*` 与 `Cfg\*.bak-*` 即可，平台不自动删 |
 
-## 二十、下一步（V1 完整版）
+## 二十一、下一步（V1 完整版）
 
 采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做）；平台侧 B1-B9 也打通了：
 包裹合并与去重（B1）、条码过滤规则（B2）、历史库与导出（B3）、下游 TCP 客户端 / TCP 服务端 /
@@ -1263,8 +1345,8 @@ HTTP 推送（B4-B6）、图片按需访问与缩略图（B7）、相机状态�
 1. **A8-3 配置模板**：把当前 cfg 存成模板、按模板生成/对比（界面上"另存为模板/套用模板"）；
 2. 配置页补齐：存图策略、输出参数（相机清单、触发模式、下游、监控阈值已能改）；
 3. **告警外发**：把 B8 的告警接到下游（TCP/HTTP 报文或钉钉/企业微信机器人），现场不用盯屏；
-4. **C 类**：C1（实时过包卡片墙）、C2（相机状态墙）已完成；接着做完整报表页（读码率/在线率按班次、无码 TOP、导出）、
-   相机墙的"点开看这台相机的最近包裹"、HTTPS/设备证书（现在是内网 HTTP 明文）、细到接口的操作审计、多语言/多站点；
+4. **C 类**：C1（过包卡片墙）、C2（相机状态墙）、C5（配置页简版）已完成；接着做 C3 的多图与批量单号、
+   C4 统计看板、C6 日志查看与一键打包，以及 HTTPS/设备证书（现在是内网 HTTP 明文）、细到接口的操作审计、多语言/多站点；
 5. 把 `SpoolTailer` 换成 gRPC / 命名管道，降低延迟（为 ARM 全栈铺路）；
 6. 采集宿主做成 Windows 服务 / 看门狗，配置页的"重启采集宿主"改成调服务管理器（现在是从平台直接拉进程）；
 7. 采集宿主与平台一起做成自启动 + 自动恢复（现场无人值守的前提）。

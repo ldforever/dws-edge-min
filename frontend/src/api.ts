@@ -14,6 +14,7 @@ import type {
   AuthOptions,
   AuthStatus,
   AuthUsersResponse,
+  BackupItem,
   BarcodeRuleSet,
   CameraCounter,
   CameraRecord,
@@ -42,7 +43,10 @@ import type {
   SaveMonitorConfigResponse,
   SavePositionsResponse,
   SaveRulesResponse,
-  Stats
+  SaveStorageResponse,
+  Stats,
+  StorageConfigResponse,
+  StorageOptions as StorageOptionsType
 } from "./types.js";
 
 export interface ApiResult<T> {
@@ -274,7 +278,23 @@ export const api = {
     request<{ ok: boolean; serviceKey: string; note?: string }>("/api/auth/service-key", { method: "POST" }),
 
   authEvents: (limit: number): Promise<ApiResult<AuthEventRecord[]>> =>
-    request<AuthEventRecord[]>("/api/auth/events?limit=" + limit)
+    request<AuthEventRecord[]>("/api/auth/events?limit=" + limit),
+
+  // ---- C5 配置页（简版）----
+  storageConfig: (): Promise<ApiResult<StorageConfigResponse>> =>
+    request<StorageConfigResponse>("/api/config/storage"),
+
+  saveStorageConfig: (options: StorageOptionsType): Promise<ApiResult<SaveStorageResponse>> =>
+    request<SaveStorageResponse>("/api/config/storage", { method: "POST", json: options }),
+
+  /** 备份列表（rules / downstream / monitor / auth / gateway.ini / Cfg 的 .bak-* 都在这） */
+  backups: (): Promise<ApiResult<BackupItem[]>> => request<BackupItem[]>("/api/config/backups"),
+
+  rollback: (file: string): Promise<ApiResult<{ ok: boolean; target: string; restoredFrom: string; backupOfCurrent?: string | null; effect?: string; note?: string }>> =>
+    request<{ ok: boolean; target: string; restoredFrom: string; backupOfCurrent?: string | null; effect?: string; note?: string }>(
+      "/api/config/rollback",
+      { method: "POST", json: { file } }
+    )
 };
 
 export const STREAM_URL = "/api/stream";

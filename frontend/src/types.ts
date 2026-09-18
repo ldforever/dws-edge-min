@@ -703,3 +703,57 @@ export interface AuthEventRecord {
   ip?: string | null;
   detail?: string | null;
 }
+
+// ---------------------------------------------------------------- C5 配置页（简版）
+
+/** 存图策略（gateway.ini 的 provider 段 + [storage] 段） */
+export interface StorageOptions {
+  saveOriginal: boolean;
+  saveWaybill: boolean;
+  savePerCamera: boolean;
+  attachAllCameraCodeInfo: boolean;
+  providerImageDir: string;
+  imageDir: string;
+  retentionDays: number;
+  maxDiskPercent: number;
+  cleanupIntervalMinutes: number;
+  cleanupOnStart: boolean;
+  spoolRetentionDays: number;
+}
+
+/** GET /api/config/storage */
+export interface StorageConfigResponse {
+  file: string;
+  exists: boolean;
+  provider: string;
+  providerSection: string;
+  /** 存图开关写进哪个段（一般是相机 provider 段；测试环境 provider=simulator 时会落到 dahua-dws 段） */
+  storageSection: string;
+  imageRoot: string;
+  options: StorageOptions;
+  limits: Record<string, string>;
+  note: string;
+}
+
+/** POST /api/config/storage */
+export interface SaveStorageResponse {
+  ok: boolean;
+  file: string;
+  backup?: string | null;
+  changed: string[];
+  changedCount: number;
+  needRestartHost: boolean;
+  note?: string;
+}
+
+/** 一条配置备份（GET /api/config/backups） */
+export interface BackupItem {
+  fileName: string;
+  folder: string;
+  target: string;
+  targetExists: boolean;
+  size: number;
+  sizeText: string;
+  modified: string;
+  effect: string;
+}

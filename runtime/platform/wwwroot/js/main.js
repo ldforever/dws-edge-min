@@ -4,18 +4,18 @@
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
  * 也没有全局变量：模块之间只通过 import 通信，方便以后换壳（WebView2）或加页面。
  */
-import { api } from "./api.js?v=4e5f5a2b";
-import { connectStream } from "./sse.js?v=4e5f5a2b";
-import { $ } from "./dom.js?v=4e5f5a2b";
-import { applyCameraCounters, applyMonitorStats, initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=4e5f5a2b";
-import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=4e5f5a2b";
-import { initConfig, refreshConfig } from "./config.js?v=4e5f5a2b";
-import { initRules, refreshRules } from "./rules.js?v=4e5f5a2b";
-import { initDedup, refreshDedup } from "./dedup.js?v=4e5f5a2b";
-import { initHistory, refreshHistory } from "./history.js?v=4e5f5a2b";
-import { initDownstream, refreshDownstream } from "./downstream.js?v=4e5f5a2b";
-import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=4e5f5a2b";
-import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=4e5f5a2b";
+import { api } from "./api.js?v=62d56586";
+import { connectStream } from "./sse.js?v=62d56586";
+import { $ } from "./dom.js?v=62d56586";
+import { applyCameraCounters, applyMonitorStats, initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=62d56586";
+import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=62d56586";
+import { initConfig, refreshConfig } from "./config.js?v=62d56586";
+import { initRules, refreshRules } from "./rules.js?v=62d56586";
+import { initDedup, refreshDedup } from "./dedup.js?v=62d56586";
+import { initHistory, refreshHistory } from "./history.js?v=62d56586";
+import { initDownstream, refreshDownstream } from "./downstream.js?v=62d56586";
+import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=62d56586";
+import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=62d56586";
 const PAGES = ["realtime", "devices", "history", "config"];
 function showPage(name) {
     for (const page of PAGES) {

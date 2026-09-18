@@ -119,7 +119,13 @@ export const api = {
     authConfig: () => request("/api/auth/config"),
     saveAuthConfig: (options) => request("/api/auth/config", { method: "POST", json: options }),
     rotateServiceKey: () => request("/api/auth/service-key", { method: "POST" }),
-    authEvents: (limit) => request("/api/auth/events?limit=" + limit)
+    authEvents: (limit) => request("/api/auth/events?limit=" + limit),
+    // ---- C5 配置页（简版）----
+    storageConfig: () => request("/api/config/storage"),
+    saveStorageConfig: (options) => request("/api/config/storage", { method: "POST", json: options }),
+    /** 备份列表（rules / downstream / monitor / auth / gateway.ini / Cfg 的 .bak-* 都在这） */
+    backups: () => request("/api/config/backups"),
+    rollback: (file) => request("/api/config/rollback", { method: "POST", json: { file } })
 };
 export const STREAM_URL = "/api/stream";
 /** 历史查询串：导出时不要 limit/offset（要全量） */

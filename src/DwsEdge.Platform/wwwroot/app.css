@@ -154,3 +154,9 @@ h2.withtoolbar { display: flex; align-items: center; gap: 10px; }
 .camnum.bad .n { color: #f0883e; }
 .camline { font-size: 11px; color: #8b98a9; }
 .camalerts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+
+/* C5：配置页的小提示（校验结果）与列表 */
+.err { color: #f85149; font-size: 12px; }
+.warnText { color: #d29922; font-size: 12px; }
+.okText { color: #3fb950; font-size: 12px; }
+.cam-no { width: 28px; }

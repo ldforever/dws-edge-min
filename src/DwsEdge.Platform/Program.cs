@@ -287,6 +287,34 @@ namespace DwsEdge.Platform
             app.MapPost("/api/config/apply", (ConfigStore cfg, ConfigApplyRequest request) =>
                 cfg.Apply(request));
 
+            // C5：配置页（简版）—— 存图策略图形化 + 配置备份/回滚
+            app.MapGet("/api/config/storage", (ConfigStore cfg) => Results.Json(cfg.ReadStorage()));
+            app.MapPost("/api/config/storage", (ConfigStore cfg, ConfigStore.StorageOptions request) =>
+            {
+                try
+                {
+                    return Results.Json(cfg.SaveStorage(request));
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            // 备份列表与回滚（rules / downstream / monitor / auth / gateway.ini / Cfg 的 .bak-* 都在这）
+            app.MapGet("/api/config/backups", (ConfigStore cfg) => Results.Json(cfg.ReadBackups()));
+            app.MapPost("/api/config/rollback", (ConfigStore cfg, ConfigStore.RollbackRequest request) =>
+            {
+                try
+                {
+                    return Results.Json(cfg.Rollback(request != null ? request.file : null));
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
             // B3：历史查询（条码 / 相机 / 无码 / 下发状态 / 图片），返回总数与耗时便于自证性能
             app.MapGet("/api/history", (SpoolStore store, string from, string to, string code, string deviceId,
                 bool? noread, string dispatchState, bool? hasImage, int? limit, int? offset) =>

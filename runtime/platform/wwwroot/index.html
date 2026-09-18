@@ -9,7 +9,7 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=4e5f5a2b" />
+<link rel="stylesheet" href="./app.css?v=62d56586" />
 </head>
 <body>
 <header>
@@ -542,6 +542,63 @@
       </div>
     </div>
 
+    <!-- ==================== C5 存图策略 ==================== -->
+    <div class="panel">
+      <h2>存图策略（C5）</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:12px">
+        这些参数由<b>采集宿主</b>执行（写进 <span class="code">config\gateway.ini</span>）：存哪些图、图片保几天、
+        磁盘水位到多少开始从最旧日期目录清、事件文件保几天。保存会<b>自动备份</b>；
+        改完要<b>重启采集宿主</b>才生效（宿主只在启动时读这个文件）。
+      </div>
+
+      <div class="toolbar">
+        <label class="chk"><input type="checkbox" id="stSaveOriginal" checked /> 保存原图</label>
+        <label class="chk"><input type="checkbox" id="stSaveWaybill" checked /> 保存面单图</label>
+        <label class="chk"><input type="checkbox" id="stSavePerCamera" /> 保存每台相机各自的图</label>
+        <label class="chk"><input type="checkbox" id="stAttachAll" /> 回传每台相机的码信息</label>
+        <label class="chk"><input type="checkbox" id="stCleanupOnStart" checked /> 宿主启动时先清理一次</label>
+      </div>
+      <div class="toolbar">
+        <label class="chk">图片保存天数：<input type="text" id="stRetentionDays" size="5" /></label>
+        <label class="chk">磁盘水位(%)：<input type="text" id="stMaxDiskPercent" size="5" /></label>
+        <label class="chk">清理间隔(分钟)：<input type="text" id="stCleanupInterval" size="5" /></label>
+        <label class="chk">事件文件保留(天)：<input type="text" id="stSpoolRetention" size="5" /></label>
+      </div>
+      <div class="toolbar">
+        <label class="chk">图片目录（留空=沿用 provider）：<input type="text" id="stImageDir" size="14" placeholder="images" /></label>
+        <label class="chk">provider 图片目录：<input type="text" id="stProviderImageDir" size="14" placeholder="images" /></label>
+        <button class="btn" id="btnStorageSave">保存存图策略</button>
+        <button class="btn secondary" id="btnStorageReload">重新读取</button>
+        <span id="storageBadge"></span>
+      </div>
+      <div class="muted" id="storageMsg" style="font-size:12px"></div>
+      <div id="storageProblems"></div>
+      <div class="muted" id="storageFile" style="font-size:12px;margin-top:6px"></div>
+    </div>
+
+    <!-- ==================== C5 配置备份与回滚 ==================== -->
+    <div class="panel">
+      <h2>配置备份与回滚（C5）</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:12px">
+        每次保存配置都会自动备份一份 <span class="code">*.bak-时间戳</span>。这里把
+        <span class="code">config\</span> 与 <span class="code">Cfg\</span> 下的备份都列出来，选一份点"回滚"即可还原；
+        <b>回滚前会把当前内容再另存一份</b>（<span class="code">.before-rollback-时间戳</span>），不怕点错。
+        "生效方式"说明回滚后还要做什么：平台配置是热加载，采集侧配置要重启宿主或重新应用。
+      </div>
+      <div class="toolbar">
+        <button class="btn secondary" id="btnBackupReload">刷新备份列表</button>
+        <span id="backupMsg" class="muted" style="font-size:12px"></span>
+      </div>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr><th>备份文件</th><th>时间</th><th>大小</th><th>还原目标</th><th>生效方式</th><th>操作</th></tr>
+          </thead>
+          <tbody id="backupRows"></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="panel">
       <h2>一键应用配置</h2>
       <div class="muted" style="font-size:12px;margin-bottom:12px">
@@ -557,7 +614,29 @@
         <option value="free">自由拉流（狂扫）triggerMode=0</option>
       </select>
 
-      <h3>相机清单（每行一台：ip=... / key=... / id=...，可选 ,pos=top）</h3>
+      <h3>相机清单（表格编辑：接入方式 + 值 + 方位）</h3>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">
+        改完点"保存并应用"：写 cfg → 启动 SDK 回读校验 → 不通过自动回滚。
+        下方文本模式与这张表内容一致，两个入口想用哪个都行。
+      </div>
+      <div class="toolbar">
+        <button class="btn secondary small" id="btnCamAdd">新增一行</button>
+        <button class="btn secondary small" id="btnCamFill">用当前 cfg 填充</button>
+        <button class="btn secondary small" id="btnCamCheck">校验清单</button>
+        <button class="btn" id="btnCamApply">保存并应用</button>
+        <span id="camEditMsg" class="muted" style="font-size:12px"></span>
+      </div>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr><th>#</th><th>接入方式</th><th>值（IP / 序列号 / id）</th><th>方位</th><th>操作</th></tr>
+          </thead>
+          <tbody id="camEditRows"></tbody>
+        </table>
+      </div>
+      <div id="camEditProblems"></div>
+
+      <h3>相机清单（文本模式，高级）</h3>
       <textarea id="cfgCameras" spellcheck="false"></textarea>
       <div class="toolbar">
         <label class="chk"><input type="checkbox" id="cfgUseCameras" checked /> 应用上面的相机清单</label>
@@ -582,6 +661,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=4e5f5a2b"></script>
+<script type="module" src="./js/main.js?v=62d56586"></script>
 </body>
 </html>
