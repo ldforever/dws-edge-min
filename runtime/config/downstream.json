@@ -1,0 +1,19 @@
+{
+  "enabled": false,
+  "protocol": "tcp-client",
+  "host": "127.0.0.1",
+  "port": 9000,
+  "template": "{code}|{time}|{camera}|{weight}|{volume}|{traceId}\\r\\n",
+  "encoding": "utf-8",
+  "connectTimeoutMs": 3000,
+  "retryIntervalMs": 5000,
+  "maxAttempts": 0,
+  "sendOnlyComplete": true,
+  "sendIntervalMs": 0,
+  "replayRecentCount": 0,
+  "url": "",
+  "httpTimeoutMs": 5000,
+  "contentType": "text/plain; charset=utf-8",
+  "idempotencyHeader": "Idempotency-Key",
+  "headers": []
+}

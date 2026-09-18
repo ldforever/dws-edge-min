@@ -44,6 +44,22 @@ function Copy-Files {
 $dotnet = Find-DotNet
 $srcDir = Join-Path $PSScriptRoot 'src'
 
+# 版本号单一来源：仓库根 VERSION 文件（形如 V1.0.3）。
+# 它同时决定：程序集版本（产物属性里能看到）、交付包名、包内 VERSION.txt —— 三处永远一致。
+$versionFile = Join-Path $PSScriptRoot 'VERSION'
+$appVersion = ''
+if (Test-Path $versionFile) {
+    $appVersion = (Get-Content $versionFile -Raw -Encoding UTF8).Trim()
+}
+$semver = ($appVersion -replace '^[Vv]', '').Trim()
+if ($semver -notmatch '^\d+\.\d+') {
+    Write-Host "  提示：VERSION 文件内容不是 Vx.y.z 形式（当前：'$appVersion'），本次不写程序集版本" -ForegroundColor Yellow
+    $semver = ''
+}
+if ($semver) {
+    Write-Host "  版本号（来自 VERSION）：$appVersion → 程序集版本 $semver" -ForegroundColor DarkGray
+}
+
 # 前端（TypeScript，无打包器）：有 node 就重新编译成 wwwroot\js\*.js + app.css；
 # 没有 node 就直接用仓库里已经提交的产物 —— 现场机器不需要装 node 工具链。
 $frontendDir = Join-Path $PSScriptRoot 'frontend'
@@ -95,7 +111,11 @@ if ($Offline) {
 function Build-Project {
     param([string]$Project, [string]$Label)
     Write-Host "  编译 $Label" -ForegroundColor DarkGray
-    & $dotnet build $Project -c $Configuration --nologo @extraArgs
+    $buildArgs = @($Project, '-c', $Configuration, '--nologo') + $extraArgs
+    if ($semver) {
+        $buildArgs += @("-p:Version=$semver", "-p:FileVersion=$semver", "-p:AssemblyVersion=$semver.0")
+    }
+    & $dotnet build @buildArgs
     if ($LASTEXITCODE -ne 0) { throw "编译失败：$Label" }
 }
 

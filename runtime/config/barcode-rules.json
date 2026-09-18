@@ -1,0 +1,52 @@
+{
+  "defaultAction": "keep",
+  "ignoreCase": true,
+  "rules": [
+    {
+      "name": "\u53EA\u4FDD\u7559 12-14 \u4F4D\u3001SF/JD \u5F00\u5934\u7684\u8FD0\u5355\u53F7",
+      "priority": 10,
+      "enabled": false,
+      "action": "keep",
+      "remark": "\u793A\u4F8B\uFF1A\u591A\u4E2A\u6761\u4EF6\u540C\u65F6\u6EE1\u8DB3\u624D\u7B97\u547D\u4E2D\uFF1B\u628A enabled \u6539\u6210 true \u5373\u53EF\u751F\u6548",
+      "minLength": 12,
+      "maxLength": 14,
+      "prefix": "SF",
+      "suffix": null,
+      "regex": null,
+      "whitelist": null,
+      "blacklist": null,
+      "IsDrop": false
+    },
+    {
+      "name": "\u4E22\u5F03\u6D4B\u8BD5\u7801\u4E0E\u8BBE\u5907\u7801",
+      "priority": 5,
+      "enabled": false,
+      "action": "drop",
+      "remark": "\u793A\u4F8B\uFF1A\u4F18\u5148\u7EA7 5 \u6BD4\u4E0A\u9762\u7684 10 \u5148\u5224\u65AD\uFF0C\u6240\u4EE5 TEST \u5F00\u5934\u7684\u7801\u4F1A\u88AB\u5148\u4E22\u6389",
+      "minLength": null,
+      "maxLength": null,
+      "prefix": "TEST",
+      "suffix": null,
+      "regex": null,
+      "whitelist": null,
+      "blacklist": null,
+      "IsDrop": true
+    },
+    {
+      "name": "\u6B63\u5219\u515C\u5E95\uFF1A\u53EA\u8BA4\u7EAF\u6570\u5B57\u002B\u5B57\u6BCD\u7684 15 \u4F4D\u7801",
+      "priority": 90,
+      "enabled": false,
+      "action": "drop",
+      "remark": "\u793A\u4F8B\uFF1A\u6B63\u5219\u547D\u4E2D \u2192 \u4E22\u5F03",
+      "minLength": null,
+      "maxLength": null,
+      "prefix": null,
+      "suffix": null,
+      "regex": "^[A-Za-z0-9]{15}$",
+      "whitelist": null,
+      "blacklist": null,
+      "IsDrop": true
+    }
+  ],
+  "DefaultDrop": false
+}

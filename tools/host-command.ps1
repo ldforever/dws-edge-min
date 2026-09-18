@@ -24,8 +24,13 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+# 兼容两种布局：开发仓库是 <仓库>\tools\ → <仓库>\runtime；交付包是 <runtime>\tools\ → <runtime>
 if ([string]::IsNullOrEmpty($RuntimeDir)) {
-    $RuntimeDir = Join-Path (Split-Path -Parent $scriptDir) 'runtime'
+    $parentDir = Split-Path -Parent $scriptDir
+    foreach ($candidate in @((Join-Path $parentDir 'runtime'), $parentDir)) {
+        if (Test-Path (Join-Path $candidate 'DwsEdge.Host.exe')) { $RuntimeDir = $candidate; break }
+    }
+    if ([string]::IsNullOrEmpty($RuntimeDir)) { $RuntimeDir = Join-Path $parentDir 'runtime' }
 }
 
 $exe = Join-Path $RuntimeDir 'DwsEdge.Host.exe'

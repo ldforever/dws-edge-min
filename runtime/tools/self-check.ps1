@@ -25,7 +25,14 @@ $ErrorActionPreference = 'Stop'
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($RuntimeDir)) {
-    $RuntimeDir = Join-Path (Split-Path -Parent $scriptDir) 'runtime'
+    # 兼容两种布局：
+    #   开发仓库：<仓库>\tools\self-check.ps1        → <仓库>\runtime
+    #   交付包　：<runtime>\tools\self-check.ps1     → <runtime>（就在上一层，别再拼一层 runtime）
+    $parentDir = Split-Path -Parent $scriptDir
+    foreach ($candidate in @((Join-Path $parentDir 'runtime'), $parentDir)) {
+        if (Test-Path (Join-Path $candidate 'DwsEdge.Host.exe')) { $RuntimeDir = $candidate; break }
+    }
+    if ([string]::IsNullOrEmpty($RuntimeDir)) { $RuntimeDir = Join-Path $parentDir 'runtime' }
 }
 if (![System.IO.Path]::IsPathRooted($RuntimeDir)) { $RuntimeDir = [System.IO.Path]::GetFullPath($RuntimeDir) }
 if ([string]::IsNullOrEmpty($BaseUrl)) { $BaseUrl = 'http://127.0.0.1:' + $Port }
@@ -50,6 +57,9 @@ function Invoke-HostCommand {
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
+    # 宿主把自己的控制台输出设成了 UTF-8；这里也按 UTF-8 读，避免中文变乱码
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
     $psi.CreateNoWindow = $true
     $psi.Arguments = (($Arguments | ForEach-Object {
         if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
@@ -63,6 +73,25 @@ function Invoke-HostCommand {
         return @{ exitCode = -999; output = '命令超时（宿主没有按命令模式退出）' }
     }
     return @{ exitCode = $process.ExitCode; output = ($outTask.Result + $errTask.Result) }
+}
+
+<#
+    从宿主输出里挑"最有用的那一行"给现场看：
+      优先 SDK 返回码提示（2200/3000/3001/1000/1001）、其次 [cmd] 行、最后退回到最后一行非空内容。
+    只取一行并截断，避免把一整段输出塞进表格（既难读，终端编码不同还会显示成乱码）。
+#>
+function Get-KeyLine {
+    param([string]$Text, [int]$MaxLength = 120)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+    $lines = @($Text -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 } | ForEach-Object { ($_ -replace '\s+', ' ').Trim() })
+    $picked = ''
+    foreach ($pattern in @('未检测到加密狗', '相机数与配置不符', '相机被占用', '找不到配置', '配置解析失败', '\[cmd\]')) {
+        $hit = $lines | Where-Object { $_ -match $pattern } | Select-Object -First 1
+        if ($hit) { $picked = $hit; break }
+    }
+    if (!$picked -and $lines.Count -gt 0) { $picked = $lines[$lines.Count - 1] }
+    if ($picked.Length -gt $MaxLength) { $picked = $picked.Substring(0, $MaxLength) + '…' }
+    return $picked
 }
 
 function Get-Api {
@@ -132,13 +161,15 @@ if ($providers.Count -gt 0) {
 $status = Invoke-HostCommand @('--command-status') 30000
 $isSimulator = $false
 if ($status.exitCode -eq 0) {
-    $providerLine = (@($status.output -split "`n" | Where-Object { $_ -match 'provider=' }) | Select-Object -First 1)
-    $modeLine = (@($status.output -split "`n" | Where-Object { $_ -match '触发模式=' }) | Select-Object -First 1)
-    Add-Result '采集宿主能启动并自报状态' 'PASS' (($providerLine + ' / ' + $modeLine).Trim())
+    # 只取"值"，不要把宿主整行输出搬进表格（终端编码不同时会显示成乱码）
+    $providerValue = [regex]::Match($status.output, 'provider=([^\s]+)').Groups[1].Value
+    $modeValue = [regex]::Match($status.output, '触发模式=([^\r\n]+)').Groups[1].Value.Trim()
+    if ([string]::IsNullOrEmpty($providerValue)) { $providerValue = '未知' }
+    if ([string]::IsNullOrEmpty($modeValue)) { $modeValue = '未知' }
+    Add-Result '采集宿主能启动并自报状态' 'PASS' ('provider=' + $providerValue + '　触发模式：' + $modeValue)
     $isSimulator = $status.output -match 'provider=simulator'
 } else {
-    $tail = (@($status.output -split "`n" | Select-Object -Last 3) -join ' / ').Trim()
-    Add-Result '采集宿主能启动并自报状态' 'FAIL' ('退出码 ' + $status.exitCode + '：' + $tail) `
+    Add-Result '采集宿主能启动并自报状态' 'FAIL' ('退出码 ' + $status.exitCode + '：' + (Get-KeyLine -Text $status.output)) `
         '采集宿主起不来：先看 logs\host-*.log（加密狗 2200 / 相机数 3000 / 被占用 3001）'
 }
 
@@ -151,8 +182,7 @@ if ($isSimulator) {
     if ($verify.exitCode -eq 0) {
         Add-Result '加密狗与相机（SDK 启动+配置回读校验）' 'PASS' '退出码 0：SDK 启动成功，配置参数与 cfg 一致'
     } elseif ($verify.exitCode -eq 2) {
-        $tail = (@($verify.output -split "`n" | Select-Object -Last 4) -join ' / ').Trim()
-        Add-Result '加密狗与相机（SDK 启动+配置回读校验）' 'FAIL' ('退出码 2：' + $tail) `
+        Add-Result '加密狗与相机（SDK 启动+配置回读校验）' 'FAIL' ('退出码 2：' + (Get-KeyLine -Text $verify.output)) `
             '按提示查：2200 加密狗、3000 相机数与清单不符、3001 相机被占用；确认本机与相机同网段'
     } else {
         Add-Result '加密狗与相机（SDK 启动+配置回读校验）' 'FAIL' ('退出码 ' + $verify.exitCode) '看 logs\host-*.log 的 [verify] 输出'
@@ -167,6 +197,9 @@ if ($SkipTrigger) {
 } else {
     $before = Get-ParcelEventCount
     $trigger = Invoke-HostCommand @('--soft-trigger') 60000
+    # 宿主压根起不来（退出码 2 = 启动失败 / -999 = 超时）时，软触发与补码都没法验，
+    # 真正要修的只有"宿主为什么起不来"这一条 —— 后面两项标成跳过，别让根因被噪音埋掉
+    $hostStartFailed = ($trigger.exitCode -eq 2 -or $trigger.exitCode -eq -999)
     if ($trigger.exitCode -eq 0) {
         Start-Sleep -Seconds 2
         $after = Get-ParcelEventCount
@@ -177,16 +210,23 @@ if ($SkipTrigger) {
         }
     } elseif ($trigger.exitCode -eq 5) {
         Add-Result '软触发' 'FAIL' '退出码 5：当前不是软触发模式' '用 tools\set-trigger-mode.ps1 -Mode soft 改触发模式并重启采集宿主'
+    } elseif ($hostStartFailed) {
+        Add-Result '软触发' 'SKIP' '采集宿主启动失败，无法验证触发（先解决上面的"加密狗与相机"）'
     } else {
-        Add-Result '软触发' 'FAIL' ('退出码 ' + $trigger.exitCode) '看 logs\host-*.log 里 [cmd] 那几行'
+        Add-Result '软触发' 'FAIL' ('退出码 ' + $trigger.exitCode + '：' + (Get-KeyLine -Text $trigger.output)) '看 logs\host-*.log 里 [cmd] 那几行'
     }
 
     $code = 'SELFCHECK' + (Get-Date).ToString('HHmmss')
-    $recode = Invoke-HostCommand @('--recode', '--code', $code) 60000
-    if ($recode.exitCode -eq 0) {
-        Add-Result '人工补码' 'PASS' ('退出码 0，补码 ' + $code)
+    if ($hostStartFailed) {
+        Add-Result '人工补码' 'SKIP' '采集宿主启动失败，无法验证补码（同"软触发"）'
     } else {
-        Add-Result '人工补码' 'FAIL' ('退出码 ' + $recode.exitCode) '看 logs\host-*.log 里 [cmd] 补码那行；真机上补码要 SDK 接受该条码'
+        $recode = Invoke-HostCommand @('--recode', '--code', $code) 60000
+        if ($recode.exitCode -eq 0) {
+            Add-Result '人工补码' 'PASS' ('退出码 0，补码 ' + $code)
+        } else {
+            Add-Result '人工补码' 'FAIL' ('退出码 ' + $recode.exitCode + '：' + (Get-KeyLine -Text $recode.output)) `
+                '看 logs\host-*.log 里 [cmd] 补码那行；真机上补码要 SDK 接受该条码'
+        }
     }
 }
 

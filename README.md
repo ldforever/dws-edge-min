@@ -80,6 +80,21 @@ dws-edge-min/
    └─ images/  spool/  logs/  Log/
 ```
 
+### 版本号口径（只有一个来源）
+
+根目录 `VERSION` 文件是唯一来源（如 `V1.0.3`），改版本只改它：
+
+| 位置 | 谁写的 | 形态 |
+|---|---|---|
+| `VERSION` | 手工维护 | `V1.0.3` |
+| exe / dll 程序集版本 | `build.ps1` 编译时注入 `-p:Version` | `1.0.3`（还带 `+<git短号>`） |
+| 交付包目录名 / 包内 `VERSION.txt` | `tools/make-package.ps1` | `DWS-Edge-Min_V1.0.3_...` / `V1.0.3` |
+| 包内 `VERSION.txt` 的"程序集版本 / 源码提交" | 打包时从包内产物与 git 现读 | `1.0.3` / `caf7a52` |
+
+规则：**程序集版本 = 版本号去掉 `V`**。核验用 `tools/check-package.ps1`（交付包里在 `runtime\tools\`），
+它把"包名 ↔ VERSION.txt ↔ exe 属性 ↔ checksums ↔ 仓库 runtime"一次对完，退出码 0 才发。
+细节见 `docs/操作手册.md` 附录 E。
+
 ## 二、依赖
 
 * **后端**：.NET SDK 10（net48 目标包 + ASP.NET Core），离线可用 `build.ps1 -Offline`；
