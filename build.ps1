@@ -139,6 +139,15 @@ New-Item -ItemType Directory -Force -Path $toolsOut | Out-Null
 Copy-Item -Path (Join-Path $PSScriptRoot 'tools\*.ps1') -Destination $toolsOut -Force
 Write-Host "  已拷贝运维脚本到 runtime\tools（一键应用配置用）" -ForegroundColor DarkGray
 
+# 操作手册也拷进 runtime\docs：现场单独拿 runtime 交付时也能查手册
+$docsSource = Join-Path $PSScriptRoot 'docs'
+if (Test-Path $docsSource) {
+    $docsOut = Join-Path $RuntimeDir 'docs'
+    New-Item -ItemType Directory -Force -Path $docsOut | Out-Null
+    Copy-Item -Path (Join-Path $docsSource '*.md') -Destination $docsOut -Force
+    Write-Host "  已拷贝操作手册到 runtime\docs（现场操作手册）" -ForegroundColor DarkGray
+}
+
 # 配置：runtime\config\gateway.ini 是"现场配置"（provider、存图策略、软触发开关都在里面），
 # 已经被改过时不能默默覆盖，否则一键应用/现场调试的设置会被一次编译冲掉。
 $configSource = Join-Path $PSScriptRoot 'config\gateway.ini'
