@@ -9,7 +9,7 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=62d56586" />
+<link rel="stylesheet" href="./app.css?v=ea50ec78" />
 </head>
 <body>
 <header>
@@ -21,6 +21,8 @@
     <button id="tab-realtime" class="active">实时监控</button>
     <button id="tab-devices">设备信息</button>
     <button id="tab-history">历史查询</button>
+    <button id="tab-stats">统计</button>
+    <button id="tab-diag">诊断</button>
     <button id="tab-config">配置</button>
   </nav>
   <div class="status">
@@ -262,6 +264,115 @@
         </thead>
         <tbody id="histRows"></tbody>
       </table>
+    </div>
+  </section>
+
+  <!-- ==================== 日志查看与导出（C6） ==================== -->
+  <section id="page-diag" class="page">
+    <div class="panel">
+      <h2>日志查看与导出（C6）</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:10px">
+        把散在各处的日志集中到一屏：<b>采集宿主日志</b>、平台日志、<b>大华 SDK 日志</b>、事件缓冲（spool）、
+        相机状态事件、登录审计。按时间范围列文件、<b>直接看尾部</b>（不用把几百 MB 拉到浏览器），
+        或者勾选来源<b>一键打包 zip</b>（标准 zip，离线机器解压即用，里面带 README 说明）。
+      </div>
+
+      <div class="toolbar">
+        <label class="chk">起：<input type="date" id="diagFrom" /></label>
+        <label class="chk">止：<input type="date" id="diagTo" /></label>
+        <button class="btn secondary small" id="btnDiagToday">今天</button>
+        <button class="btn secondary small" id="btnDiag3">近 3 天</button>
+        <button class="btn secondary small" id="btnDiagWeek">近 7 天</button>
+        <button class="btn secondary small" id="btnDiagReload">刷新来源</button>
+        <button class="btn" id="btnDiagBundle">一键打包下载 zip</button>
+        <span id="diagPick" class="muted" style="font-size:12px">打包包含 0 个来源</span>
+        <span id="diagBadge"></span>
+      </div>
+      <div class="muted" id="diagMsg" style="font-size:12px"></div>
+
+      <h3>日志来源（点卡片=只看这一类的文件；勾选框=是否打进 zip）</h3>
+      <div id="diagSources" class="camwall"></div>
+
+      <h3 id="diagFilesOf">文件</h3>
+      <div class="scroll-x">
+        <table>
+          <thead><tr><th>文件</th><th>大小</th><th>日期</th><th>修改时间</th><th>操作</th></tr></thead>
+          <tbody id="diagFileRows"></tbody>
+        </table>
+      </div>
+
+      <h3 id="diagTailTitle">查看（尾部 200 行）</h3>
+      <pre class="out" id="diagTail">（点某个文件的"查看"）</pre>
+    </div>
+  </section>
+
+  <!-- ==================== 统计看板（C4） ==================== -->
+  <section id="page-stats" class="page">
+    <div class="panel">
+      <h2>统计看板（C4）</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:10px">
+        总包数、读码率、无码率，可按<b>相机</b>（谁在干活）、<b>班次</b>（哪个班干得多）、按小时、按日期看。
+        数据取自历史库，口径与"历史查询"完全一致，返回里带服务端耗时。
+      </div>
+      <div class="toolbar">
+        <label class="chk">起：<input type="date" id="statsFrom" /></label>
+        <label class="chk">止：<input type="date" id="statsTo" /></label>
+        <button class="btn secondary small" id="btnStatsToday">今天</button>
+        <button class="btn secondary small" id="btnStatsWeek">近 7 天</button>
+        <label class="chk">维度：
+          <select id="statsDim">
+            <option value="camera">按相机</option>
+            <option value="shift">按班次</option>
+            <option value="hour">按小时</option>
+            <option value="day">按日期</option>
+          </select>
+        </label>
+        <label class="chk">相机：<input type="text" id="statsDevice" size="10" placeholder="全部" /></label>
+        <button class="btn" id="btnStatsQuery">查询</button>
+        <button class="btn secondary" id="btnStatsExport">导出统计 CSV</button>
+        <span id="statsMsg" class="muted" style="font-size:12px"></span>
+      </div>
+
+      <div class="cards five">
+        <div class="card"><div class="label">总包数</div><div class="value" id="kpiTotal">0</div></div>
+        <div class="card good"><div class="label">读码率</div><div class="value" id="kpiReadRate">0%</div></div>
+        <div class="card warn"><div class="label">无码率</div><div class="value" id="kpiNoreadRate">0%</div></div>
+        <div class="card bad"><div class="label">无码包裹</div><div class="value small" id="kpiNoread">0</div></div>
+        <div class="card"><div class="label">有图 / 下发成功</div><div class="value small" id="kpiImages">0 / 0</div></div>
+      </div>
+
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>维度值</th><th>总数</th><th>有码</th><th>无码</th><th>读码率</th><th>无码率</th>
+              <th>占比</th><th>有图</th><th>下发成功</th><th>时间范围</th>
+            </tr>
+          </thead>
+          <tbody id="statsRows"></tbody>
+        </table>
+      </div>
+      <footer id="statsFoot">—</footer>
+    </div>
+
+    <div class="panel">
+      <h2>班次设置（C4）</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:10px">
+        班次决定"按班次"这个维度怎么分。跨天班次（如 20:00-08:00）的凌晨时段算<b>前一天</b>那一班，
+        符合现场口径。保存后立即生效（看板按新班次重新统计）。
+      </div>
+      <div class="toolbar">
+        <button class="btn secondary small" id="btnStatsShiftsAdd">新增班次</button>
+        <button class="btn" id="btnStatsShiftsSave">保存班次</button>
+        <span id="shiftsBadge"></span>
+      </div>
+      <div class="scroll-x">
+        <table>
+          <thead><tr><th>名称</th><th>开始</th><th>结束</th><th>时长</th><th>操作</th></tr></thead>
+          <tbody id="shiftRows"></tbody>
+        </table>
+      </div>
+      <div class="muted" id="shiftsFile" style="font-size:12px;margin-top:6px"></div>
     </div>
   </section>
 
@@ -661,6 +772,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=62d56586"></script>
+<script type="module" src="./js/main.js?v=ea50ec78"></script>
 </body>
 </html>

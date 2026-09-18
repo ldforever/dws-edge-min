@@ -54,6 +54,10 @@ namespace DwsEdge.Platform
             builder.Services.AddHostedService<MonitorWatcher>();
             // B9：账号与接口鉴权（策略 + 账号 + 会话 + 审计）
             builder.Services.AddSingleton<AuthStore>();
+            // C4：班次配置（统计看板的"班次维度"）
+            builder.Services.AddSingleton<ShiftStore>();
+            // C6：日志查看与导出（采集/SDK/spool/审计）
+            builder.Services.AddSingleton<LogStore>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<DownstreamSender>());
             builder.Services.AddHostedService<SpoolTailer>();
             builder.Services.AddHostedService<StorageProbe>();
@@ -323,6 +327,29 @@ namespace DwsEdge.Platform
                 return Results.Json(store.QueryHistory(query));
             });
 
+            // C4：统计看板（简版）—— 总包数 / 读码率 / 无码率，按相机、班次、小时、日期四个维度
+            app.MapGet("/api/stats/board", (HistoryStore history, ShiftStore shifts,
+                string from, string to, string dimension, string deviceId) =>
+            {
+                HistoryQuery query = BuildHistoryQuery(from, to, null, deviceId, null, null, null, 0, 0);
+                return Results.Json(history.BuildBoard(query, dimension, shifts.Plan));
+            });
+
+            // C4：班次配置的读写（改完立即生效，看板按新班次重新统计）
+            app.MapGet("/api/stats/shifts", (ShiftStore shifts) => Results.Json(shifts.Read()));
+            app.MapPost("/api/stats/shifts", (ShiftStore shifts, ShiftPlan request) =>
+            {
+                try
+                {
+                    string backup = shifts.Save(request);
+                    return Results.Json(new { ok = true, file = shifts.FilePath, backup, plan = shifts.Read() });
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
             // B3：导出 CSV（流式写出，字段覆盖条码/时间/相机/图片路径/无码/下发状态）
             app.MapGet("/api/history/export", async (HttpContext context, HistoryStore history,
                 string from, string to, string code, string deviceId,
@@ -400,6 +427,63 @@ namespace DwsEdge.Platform
 
             app.MapGet("/api/stream", (HttpContext context, SpoolStore store, CancellationToken token) =>
                 store.StreamAsync(context, token));
+
+            // C6：日志查看与导出（采集宿主 / 平台 / SDK / spool / 审计）
+            app.MapGet("/api/diag/sources", (LogStore diag) => Results.Json(diag.Overview()));
+
+            app.MapGet("/api/diag/files", (LogStore diag, string source, string from, string to) =>
+            {
+                try
+                {
+                    return Results.Json(diag.Files(source, ParseDay(from, DateTime.Today), ParseDay(to, DateTime.Today)));
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapGet("/api/diag/tail", (LogStore diag, string source, string file, int? lines) =>
+            {
+                try
+                {
+                    return Results.Json(diag.Tail(source, file, lines ?? 200));
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapGet("/api/diag/download", (LogStore diag, string source, string file) =>
+            {
+                try
+                {
+                    return diag.Download(source, file);
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            // 一键打包：把选中的来源按时间范围压成一个 zip（流式写，离线可解）
+            app.MapGet("/api/diag/bundle", async (HttpContext context, LogStore diag, string from, string to, string sources) =>
+            {
+                try
+                {
+                    await diag.BundleAsync(context, ParseDay(from, DateTime.Today), ParseDay(to, DateTime.Today), sources);
+                }
+                catch (Exception ex)
+                {
+                    if (!context.Response.HasStarted)
+                    {
+                        context.Response.StatusCode = 400;
+                        context.Response.ContentType = "application/json; charset=utf-8";
+                        await context.Response.WriteAsync("{\"error\":\"" + ex.Message.Replace("\"", "'") + "\"}");
+                    }
+                }
+            });
 
             // ================================================================
             // B9 账号与鉴权

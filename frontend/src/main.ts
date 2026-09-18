@@ -24,9 +24,11 @@ import { initHistory, refreshHistory } from "./history.js";
 import { initDownstream, refreshDownstream } from "./downstream.js";
 import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js";
 import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js";
+import { initStats, refreshStats } from "./stats.js";
+import { initDiag, refreshDiag } from "./diag.js";
 
-type PageName = "realtime" | "devices" | "history" | "config";
-const PAGES: PageName[] = ["realtime", "devices", "history", "config"];
+type PageName = "realtime" | "devices" | "history" | "stats" | "diag" | "config";
+const PAGES: PageName[] = ["realtime", "devices", "history", "stats", "diag", "config"];
 
 function showPage(name: PageName): void {
   for (const page of PAGES) {
@@ -40,6 +42,8 @@ function showPage(name: PageName): void {
     void refreshMonitor();
   }
   if (name === "history") void refreshHistory();
+  if (name === "stats") void refreshStats();
+  if (name === "diag") void refreshDiag();
   if (name === "config") {
     void refreshConfig();
     void refreshRules();
@@ -65,6 +69,8 @@ function bootstrap(): void {
   initDownstream();
   initMonitor();
   initAuth();
+  initStats();
+  initDiag();
 
   for (const page of PAGES) {
     $("tab-" + page).addEventListener("click", () => showPage(page));

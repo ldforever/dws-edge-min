@@ -160,3 +160,10 @@ h2.withtoolbar { display: flex; align-items: center; gap: 10px; }
 .warnText { color: #d29922; font-size: 12px; }
 .okText { color: #3fb950; font-size: 12px; }
 .cam-no { width: 28px; }
+
+/* C4：统计看板的占比条 */
+.bar { width: 90px; height: 8px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; overflow: hidden; }
+.barfill { height: 100%; background: #58a6ff; }
+
+/* C6：诊断页——被选中的来源卡片高亮 */
+.camcell.picked { border-color: #58a6ff; box-shadow: 0 0 0 1px #58a6ff55; }

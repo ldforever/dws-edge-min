@@ -125,7 +125,21 @@ export const api = {
     saveStorageConfig: (options) => request("/api/config/storage", { method: "POST", json: options }),
     /** 备份列表（rules / downstream / monitor / auth / gateway.ini / Cfg 的 .bak-* 都在这） */
     backups: () => request("/api/config/backups"),
-    rollback: (file) => request("/api/config/rollback", { method: "POST", json: { file } })
+    rollback: (file) => request("/api/config/rollback", { method: "POST", json: { file } }),
+    // ---- C4 统计看板（简版）----
+    statsBoard: (from, to, dimension, deviceId) => request("/api/stats/board?from=" + from + "&to=" + to + "&dimension=" + dimension +
+        (deviceId ? "&deviceId=" + encodeURIComponent(deviceId) : "")),
+    shifts: () => request("/api/stats/shifts"),
+    saveShifts: (shifts) => request("/api/stats/shifts", { method: "POST", json: { shifts } }),
+    // ---- C6 日志查看与导出 ----
+    diagSources: () => request("/api/diag/sources"),
+    diagFiles: (source, from, to) => request("/api/diag/files?source=" + encodeURIComponent(source) + "&from=" + from + "&to=" + to),
+    diagTail: (source, file, lines) => request("/api/diag/tail?source=" + encodeURIComponent(source) + "&file=" + encodeURIComponent(file) +
+        "&lines=" + lines),
+    /** 单文件下载地址（浏览器直接下载） */
+    diagDownloadUrl: (source, file) => "/api/diag/download?source=" + encodeURIComponent(source) + "&file=" + encodeURIComponent(file),
+    /** 一键打包地址（zip） */
+    diagBundleUrl: (from, to, sources) => "/api/diag/bundle?from=" + from + "&to=" + to + "&sources=" + encodeURIComponent(sources.join(","))
 };
 export const STREAM_URL = "/api/stream";
 /** 历史查询串：导出时不要 limit/offset（要全量） */

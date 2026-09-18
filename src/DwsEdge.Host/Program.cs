@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using DwsEdge.Core.Abstractions;
+using DwsEdge.Core.Config;
 
 namespace DwsEdge.Host
 {
@@ -30,11 +31,17 @@ namespace DwsEdge.Host
             Directory.SetCurrentDirectory(baseDir);
 
             int durationSeconds = 0;
-            int triggerIntervalMs = 3000;
+            int triggerIntervalMs = 0;
+            bool triggerIntervalSpecified = false;
             int triggerDelayMs = -1;
             bool triggerOnceFlag = false;
             bool verifyConfig = false;
             bool showHelp = false;
+            // A4：一次性命令（执行完带退出码直接退出，不进常驻循环）
+            string commandName = null;      // soft-trigger / recode / status
+            string recodeCode = null;
+            long recodeTimeMs = 0;
+            bool forceCommand = false;
             for (int i = 0; i < args.Length; i++)
             {
                 if (args[i] == "--duration" && i + 1 < args.Length)
@@ -53,6 +60,7 @@ namespace DwsEdge.Host
                 else if (args[i] == "--trigger-interval" && i + 1 < args.Length)
                 {
                     int.TryParse(args[i + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out triggerIntervalMs);
+                    triggerIntervalSpecified = true;
                     i++;
                 }
                 else if (args[i] == "--trigger-delay" && i + 1 < args.Length)
@@ -63,6 +71,40 @@ namespace DwsEdge.Host
                 else if (args[i] == "--help" || args[i] == "-h")
                 {
                     showHelp = true;
+                }
+                else if (args[i] == "--soft-trigger")
+                {
+                    commandName = "soft-trigger";
+                }
+                else if (args[i] == "--recode")
+                {
+                    commandName = "recode";
+                }
+                else if (args[i] == "--command-status")
+                {
+                    commandName = "status";
+                }
+                else if (args[i] == "--code" && i + 1 < args.Length)
+                {
+                    recodeCode = args[i + 1];
+                    i++;
+                }
+                else if (args[i] == "--time-ms" && i + 1 < args.Length)
+                {
+                    long.TryParse(args[i + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out recodeTimeMs);
+                    i++;
+                }
+                else if (args[i] == "--force")
+                {
+                    forceCommand = true;
+                }
+                else
+                {
+                    // 任何没被识别的参数（不管带不带 --）都要报错退出：
+                    // 早先只拦"不带 -- 的"，打错一个开关会被静默忽略、宿主照常常驻运行，
+                    // 现场会以为"命令发出去了"，实际什么都没做。
+                    Console.WriteLine("[host] 未知参数：" + args[i] + "（用 --help 看用法）");
+                    return 1;
                 }
             }
 
@@ -109,7 +151,10 @@ namespace DwsEdge.Host
                 testOptions.EnableSoftTrigger = true;
                 testOptions.TriggerOnStart = true;
             }
-            if (triggerIntervalMs > 0)
+            // 只有显式传了 --trigger-interval 才开定时触发。
+            // 早先这里用默认值 3000 配合 "> 0" 判断，等于"任何一次启动都每 3 秒自动触发一次" ——
+            // 现场无参数启动宿主会凭空产生包裹，是个很危险的默认值。
+            if (triggerIntervalSpecified && triggerIntervalMs > 0)
             {
                 testOptions.EnableSoftTrigger = true;
                 testOptions.TriggerIntervalMs = triggerIntervalMs;
@@ -167,6 +212,16 @@ namespace DwsEdge.Host
                 }
 
                 provider.Start();
+
+                // A4：一次性命令（软触发 / 人工补码 / 看能力）——执行完带着退出码退出，
+                // 不进常驻循环，也不需要 Ctrl+C。finally 里会正常停掉 provider。
+                if (!string.IsNullOrEmpty(commandName))
+                {
+                    // 触发模式校验读的是 SDK 配置（和 provider 用的是同一份）
+                    string sdkCfgPath = Path.Combine(baseDir, config.Get(providerId, "cfgPath", @"Cfg\LogisticsBase.cfg"));
+                    exitCode = RunCommand(provider, sink, sdkCfgPath, commandName, recodeCode, recodeTimeMs, forceCommand);
+                    return exitCode;
+                }
 
                 // 存图保留策略（按天数清理 + 磁盘水位保护），与厂商无关
                 retention = StartRetention(baseDir, config, providerId, sink);
@@ -403,6 +458,137 @@ namespace DwsEdge.Host
             return defaultValue;
         }
 
+        /// <summary>
+        /// A4：一次性命令。返回进程退出码（脚本据此判断成败，现场不用去翻日志猜）：
+        ///   0 成功
+        ///   4 命令执行失败（provider 返回非 0，具体含义见日志）
+        ///   5 触发模式不允许（当前不是软触发模式，加 --force 可跳过校验）
+        ///   6 当前 provider 不支持这条命令
+        /// 每条命令都会写进 logs\host-*.log，日志里带命令、参数、结果与退出码。
+        /// </summary>
+        private static int RunCommand(IAcquisitionProvider provider, HostEventSink sink, string cfgPath,
+            string command, string code, long timeMs, bool force)
+        {
+            string providerId = provider != null ? provider.ProviderId : "unknown";
+            ITriggerControl control = provider as ITriggerControl;
+
+            sink.Log(LogLevel.Info, "[cmd] 收到命令：" + command
+                + (string.IsNullOrEmpty(code) ? string.Empty : " 条码=" + code)
+                + (timeMs > 0 ? " 时间戳=" + timeMs : string.Empty)
+                + (force ? "（--force：跳过触发模式校验）" : string.Empty)
+                + "　provider=" + providerId);
+
+            string mode;
+            bool modeKnown = TryReadTriggerMode(cfgPath, out mode);
+            string modeText = modeKnown ? TriggerModeText(mode) : "未知（读不到 triggerMode）";
+
+            if (string.Equals(command, "status", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("[cmd] provider=" + providerId);
+                Console.WriteLine("[cmd] 支持软触发/补码=" + (control != null ? "是" : "否"));
+                Console.WriteLine("[cmd] 触发模式=" + modeText);
+                sink.Log(LogLevel.Info, "[cmd] 能力查询：支持命令=" + (control != null ? "是" : "否") + "，触发模式=" + modeText);
+                return 0;
+            }
+
+            if (control == null)
+            {
+                string message = "[cmd] 当前 provider（" + providerId + "）不支持软触发/补码命令";
+                Console.WriteLine(message);
+                sink.Log(LogLevel.Error, message + "　退出码 6");
+                return 6;
+            }
+
+            if (string.Equals(command, "soft-trigger", StringComparison.OrdinalIgnoreCase))
+            {
+                // ★ A4 验收点：软触发只在"软触发模式"下生效
+                if (!force && modeKnown && !string.Equals(mode, "2", StringComparison.Ordinal))
+                {
+                    string tip = "[cmd] 当前触发模式是 " + modeText + "，软触发不会生效："
+                        + "先用 tools\\set-trigger-mode.ps1 -Mode soft 改成软触发模式（triggerMode=2），"
+                        + "或用 --force 跳过这条校验。退出码 5";
+                    Console.WriteLine(tip);
+                    sink.Log(LogLevel.Warn, tip);
+                    return 5;
+                }
+                if (!force && !modeKnown)
+                {
+                    sink.Log(LogLevel.Warn, "[cmd] 读不到 triggerMode（可能没有 SDK 配置文件），跳过触发模式校验");
+                }
+
+                int ret = control.SoftTrigger();
+                if (ret == 0)
+                {
+                    Console.WriteLine("[cmd] 软触发成功（返回 0）");
+                    sink.Log(LogLevel.Info, "[cmd] 软触发成功（返回 0）　退出码 0");
+                    return 0;
+                }
+
+                Console.WriteLine("[cmd] 软触发失败（返回 " + ret + "）");
+                sink.Log(LogLevel.Error, "[cmd] 软触发失败（返回 " + ret + "）　退出码 4");
+                return 4;
+            }
+
+            if (string.Equals(command, "recode", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(code))
+                {
+                    string tip = "[cmd] 补码命令缺少 --code <条码>。退出码 1";
+                    Console.WriteLine(tip);
+                    sink.Log(LogLevel.Error, tip);
+                    return 1;
+                }
+
+                int ret = control.ComplementCode(code.Trim(), timeMs);
+                if (ret == 0)
+                {
+                    Console.WriteLine("[cmd] 补码成功：" + code.Trim() + "（返回 0）");
+                    sink.Log(LogLevel.Info, "[cmd] 补码成功：" + code.Trim() + "（返回 0）　退出码 0");
+                    return 0;
+                }
+
+                Console.WriteLine("[cmd] 补码失败：" + code.Trim() + "（返回 " + ret + "）");
+                sink.Log(LogLevel.Error, "[cmd] 补码失败：" + code.Trim() + "（返回 " + ret + "）　退出码 4");
+                return 4;
+            }
+
+            Console.WriteLine("[host] 未知命令：" + command);
+            sink.Log(LogLevel.Error, "[cmd] 未知命令：" + command + "　退出码 1");
+            return 1;
+        }
+
+        /// <summary>读 cfg 里的 triggerMode；读不到（没有 cfg / 解析不出）返回 false。</summary>
+        private static bool TryReadTriggerMode(string cfgPath, out string mode)
+        {
+            mode = null;
+            try
+            {
+                if (string.IsNullOrEmpty(cfgPath) || !File.Exists(cfgPath))
+                {
+                    return false;
+                }
+                CameraPlan plan = CameraPlan.Read(cfgPath);
+                if (plan == null || string.IsNullOrEmpty(plan.TriggerMode))
+                {
+                    return false;
+                }
+                mode = plan.TriggerMode.Trim();
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static string TriggerModeText(string mode)
+        {
+            if (mode == "2") { return "软触发（triggerMode=2）"; }
+            if (mode == "1") { return "硬触发（triggerMode=1，光电）"; }
+            if (mode == "0") { return "自由拉流（triggerMode=0，狂扫）"; }
+            return mode;
+        }
+
         private static void PrintHelp()
         {
             Console.WriteLine();
@@ -413,6 +599,16 @@ namespace DwsEdge.Host
             Console.WriteLine("  DwsEdge.Host.exe --trigger-interval 3000 每 3 秒软触发一次（模拟连续过包）");
             Console.WriteLine("  DwsEdge.Host.exe --trigger-delay 800    启动触发的延迟毫秒（默认 1500）");
             Console.WriteLine("  DwsEdge.Host.exe --verify-config        启动 SDK 并回读校验配置（PASS/FAIL），供 apply-config.ps1 使用");
+            Console.WriteLine();
+            Console.WriteLine("A4 一次性命令（执行完带退出码退出，适合脚本/上位机调用）：");
+            Console.WriteLine("  DwsEdge.Host.exe --command-status              看当前 provider 与触发模式");
+            Console.WriteLine("  DwsEdge.Host.exe --soft-trigger                软触发一次（要求 triggerMode=2）");
+            Console.WriteLine("  DwsEdge.Host.exe --soft-trigger --force        跳过触发模式校验（排查用）");
+            Console.WriteLine("  DwsEdge.Host.exe --recode --code SF1234567890  人工补码（可加 --time-ms <Unix 毫秒>）");
+            Console.WriteLine();
+            Console.WriteLine("退出码：0 成功 / 1 参数错误 / 2 provider 启动失败 / 3 未处理异常 /");
+            Console.WriteLine("        4 命令执行失败 / 5 触发模式不允许（加 --force） / 6 provider 不支持该命令");
+            Console.WriteLine("现场更省事：用 tools\\host-command.ps1 -Status / -SoftTrigger / -Recode -Code <条码>");
             Console.WriteLine();
             Console.WriteLine("运行前请确认：");
             Console.WriteLine("  1. runtime\\Cfg\\LogisticsBase.cfg 里的相机 IP 已改成现场相机；");

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -121,7 +121,10 @@ namespace DwsEdge.Platform
                 return;
             }
 
-            string day = DateTime.Now.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+            // 按"事件时间"分文件，而不是按下笔的时刻：跨零点、平台停机后补投历史数据时，
+            // 用写入时刻会把昨天的事件写进今天的文件，按日期查询/统计（C4 看板）就全错了。
+            DateTime eventDay = DayOf(record);
+            string day = eventDay.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
             lock (_sync)
             {
                 try
@@ -129,7 +132,7 @@ namespace DwsEdge.Platform
                     if (_writer == null || _writerDay != day)
                     {
                         CloseWriter();
-                        string path = SnapshotPath(DateTime.Today);
+                        string path = SnapshotPath(eventDay);
                         // bufferSize=1 + AutoFlush：逐行落盘，突然断电也不会丢最近的包裹
                         _writer = new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite, 1), new UTF8Encoding(false));
                         _writer.AutoFlush = true;
@@ -138,7 +141,10 @@ namespace DwsEdge.Platform
 
                     HistoryLine line = new HistoryLine();
                     line.type = "parcel";
-                    line.time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
+                    // 快照行的时间也记事件时间：排查时"这行是什么时候的包裹"才是关键
+                    line.time = string.IsNullOrEmpty(record.time)
+                        ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture)
+                        : record.time;
                     line.data = record;
                     _writer.WriteLine(JsonSerializer.Serialize(line, _json));
                 }
@@ -147,6 +153,25 @@ namespace DwsEdge.Platform
                     _logger.LogWarning(ex, "写历史失败");
                 }
             }
+        }
+
+        /// <summary>
+        /// 这条记录属于哪一天：优先看事件时间戳（capturedAtMs），退回 record.time，都没有才用今天。
+        /// 分文件与索引都按它来，保证"按日期查"和"写进去的日期"一致。
+        /// </summary>
+        private static DateTime DayOf(ParcelRecord record)
+        {
+            if (record.capturedAtMs > 0)
+            {
+                return DateTimeOffset.FromUnixTimeMilliseconds(record.capturedAtMs).ToLocalTime().Date;
+            }
+            DateTime parsed;
+            if (!string.IsNullOrEmpty(record.time)
+                && DateTime.TryParse(record.time, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed))
+            {
+                return parsed.Date;
+            }
+            return DateTime.Today;
         }
 
         /// <summary>
@@ -296,6 +321,258 @@ namespace DwsEdge.Platform
             result.returned = result.items.Count;
             result.elapsedMs = (long)(DateTime.UtcNow - start).TotalMilliseconds;
             return result;
+        }
+
+        // ================================================================
+        // C4 统计看板（简版）：总包数 / 读码率 / 无码率，按相机与班次维度查看
+        // ================================================================
+
+        /// <summary>一个统计分组（相机/班次/小时/日期）。</summary>
+        private sealed class StatsBucket
+        {
+            public string key;
+            public string label;
+            public long total;
+            public long read;
+            public long noread;
+            public long images;
+            public long dispatchSent;
+            public long dispatchFailed;
+            public long weightMissing;
+            public long firstMs;
+            public long lastMs;
+
+            public StatsBucket(string key, string label)
+            {
+                this.key = key;
+                this.label = label;
+            }
+
+            public void Add(ParcelRecord record)
+            {
+                total++;
+                if (record.codeCount > 0)
+                {
+                    read++;
+                }
+                else
+                {
+                    noread++;
+                }
+                if (record.imageCount > 0)
+                {
+                    images++;
+                }
+                if (record.weightGrams <= 0)
+                {
+                    weightMissing++;
+                }
+                string state = record.dispatchState ?? "pending";
+                if (string.Equals(state, "sent", StringComparison.OrdinalIgnoreCase))
+                {
+                    dispatchSent++;
+                }
+                else if (string.Equals(state, "failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    dispatchFailed++;
+                }
+                long at = AtMsOf(record);
+                if (at > 0)
+                {
+                    if (firstMs == 0 || at < firstMs) { firstMs = at; }
+                    if (at > lastMs) { lastMs = at; }
+                }
+            }
+
+            public object ToResult()
+            {
+                return new
+                {
+                    key,
+                    label,
+                    total,
+                    read,
+                    noread,
+                    readRatePercent = Rate(read, total),
+                    noreadRatePercent = Rate(noread, total),
+                    images,
+                    weightMissing,
+                    dispatchSent,
+                    dispatchFailed,
+                    firstTime = FormatMs(firstMs),
+                    lastTime = FormatMs(lastMs)
+                };
+            }
+        }
+
+        private static double Rate(long part, long all)
+        {
+            if (all <= 0)
+            {
+                return 0;
+            }
+            return Math.Round(100.0 * part / all, 1);
+        }
+
+        /// <summary>时间戳（毫秒）→ 显示用文本；0 表示没数据。</summary>
+        private static string FormatMs(long ms)
+        {
+            if (ms <= 0)
+            {
+                return null;
+            }
+            return DateTimeOffset.FromUnixTimeMilliseconds(ms).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+        }
+
+        private static long AtMsOf(ParcelRecord record)
+        {
+            if (record.capturedAtMs > 0)
+            {
+                return record.capturedAtMs;
+            }
+            DateTime parsed;
+            if (!string.IsNullOrEmpty(record.time)
+                && DateTime.TryParse(record.time, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out parsed))
+            {
+                return new DateTimeOffset(parsed).ToUnixTimeMilliseconds();
+            }
+            return 0;
+        }
+
+        /// <summary>
+        /// 统计看板：把查询范围内的包裹按维度分组统计。
+        /// dimension = camera（按相机）/ shift（按班次）/ hour（按小时）/ day（按日期）。
+        /// 统计口径与历史查询完全一致（同一个 LoadDay + 同一套过滤），所以"看板的数字"就是"库里查出来的数字"。
+        /// </summary>
+        public object BuildBoard(HistoryQuery query, string dimension, ShiftPlan shifts)
+        {
+            DateTime start = DateTime.UtcNow;
+            string dim = string.IsNullOrEmpty(dimension) ? "camera" : dimension.Trim().ToLowerInvariant();
+            Dictionary<string, StatsBucket> groups = new Dictionary<string, StatsBucket>(StringComparer.Ordinal);
+            StatsBucket all = new StatsBucket("all", "合计");
+            long unmatched = 0;
+
+            for (DateTime day = query.From.Date; day <= query.To.Date; day = day.AddDays(1))
+            {
+                bool dayUsedIndex;
+                List<ParcelRecord> records = LoadDay(day, query, out dayUsedIndex);
+                for (int i = 0; i < records.Count; i++)
+                {
+                    ParcelRecord record = records[i];
+                    all.Add(record);
+
+                    string key;
+                    string label;
+                    if (!ResolveKey(dim, record, shifts, out key, out label))
+                    {
+                        unmatched++;
+                        continue;
+                    }
+
+                    StatsBucket bucket;
+                    if (!groups.TryGetValue(key, out bucket))
+                    {
+                        bucket = new StatsBucket(key, label);
+                        groups.Add(key, bucket);
+                    }
+                    bucket.Add(record);
+                }
+            }
+
+            List<StatsBucket> list = new List<StatsBucket>(groups.Values);
+            if (dim == "camera")
+            {
+                // 相机维度按包数从多到少（现场先看谁在干活、谁没出码）
+                list.Sort(delegate(StatsBucket a, StatsBucket b)
+                {
+                    int byTotal = b.total.CompareTo(a.total);
+                    return byTotal != 0 ? byTotal : string.Compare(a.key, b.key, StringComparison.OrdinalIgnoreCase);
+                });
+            }
+            else
+            {
+                list.Sort(delegate(StatsBucket a, StatsBucket b)
+                {
+                    return string.Compare(a.key, b.key, StringComparison.Ordinal);
+                });
+            }
+
+            List<object> rows = new List<object>();
+            for (int i = 0; i < list.Count; i++)
+            {
+                rows.Add(list[i].ToResult());
+            }
+
+            return new
+            {
+                from = query.From.ToString("yyyy-MM-dd"),
+                to = query.To.ToString("yyyy-MM-dd"),
+                dimension = dim,
+                dimensions = new[] { "camera", "shift", "hour", "day" },
+                totals = all.ToResult(),
+                groups = rows,
+                groupCount = rows.Count,
+                unmatchedShifts = unmatched,
+                elapsedMs = (long)(DateTime.UtcNow - start).TotalMilliseconds,
+                note = dim == "shift"
+                    ? "班次按 config\\shifts.json 划分；跨天班次的凌晨时段算前一天"
+                    : "统计口径与历史查询一致（同一个索引、同一套过滤）"
+            };
+        }
+
+        private static bool ResolveKey(string dimension, ParcelRecord record, ShiftPlan shifts, out string key, out string label)
+        {
+            key = null;
+            label = null;
+            long at = AtMsOf(record);
+
+            if (dimension == "camera")
+            {
+                string camera = string.IsNullOrEmpty(record.deviceId) ? "未知相机" : record.deviceId;
+                key = camera;
+                label = camera;
+                return true;
+            }
+
+            if (at <= 0)
+            {
+                return false;
+            }
+            DateTime local = DateTimeOffset.FromUnixTimeMilliseconds(at).ToLocalTime().DateTime;
+
+            if (dimension == "hour")
+            {
+                key = local.ToString("yyyy-MM-dd HH");
+                label = local.ToString("MM-dd HH:00");
+                return true;
+            }
+
+            if (dimension == "day")
+            {
+                key = local.ToString("yyyy-MM-dd");
+                label = key;
+                return true;
+            }
+
+            if (dimension == "shift")
+            {
+                string shiftKey;
+                string shiftLabel;
+                if (shifts != null && shifts.TryClassify(local, out shiftKey, out shiftLabel))
+                {
+                    key = shiftKey;
+                    label = shiftLabel;
+                    return true;
+                }
+                key = "未匹配班次";
+                label = "未匹配班次（检查 shifts.json 的覆盖时段）";
+                return true;
+            }
+
+            key = "未知维度";
+            label = dimension;
+            return true;
         }
 
         /// <summary>

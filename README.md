@@ -29,15 +29,19 @@ dws-edge-min/
 ├─ build.ps1                     编译全部并拷贝产物到 runtime（依赖 .NET SDK 10）
 ├─ run.ps1                       运行采集宿主 / 业务平台
 ├─ tools/set-trigger-mode.ps1    切换大华 cfg 的触发模式（软/硬/狂扫）
+├─ tools/host-command.ps1        A4 命令通道：-Status / -SoftTrigger / -Recode（退出码翻译成人话）
+├─ tools/test-a4-command.ps1     A4 回归（软触发 / 补码 / 模式校验 / 退出码）
 ├─ tools/make-camera-cfg.ps1     生成相机清单（cfg + 方位映射，支持任意台数）
 ├─ tools/check-traceids.ps1      扫描 spool，检查追踪号合并与疑似冲突
 ├─ tools/apply-config.ps1        一键应用配置：写配置 → 重启 SDK 校验 → 失败自动回滚
 ├─ tools/test-c1-cards.ps1       实时过包卡片墙自检（造数据 + 起平台 + 校验，可用浏览器看效果）
 ├─ tools/test-c2-wall.ps1        相机状态墙回归（含 SSE 实时性校验，-KeepRunning 可留平台看）
 ├─ tools/test-c5-config.ps1      配置页回归（存图策略 / 相机清单 / 备份回滚）
+├─ tools/test-c4-stats.ps1       统计看板回归（总览 / 按相机 / 按班次 / 与库对账）
+├─ tools/test-c6-diag.ps1        诊断日志回归（来源 / 范围 / 打包 zip 真解压）
 ├─ config/gateway.ini            采集宿主配置（选 provider + provider 参数）
 ├─ frontend/                     前端 TypeScript 工程（无框架、无打包器）
-│  ├─ src/                       api / sse / dom / auth / realtime（C1 卡片墙）/ devices / monitor / config / history / rules / dedup / downstream / types
+│  ├─ src/                       api / sse / dom / auth / realtime（C1+C2 两面墙）/ stats（C4 看板）/ diag（C6 诊断）/ devices / monitor / config / history / rules / dedup / downstream / types
 │  └─ build.mjs                  tsc 编译 → wwwroot\js，并拷贝样式
 ├─ src/
 │  ├─ DwsEdge.Core/              契约与模型（net48 + net10.0 双目标，两边共用）
@@ -470,7 +474,8 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 **业务平台（浏览器 http://本机IP:8090）**：包裹总数、读码率、无码数、相机在线数、**相机告警条**（B8），
 以及**实时过包卡片墙**（C1：缩略图 + 条码 + 时间 + 相机 + 状态，点图看原图，SSE 实时刷新；也可切回表格）；
 下面是**相机状态墙**（C2：每台相机一格，在线/掉线次数/出码计数/心跳/在线率/告警，异常一眼看出）；
-设备信息页有每台相机的在线率/心跳/掉线记录。
+设备信息页有每台相机的在线率/心跳/掉线记录；**统计页**有总包数/读码率/无码率与按相机、班次、小时的维度看板（C4）。
+**诊断页**把采集宿主日志、平台日志、大华 SDK 日志、事件缓冲、审计日志集中起来，能按时间范围查看与**一键打包 zip**（C6）。
 
 **平台 API**（实测返回）：
 
@@ -511,6 +516,13 @@ A9 那一次一口气加了 `declaredKind / declaredValue / position / discovere
 | `GET｜POST /api/config/storage` | **C5** 存图策略读写（校验 + 自动备份；写 gateway.ini，重启采集宿主生效） |
 | `GET /api/config/backups` | **C5** 列出 `config\` 与 `Cfg\` 下的配置备份（含生效方式） |
 | `POST /api/config/rollback` | **C5** 用某个备份还原（回滚前会把当前内容另存） |
+| `GET /api/stats/board?from=&to=&dimension=&deviceId=` | **C4** 统计看板（维度：camera / shift / hour / day），返回总览 + 分组 + 耗时 |
+| `GET｜POST /api/stats/shifts` | **C4** 班次配置读写（写要登录；保存自动备份、立即生效） |
+| `GET /api/diag/sources` | **C6** 日志来源概览（文件数、大小、最新文件） |
+| `GET /api/diag/files?source=&from=&to=` | **C6** 某来源在时间范围内的文件列表 |
+| `GET /api/diag/tail?source=&file=&lines=` | **C6** 看某个日志文件的尾部（默认 200 行） |
+| `GET /api/diag/download?source=&file=` | **C6** 单文件下载（限该来源目录内） |
+| `GET /api/diag/bundle?from=&to=&sources=` | **C6** **一键打包 zip**（按来源分目录 + README，离线可解） |
 | `POST /api/auth/login` | **B9** 登录（返回 token + 写 HttpOnly Cookie；密码错返回剩余次数、锁定返回 423） |
 | `GET /api/auth/status` / `GET /api/auth/me` / `POST /api/auth/logout` | **B9** 登录态（公开）/ 当前账号 / 退出 |
 | `POST /api/auth/password` | **B9** 改密码（带 username = 管理员重置，会自动解锁） |
@@ -1240,7 +1252,190 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-c5-config.ps1 -KeepRunning
 文件看着改了，但没有任何代码读它们，现场表现就是"改了没生效"。
 现在会先找"已经有这些键的段"（一般是 `[dahua-dws]`），界面也会写明"存图开关写进 [dahua-dws]"。
 
-## 十八、两个进程的边界
+## 十八、统计看板（简版）（C4）
+
+统计页一屏回答三个问题：**一共多少包、读码率多少、无码率多少**，并且能切四个维度看：
+按相机（谁在干活）、按班次（哪个班干得多）、按小时、按日期。数据全部来自历史库，
+**口径与"历史查询"完全一致**（同一个索引、同一套过滤），返回里带服务端耗时方便现场核对性能。
+
+### 看板上有什么
+
+| 区域 | 内容 |
+|---|---|
+| 五个 KPI | 总包数、读码率、无码率、无码包裹数、有图 / 下发成功 |
+| 分组表 | 维度值、总数、有码、无码、读码率、无码率、**占比条**、有图、下发成功、该组的时间范围 |
+| 尾部 | 范围、维度、合计（有码/无码）、有图、下发成功/失败，以及口径说明 |
+| 导出 | "导出统计 CSV"（当前维度 + 合计一起导出，UTF-8 BOM） |
+
+### 班次维度怎么算
+
+班次在页面下方可配（默认白班 08:00-20:00、夜班 20:00-08:00），写 `runtime\config\shifts.json`，保存后立即生效。规则：
+
+* **跨天班次**（如 20:00-08:00）的凌晨时段算**前一天**那一班 —— 符合现场"这是昨晚那一班"的说法；
+* 所以同一批凌晨 02:00 的包裹，**按日期**算今天、**按班次**算昨天夜班。回归里专门有一条断言盯这个差异；
+* 每个分组用"班次名@班次日期"标识（例如 `夜班@2026-09-17`），组与组之间不重不漏；
+* 没匹配到任何班次的包裹会单独列入"未匹配班次"，页面尾部会提示数量（提醒你班次没覆盖全时段）。
+
+### 实测（浏览器 + 300 个包裹的回归数据）
+
+| 项 | 实测 |
+|---|---|
+| 总览 | 总包数 **300**、读码率 **80.0%**、无码率 **20.0%**、无码 60 |
+| 按相机 | cam-a **120**（83.3%）、cam-b **100**（80.0%）、cam-c **80**（75.0%），按包数从多到少 |
+| 按班次 | 白班@昨天 100、夜班@昨天 150（含今天凌晨 02:00 的 50 包）、白班@今天 50，**三组之和 = 300** |
+| 按小时 | 昨天 10 点那组合并了 100 包（10:00 与 10:30 属同一小时），共 5 组 |
+| 按日期 | 昨天 200、今天 100（与"按班次"的口径差异就体现在凌晨那批） |
+| 服务端耗时 | 300 条聚合 **12 ms**（走索引，10 万条级别也在秒级） |
+| 班次设置 | 表格里可增删改（名称/开始/结束），非法值有提示；带"8 小时（跨天）"这样的时长说明 |
+
+回归测试：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\test-c4-stats.ps1
+powershell -ExecutionPolicy Bypass -File .\tools\test-c4-stats.ps1 -KeepRunning   # 留着用浏览器看
+```
+
+覆盖：总览数字、**与历史库对账**（`/api/history` 的 total 与快照文件行数都要对上 300）、
+按相机（每台的包数与读码率）、按班次（各組之和 = 总数、跨天归属）、按小时、按日期、
+相机过滤、未知维度不报错、班次读写与非法值被拒、**未登录改班次被 401 拦**、
+以及部署产物里确实带统计页，共 **59 项断言**。
+
+**顺带修掉的一个真 bug（C4 才暴露出来）**：历史快照原来按**写入时刻**分文件
+（`parcels-<今天>.jsonl`），并且把行时间也记成写入时刻。后果是：跨零点、或者平台停机后补投历史数据时，
+昨天的事件会落进今天的文件 —— **按日期查询与统计全部失真**。
+现在按**事件时间**（`capturedAtMs`）分文件、行时间也记事件时间，
+回归里新增两条断言专门盯"昨天的事件进昨天文件、今天的进今天文件"。
+
+## 十九、日志查看与导出（C6）
+
+排障时最烦的是"日志散在好几个目录、还要按时间挑"。诊断页把六类东西集中到一屏：
+
+| 来源 | 目录 | 内容 |
+|---|---|---|
+| `host` | `runtime\logs\host-*.log` | 采集宿主控制台日志（上电、触发、出码、切图、错误） |
+| `platform` | `runtime\logs\*.log`（排除 `host-*`） | 业务平台与运维脚本的日志 |
+| `sdk` | `runtime\Log\*.log` | **大华 SDK 自己的日志**（算法/相机/体积/重量/MVP） |
+| `spool` | `runtime\spool\events-*.jsonl` | 事件缓冲（A7：先落盘再推送） |
+| `camera` | `runtime\data\camera-events-*.jsonl` | 掉线/上线/恢复/告警事件（B8） |
+| `auth` | `runtime\data\auth-events-*.jsonl` | 登录成功/失败/锁定/改密审计（B9） |
+
+### 三件事
+
+1. **看**：每个来源一张卡（文件数、总大小、最新文件与时间）；点卡片列出该来源在时间范围内的文件；
+   点某个文件的"查看"直接看**尾部 200 行** —— 不用把几百 MB 日志拉到浏览器里。
+2. **导出**：单文件"下载"，或者按时间范围勾选来源**一键打包 zip**。
+3. **打包内容可离线分析**：zip 里按来源分目录（`host/`、`sdk/`、`spool/`…），并附一份 `README.txt`
+   写明生成时间、时间范围、各目录对应关系与排查顺序；标准 zip，系统自带解压即可，无加密。
+
+### 时间范围怎么算
+
+* 文件名里带日期的（`host-20260918.log`、`events-20260918.jsonl`）→ **按文件名里的日期**过滤；
+* 不带日期的（`Alg.log`、`camera.log` 这类 SDK 日志）→ **按文件修改时间**过滤；
+* 所以"近 3 天"这种范围，两种日志都能正确落到范围里。
+
+### 安全与健壮性
+
+* 文件名只接受**文件名**（不接受路径、不接受 `..`），并且必须落在该来源目录内 —— 越权返回 400；
+* 整个 `/api/diag/*` 归**管理接口**：未登录一律 401（日志里可能有现场信息，不能裸奔）；
+* 打包时如果某个文件正被写（比如宿主正在写今天的日志），**跳过它而不是让整包失败**，日志里有告警。
+
+### 实测
+
+| 项 | 实测 |
+|---|---|
+| 来源概览 | 6 个来源 / 8 个文件 / 4.5 KB，宿主机日志"2 个（今天 294 B + 昨天 92 B）" |
+| 文件列表 | 只看今天 → 只有 `host-20260918.log`；只看昨天 → 只有 `host-20260917.log` |
+| SDK 日志 | 无日期的 `Alg.log` 按修改时间落在"昨天"的范围里，不会被算进今天 |
+| 查看尾部 | 点 `host-20260918.log` → 显示尾部 5 行，含 `[error] 相机 cam-left 回调超时` 与 `[warn]` 行 |
+| 一键打包 | 浏览器触发下载；zip 解开后有 `README.txt`、`host/host-20260918.log`、`host/host-20260917.log`、`sdk/Alg.log`、`spool/events-*.jsonl`、`auth/auth-events-*.jsonl` |
+| 范围与来源筛选 | 只勾 `host` → 包里只有 `host/` 与 README；范围选"今天" → 包里**不含**昨天那份日志 |
+| 内容正确性 | 从 zip 里读出来的日志内容与源文件一致（含 ERROR 行） |
+| 越权与鉴权 | `..\..\config\gateway.ini` → 400；未登录访问诊断接口 → 401 |
+
+回归测试：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\test-c6-diag.ps1
+powershell -ExecutionPolicy Bypass -File .\tools\test-c6-diag.ps1 -KeepRunning   # 留着用浏览器看
+```
+
+覆盖：来源概览、按时间范围列文件（含"无日期文件按修改时间"）、看尾部、越权与不存在文件被拒、
+单文件下载内容正确、**真下载 zip 并真解压**校验目录结构与 README 与文件内容、
+来源筛选与范围筛选、打包未知来源被拒、未登录被拦、前端产物检查，共 **49 项断言**。
+
+## 二十、软触发与补码命令（A4）
+
+采集宿主的"命令通道"：给脚本、上位机和现场运维用。三条命令，**执行完带着退出码退出**（不会留下常驻进程）：
+
+```
+DwsEdge.Host.exe --command-status              看当前 provider、支持哪些命令、当前触发模式
+DwsEdge.Host.exe --soft-trigger                软触发一次（要求 triggerMode=2）
+DwsEdge.Host.exe --soft-trigger --force        跳过触发模式校验（排查用）
+DwsEdge.Host.exe --recode --code SF1234567890  人工补码（可加 --time-ms <Unix 毫秒>）
+```
+
+现场更省事的是包装脚本，它把退出码翻译成人话：
+
+```powershell
+.\tools\host-command.ps1 -Status
+.\tools\host-command.ps1 -SoftTrigger            # 硬触发模式下会给出"去改模式"的提示
+.\tools\host-command.ps1 -Recode -Code SF1234567890
+```
+
+### 退出码（脚本据此判断成败）
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 成功 |
+| 1 | 参数错误（缺 `--code`、未知参数…） |
+| 2 | 采集宿主启动失败（加密狗 / 相机 / SDK 配置） |
+| 3 | 未处理异常 |
+| 4 | 命令执行失败（provider 返回非 0，具体看日志） |
+| 5 | **触发模式不允许**：当前不是软触发模式（加 `--force` 可跳过） |
+| 6 | 当前 provider 不支持这条命令 |
+
+### 两条验收点怎么落的
+
+**① 命令返回码正确并写入日志**：上面每个退出码都是实测出来的；每条命令都会写
+`runtime\logs\host-<日期>.log`，记录形如
+`[cmd] 收到命令：soft-trigger（--force：跳过触发模式校验）　provider=simulator` →
+`[cmd] 软触发成功（返回 0）　退出码 0`，事后能完整还原"谁在什么时候发了什么命令、结果如何"。
+
+**② 触发模式为软触发时生效**：命令执行前会读 `Cfg\LogisticsBase.cfg` 的 `triggerMode`：
+
+| 当前模式 | `--soft-trigger` 的结果 |
+|---|---|
+| `2` 软触发 | 退出码 **0**，真的产出包裹事件（检测 + 补全共 2 条） |
+| `1` 硬触发 / `0` 自由拉流 | 退出码 **5**，提示去跑 `tools\set-trigger-mode.ps1 -Mode soft`；**一条包裹事件都不产生**（命令真没执行） |
+| 读不到（没有 SDK 配置） | 记一条 WARN，继续执行 |
+
+### 与交互式测试开关的关系
+
+原来那套交互式开关保留：`--trigger-once` / `--trigger-interval 3000` / 运行时按 Enter 触发、
+输入 `c <条码>` 补码。**一次性命令**（本文这四条）是给"发一条命令、拿一个退出码"的场景用的，
+两者互不干扰。
+
+### 顺带修掉的两个真 bug
+
+1. **`triggerIntervalMs` 的默认值**：早先写成 `int triggerIntervalMs = 3000;` 然后用 `if (triggerIntervalMs > 0)` 判断
+   "用户是否传了 `--trigger-interval`" —— 这个条件永远成立，等于**任何一次启动都开着"每 3 秒自动软触发"**。
+   现场无参数启动采集宿主会凭空产生包裹（实测确实如此：日志里每 3 秒一条 `[test] 软触发…返回 0`）。
+   现在只有显式传 `--trigger-interval` 才开，实测无参数启动 `--duration 6` **触发 0 次**。
+2. **未知参数被静默忽略**：`--not-a-command` 这类（以 `--` 开头、但不认识）原来会被忽略，宿主持续运行，
+   现场以为"命令发出去了"其实什么都没做。现在任何未识别的参数都返回**退出码 1** 并提示 `--help`。
+
+### 回归测试
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\test-a4-command.ps1
+```
+
+用 simulator 跑（不需要相机和加密狗），覆盖：状态命令、软触发成功且真出码、
+硬触发/自由拉流下被拒且**不产生任何包裹事件**、`--force` 跳过校验、补码成功与缺 `--code`、
+未知参数返回 1、帮助返回 0、每条命令都写日志、包装脚本的退出码翻译，
+以及"命令执行完就退出（不误入常驻）"，共 **41 项断言**。
+
+## 二十一、两个进程的边界
 
 | | 采集宿主（Edge） | 业务平台（Platform） |
 |---|---|---|
@@ -1253,13 +1448,15 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-c5-config.ps1 -KeepRunning
 通信：V1 用文件 spool（`SpoolTailer` 增量读取，只处理完整行）；V2 换成 gRPC/命名管道时只需替换 `SpoolTailer`，
 `SpoolStore` 与平台 API 不动。
 
-## 十九、代码导读
+## 二十二、代码导读
 
 **采集侧（net48）**
 
 - `DwsEdge.Host/Program.cs`：入口，读 `config\gateway.ini`、扫 `runtime\providers\*.dll` 反射加载插件、启动/停止、命令行参数（`--duration` / `--trigger-once` / `--trigger-interval`）。
 - `DwsEdge.Host/HostEventSink.cs`：控制台 + `logs\host-*.log` + `spool\events-*.jsonl`（手写 JSON，图像只写路径）。
 - `DwsEdge.Host/TestConsole.cs`：测试开关（启动触发、定时触发、回车手动触发、补码）。
+- `DwsEdge.Host/Program.cs`：命令行入口，含 **A4 一次性命令**（`--soft-trigger` / `--recode` / `--command-status`，
+  带触发模式校验与退出码语义）。
 - `DwsEdge.Providers.Dahua/DahuaDwsProvider.cs`：SDK 生命周期、回调只入队、工作线程落盘、软触发/补码、读 `triggerMode` 给出提示。
 - `DwsEdge.Providers.Dahua/CapturedImage.cs`：非托管图像深拷贝与释放；`ImageWriter.cs`：JPEG 直存 / 原始图写 BMP。
 - `DwsEdge.Providers.Simulator/SimulatorProvider.cs`：假相机，一次触发生成条码 + BMP + 两条事件。
@@ -1274,6 +1471,8 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-c5-config.ps1 -KeepRunning
 - `DwsEdge.Platform/CameraMonitor.cs`：B8 相机状态监控（在线率/掉线记录/心跳/五类告警、事件落盘与恢复、阈值热加载）+ `MonitorWatcher`（后台定时判定并推快照）。
 - `DwsEdge.Platform/AuthStore.cs`：B9 账号与鉴权（PBKDF2 密码、失败锁定、会话、服务令牌、访问规则 `Check()`、审计）+ 请求 DTO。
 - `DwsEdge.Platform/ConfigStore.cs`：A8 一键应用 + A9 方位映射 + **C5 存图策略读写、INI 键级改写、配置备份与回滚**。
+- `DwsEdge.Platform/HistoryStore.cs`：B3 历史库 + **C4 看板聚合（按相机/班次/小时/日期）**；`ShiftStore.cs`：班次配置。
+- `DwsEdge.Platform/LogStore.cs`：**C6 日志来源识别、时间范围过滤、尾部查看、单文件下载、zip 打包**。
 
 **平台侧（net10）**
 
@@ -1290,9 +1489,11 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-c5-config.ps1 -KeepRunning
 - `frontend/src/monitor.ts`：B8 监控与告警（告警条、每台相机指标、掉线与告警记录、阈值配置）。
 - `frontend/src/auth.ts`：B9 登录遮罩、顶栏用户区、改密、账号管理、策略与审计（401 自动弹回登录）。
 - `frontend/src/config.ts`：配置页（一键应用 + **C5 相机清单表格、存图策略、备份回滚**）。
+- `frontend/src/stats.ts`：**C4 统计看板**（四个维度、占比条、导出统计 CSV、班次设置）。
+- `frontend/src/diag.ts`：**C6 诊断页**（日志来源卡片、按范围列文件、看尾部、一键打包 zip）。
 - `frontend/src/sse.ts` / `dom.ts`：实时推送封装与 DOM 小工具。
 
-## 二十、常见问题
+## 二十三、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -1305,6 +1506,9 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-c5-config.ps1 -KeepRunning
 | 采集宿主返回 3000 | 相机数与配置不符（没连上）：核对 `runtime\Cfg\LogisticsBase.cfg` 的 `num` 与 `<Camera ... enable="1">` |
 | 采集宿主返回 2200 | 没插加密狗 |
 | 软触发没反应 | `triggerMode` 不是 2；用 `tools\set-trigger-mode.ps1 -Mode soft` 改好并重启采集宿主 |
+| 想知道软触发到底成没成 | 用 `tools\host-command.ps1 -SoftTrigger`：退出码 0 成功、5 是模式不对、4 是命令失败（看 `logs\host-*.log`） |
+| 宿主自己一直在出包 | 老版本的默认值坑：以前没传 `--trigger-interval` 也会每 3 秒自动触发。现在只有显式传才开；需要连续过包就明确写 `--trigger-interval 3000` |
+| 补码后没看到效果 | 真机上补码走 SDK 的 `ComplementCode`，由 SDK 回调把码补到包裹上；模拟器只记日志（它没有真实包裹可补） |
 | 平台没有数据 | 确认 Edge 已产生 `runtime\spool\events-*.jsonl`；平台 `appsettings.json` 的 `Spool:Directory` 默认是 `../spool` |
 | `apply-config.ps1` 报"检测到采集宿主正在运行" | 校验要独占 SDK（再起一个实例会和正在跑的抢相机）；加 `-StopHost` 让脚本先停掉，或自己先停 |
 | `apply-config.ps1` 退出码 3 | 回滚后仍起不来 → 大概率是设备侧问题（加密狗/相机网段/原生 DLL），不是配置问题 |
@@ -1333,8 +1537,14 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-c5-config.ps1 -KeepRunning
 | 相机清单里写 `ip=主机名` 报警 | 选了 `ip` 就要求合法 IPv4；要写主机名/序列号，把接入方式改成 `id` 或 `key` |
 | 配置改错了想退回去 | "配置 → 配置备份与回滚"里选对应的 `.bak-` 一键还原；回滚前会自动把当前内容再存一份 |
 | 备份目录越堆越多 | 备份就是文本文件（几 KB），需要清理时手工删 `config\*.bak-*` 与 `Cfg\*.bak-*` 即可，平台不自动删 |
+| 统计页"按班次"出现"未匹配班次" | 班次没覆盖全时段：在统计页下方把班次改成首尾相接（例如 06:00-14:00 / 14:00-22:00 / 22:00-06:00） |
+| 统计页数字和历史查询对不上 | 先确认查询范围一样；注意"按日期"与"按班次"口径不同：跨天夜班的凌晨算前一天 |
+| 想按自己的班次统计 | 统计页下方"班次设置"里改，保存立即生效；跨天班次直接写 `22:00` → `06:00` 就行 |
+| 现场出问题、要回传日志 | 诊断页选好时间范围 → "一键打包下载 zip"，把 zip 发给我们就行（里面带 README 说明） |
+| 诊断页看不到 SDK 日志 | SDK 日志在 `runtime\Log\`（不是 `logs\`）；确认采集宿主跑过（SDK 才写日志），或换个时间范围 |
+| 打包时少了某个文件 | 该文件正被进程写（比如今天的宿主日志）：等几秒重新打包，或单独"下载"它 |
 
-## 二十一、下一步（V1 完整版）
+## 二十四、下一步（V1 完整版）
 
 采集侧 A1-A9 已落地（A5 里的"面单抠图"按你的要求不做）；平台侧 B1-B9 也打通了：
 包裹合并与去重（B1）、条码过滤规则（B2）、历史库与导出（B3）、下游 TCP 客户端 / TCP 服务端 /
@@ -1345,8 +1555,9 @@ HTTP 推送（B4-B6）、图片按需访问与缩略图（B7）、相机状态�
 1. **A8-3 配置模板**：把当前 cfg 存成模板、按模板生成/对比（界面上"另存为模板/套用模板"）；
 2. 配置页补齐：存图策略、输出参数（相机清单、触发模式、下游、监控阈值已能改）；
 3. **告警外发**：把 B8 的告警接到下游（TCP/HTTP 报文或钉钉/企业微信机器人），现场不用盯屏；
-4. **C 类**：C1（过包卡片墙）、C2（相机状态墙）、C5（配置页简版）已完成；接着做 C3 的多图与批量单号、
-   C4 统计看板、C6 日志查看与一键打包，以及 HTTPS/设备证书（现在是内网 HTTP 明文）、细到接口的操作审计、多语言/多站点；
+4. **C 类**：C1（过包卡片墙）、C2（相机状态墙）、C4（统计看板）、C5（配置页简版）、C6（日志查看与打包）已完成；
+   接着做 C3 的多图与批量单号，以及 HTTPS/设备证书（现在是内网 HTTP 明文）、
+   细到接口的操作审计、多语言/多站点；
 5. 把 `SpoolTailer` 换成 gRPC / 命名管道，降低延迟（为 ARM 全栈铺路）；
 6. 采集宿主做成 Windows 服务 / 看门狗，配置页的"重启采集宿主"改成调服务管理器（现在是从平台直接拉进程）；
 7. 采集宿主与平台一起做成自启动 + 自动恢复（现场无人值守的前提）。

@@ -21,6 +21,9 @@ import type {
   ConfigSummary,
   DedupStats,
   DeviceView,
+  DiagFilesResponse,
+  DiagOverviewResponse,
+  DiagTailResponse,
   DownstreamLogItem,
   DownstreamOptions,
   DownstreamPreview,
@@ -45,8 +48,10 @@ import type {
   SaveRulesResponse,
   SaveStorageResponse,
   Stats,
+  StatsBoardResponse,
   StorageConfigResponse,
-  StorageOptions as StorageOptionsType
+  StorageOptions as StorageOptionsType,
+  ShiftPlanResponse
 } from "./types.js";
 
 export interface ApiResult<T> {
@@ -294,7 +299,41 @@ export const api = {
     request<{ ok: boolean; target: string; restoredFrom: string; backupOfCurrent?: string | null; effect?: string; note?: string }>(
       "/api/config/rollback",
       { method: "POST", json: { file } }
-    )
+    ),
+
+  // ---- C4 统计看板（简版）----
+  statsBoard: (from: string, to: string, dimension: string, deviceId?: string): Promise<ApiResult<StatsBoardResponse>> =>
+    request<StatsBoardResponse>(
+      "/api/stats/board?from=" + from + "&to=" + to + "&dimension=" + dimension +
+      (deviceId ? "&deviceId=" + encodeURIComponent(deviceId) : "")
+    ),
+
+  shifts: (): Promise<ApiResult<ShiftPlanResponse>> => request<ShiftPlanResponse>("/api/stats/shifts"),
+
+  saveShifts: (shifts: { name: string; start: string; end: string }[]): Promise<ApiResult<{ ok: boolean; backup?: string | null }>> =>
+    request<{ ok: boolean; backup?: string | null }>("/api/stats/shifts", { method: "POST", json: { shifts } }),
+
+  // ---- C6 日志查看与导出 ----
+  diagSources: (): Promise<ApiResult<DiagOverviewResponse>> => request<DiagOverviewResponse>("/api/diag/sources"),
+
+  diagFiles: (source: string, from: string, to: string): Promise<ApiResult<DiagFilesResponse>> =>
+    request<DiagFilesResponse>(
+      "/api/diag/files?source=" + encodeURIComponent(source) + "&from=" + from + "&to=" + to
+    ),
+
+  diagTail: (source: string, file: string, lines: number): Promise<ApiResult<DiagTailResponse>> =>
+    request<DiagTailResponse>(
+      "/api/diag/tail?source=" + encodeURIComponent(source) + "&file=" + encodeURIComponent(file) +
+      "&lines=" + lines
+    ),
+
+  /** 单文件下载地址（浏览器直接下载） */
+  diagDownloadUrl: (source: string, file: string): string =>
+    "/api/diag/download?source=" + encodeURIComponent(source) + "&file=" + encodeURIComponent(file),
+
+  /** 一键打包地址（zip） */
+  diagBundleUrl: (from: string, to: string, sources: string[]): string =>
+    "/api/diag/bundle?from=" + from + "&to=" + to + "&sources=" + encodeURIComponent(sources.join(","))
 };
 
 export const STREAM_URL = "/api/stream";

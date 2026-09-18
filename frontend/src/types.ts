@@ -757,3 +757,107 @@ export interface BackupItem {
   modified: string;
   effect: string;
 }
+
+// ---------------------------------------------------------------- C4 统计看板（简版）
+
+/** 一个统计分组（相机 / 班次 / 小时 / 日期） */
+export interface StatsGroupRow {
+  key: string;
+  label: string;
+  total: number;
+  read: number;
+  noread: number;
+  readRatePercent: number;
+  noreadRatePercent: number;
+  images: number;
+  weightMissing: number;
+  dispatchSent: number;
+  dispatchFailed: number;
+  firstTime?: string | null;
+  lastTime?: string | null;
+}
+
+/** GET /api/stats/board */
+export interface StatsBoardResponse {
+  from: string;
+  to: string;
+  /** camera / shift / hour / day */
+  dimension: string;
+  dimensions: string[];
+  totals: StatsGroupRow;
+  groups: StatsGroupRow[];
+  groupCount: number;
+  unmatchedShifts: number;
+  elapsedMs: number;
+  note?: string;
+}
+
+/** 一个班次 */
+export interface ShiftDef {
+  name: string;
+  /** HH:mm */
+  start: string;
+  /** HH:mm（可小于 start，表示跨天） */
+  end: string;
+}
+
+export interface ShiftPlanResponse {
+  file: string;
+  shifts: (ShiftDef & { index: number; span: string })[];
+  note?: string;
+}
+
+// ---------------------------------------------------------------- C6 日志查看与导出
+
+export interface DiagSourceInfo {
+  id: string;
+  name: string;
+  directory: string;
+  note: string;
+  fileCount: number;
+  totalBytes: number;
+  sizeText: string;
+  newestFile?: string | null;
+  newestTime?: string | null;
+}
+
+/** GET /api/diag/sources */
+export interface DiagOverviewResponse {
+  runtimeRoot: string;
+  totalFiles: number;
+  totalBytes: number;
+  sizeText: string;
+  sources: DiagSourceInfo[];
+  note?: string;
+}
+
+export interface DiagFileItem {
+  name: string;
+  size: number;
+  sizeText: string;
+  modified: string;
+  day: string;
+}
+
+/** GET /api/diag/files */
+export interface DiagFilesResponse {
+  source: string;
+  name: string;
+  from: string;
+  to: string;
+  fileCount: number;
+  totalBytes: number;
+  sizeText: string;
+  files: DiagFileItem[];
+}
+
+/** GET /api/diag/tail */
+export interface DiagTailResponse {
+  source: string;
+  file: string;
+  lines: number;
+  sizeText: string;
+  modified: string;
+  content: string[];
+  truncated: boolean;
+}

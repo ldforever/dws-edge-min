@@ -4,19 +4,21 @@
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
  * 也没有全局变量：模块之间只通过 import 通信，方便以后换壳（WebView2）或加页面。
  */
-import { api } from "./api.js?v=62d56586";
-import { connectStream } from "./sse.js?v=62d56586";
-import { $ } from "./dom.js?v=62d56586";
-import { applyCameraCounters, applyMonitorStats, initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=62d56586";
-import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=62d56586";
-import { initConfig, refreshConfig } from "./config.js?v=62d56586";
-import { initRules, refreshRules } from "./rules.js?v=62d56586";
-import { initDedup, refreshDedup } from "./dedup.js?v=62d56586";
-import { initHistory, refreshHistory } from "./history.js?v=62d56586";
-import { initDownstream, refreshDownstream } from "./downstream.js?v=62d56586";
-import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=62d56586";
-import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=62d56586";
-const PAGES = ["realtime", "devices", "history", "config"];
+import { api } from "./api.js?v=ea50ec78";
+import { connectStream } from "./sse.js?v=ea50ec78";
+import { $ } from "./dom.js?v=ea50ec78";
+import { applyCameraCounters, applyMonitorStats, initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=ea50ec78";
+import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=ea50ec78";
+import { initConfig, refreshConfig } from "./config.js?v=ea50ec78";
+import { initRules, refreshRules } from "./rules.js?v=ea50ec78";
+import { initDedup, refreshDedup } from "./dedup.js?v=ea50ec78";
+import { initHistory, refreshHistory } from "./history.js?v=ea50ec78";
+import { initDownstream, refreshDownstream } from "./downstream.js?v=ea50ec78";
+import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=ea50ec78";
+import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=ea50ec78";
+import { initStats, refreshStats } from "./stats.js?v=ea50ec78";
+import { initDiag, refreshDiag } from "./diag.js?v=ea50ec78";
+const PAGES = ["realtime", "devices", "history", "stats", "diag", "config"];
 function showPage(name) {
     for (const page of PAGES) {
         $("page-" + page).classList.toggle("active", page === name);
@@ -29,6 +31,10 @@ function showPage(name) {
     }
     if (name === "history")
         void refreshHistory();
+    if (name === "stats")
+        void refreshStats();
+    if (name === "diag")
+        void refreshDiag();
     if (name === "config") {
         void refreshConfig();
         void refreshRules();
@@ -52,6 +58,8 @@ function bootstrap() {
     initDownstream();
     initMonitor();
     initAuth();
+    initStats();
+    initDiag();
     for (const page of PAGES) {
         $("tab-" + page).addEventListener("click", () => showPage(page));
     }

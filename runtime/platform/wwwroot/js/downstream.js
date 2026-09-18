@@ -3,8 +3,8 @@
  *
  * 现场最常干的三件事：改模板看一眼长什么样、测一下连不连得通、看哪条没发出去。
  */
-import { api } from "./api.js?v=62d56586";
-import { $, badge, cell, clear, el, notify } from "./dom.js?v=62d56586";
+import { api } from "./api.js?v=ea50ec78";
+import { $, badge, cell, clear, el, notify } from "./dom.js?v=ea50ec78";
 export function initDownstream() {
     $("btnDsSave").addEventListener("click", () => void save());
     $("btnDsTest").addEventListener("click", () => void testConnection());
