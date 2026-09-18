@@ -180,7 +180,14 @@ Write-Host ("已写入 spool " + $lines.Count + " 行") -ForegroundColor DarkGra
 
 Stop-Platform
 Start-Platform
-$stats = Invoke-RestMethod -Uri ($baseUrl + '/api/stats') -TimeoutSec 10
+# 等平台把 3 行事件消费完再断言：固定 sleep 3 秒在并发跑回归或磁盘忙时会偶发少 1 条（实测踩过）
+$stats = $null
+$deadline = (Get-Date).AddSeconds(20)
+while ((Get-Date) -lt $deadline) {
+    $stats = Invoke-RestMethod -Uri ($baseUrl + '/api/stats') -TimeoutSec 10
+    if ($stats.parcels -ge 3) { break }
+    Start-Sleep -Milliseconds 400
+}
 Add-Check '被丢弃的条码数' 3 $stats.filteredCodes
 Add-Check '因过滤变成无码的包裹数' 1 $stats.filteredToNoread
 Add-Check '包裹数' 3 $stats.parcels

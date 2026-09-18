@@ -9,13 +9,14 @@
  *   * 配置备份与回滚（config\ 与 Cfg\ 下的 .bak-* 都能一键还原）。
  */
 import { api } from "./api.js";
-import { $, badge, cell, clear, el, notify, positionLabel } from "./dom.js";
+import { $, badge, cell, clear, dash, el, notify, positionLabel } from "./dom.js";
 import type {
   ApplyRequest,
   ApplyResult,
   BackupItem,
   ConfigCamera,
   ConfigSummary,
+  ConfigTemplateSummary,
   StorageOptions
 } from "./types.js";
 
@@ -43,6 +44,10 @@ export function initConfig(): void {
   $("btnStorageSave").addEventListener("click", () => void saveStorage());
   $("btnStorageReload").addEventListener("click", () => void refreshStorage());
   $("btnBackupReload").addEventListener("click", () => void refreshBackups());
+  // A8-3：配置模板
+  $("btnTplSave").addEventListener("click", () => void saveTemplate());
+  $("btnTplReload").addEventListener("click", () => void refreshTemplates());
+  $("btnTplApply").addEventListener("click", () => void applyTemplate());
 }
 
 export async function refreshConfig(): Promise<void> {
@@ -53,6 +58,7 @@ export async function refreshConfig(): Promise<void> {
   renderCameraEditor(res.data.cameras ?? []);
   await refreshStorage();
   await refreshBackups();
+  await refreshTemplates();
 }
 
 function render(): void {
@@ -484,4 +490,182 @@ async function rollbackBackup(fileName: string): Promise<void> {
   }
   badge($("backupMsg"), "回滚失败", "err");
   notify(res.message ?? "回滚失败");
+}
+
+// ================================================================
+// A8-3：配置模板（相机清单 + 触发模式 + 存图策略）
+// ================================================================
+
+/** 当前在"套用"框里选中的模板名 */
+let templatePicked: string | null = null;
+
+async function refreshTemplates(): Promise<void> {
+  const res = await api.templates();
+  const rows = $<HTMLTableSectionElement>("tplRows");
+  clear(rows);
+  if (!res.data) {
+    $("tplMsg").textContent = "读取失败：" + (res.message ?? "HTTP " + res.status);
+    return;
+  }
+
+  const list = res.data.templates ?? [];
+  $("tplMsg").textContent = list.length > 0
+    ? "共 " + list.length + " 份模板　·　目录：" + res.data.directory
+    : "还没有模板：填个名字点「把当前配置另存为模板」　·　目录：" + res.data.directory;
+
+  for (const tpl of list) {
+    rows.appendChild(templateRow(tpl));
+  }
+}
+
+function templateRow(tpl: ConfigTemplateSummary): HTMLTableRowElement {
+  const tr = el("tr");
+  tr.appendChild(cell(tpl.name, "code"));
+  tr.appendChild(cell(dash(tpl.note), "muted"));
+  tr.appendChild(cell(dash(tpl.createdAt), "muted"));
+  tr.appendChild(cell(tpl.cameraCount));
+  tr.appendChild(cell((tpl.triggerName ?? "") + "（" + dash(tpl.triggerMode) + "）"));
+  tr.appendChild(cell(tpl.retentionDays ?? 0));
+  tr.appendChild(cell(dash(tpl.source), "muted"));
+
+  const action = el("td");
+
+  const diff = el("button", "对比", "btn secondary small");
+  diff.addEventListener("click", () => void showTemplateDiff(tpl.name));
+  action.appendChild(diff);
+
+  const apply = el("button", "套用", "btn secondary small");
+  apply.style.marginLeft = "6px";
+  apply.addEventListener("click", () => {
+    templatePicked = tpl.name;
+    $("tplApplyBox").style.display = "";
+    $("tplApplyWhich").textContent = "套用模板「" + tpl.name + "」：";
+    $("tplDiff").textContent = "已选中模板「" + tpl.name + "」，勾选要套用的内容后点「套用选中的内容」。\n（建议先点「对比」确认会改什么）";
+  });
+  action.appendChild(apply);
+
+  const download = el("a", "导出", "btn secondary small");
+  download.href = api.templateDownloadUrl(tpl.name);
+  download.style.marginLeft = "6px";
+  download.style.textDecoration = "none";
+  action.appendChild(download);
+
+  const remove = el("button", "删除", "btn secondary small");
+  remove.style.marginLeft = "6px";
+  remove.addEventListener("click", () => {
+    if (!window.confirm("删除模板「" + tpl.name + "」？")) return;
+    void api.deleteTemplate(tpl.name).then(async (res) => {
+      if (res.status !== 200) {
+        notify(res.message ?? "删除失败");
+        return;
+      }
+      if (templatePicked === tpl.name) {
+        templatePicked = null;
+        $("tplApplyBox").style.display = "none";
+      }
+      await refreshTemplates();
+    });
+  });
+  action.appendChild(remove);
+
+  tr.appendChild(action);
+  return tr;
+}
+
+async function saveTemplate(): Promise<void> {
+  const name = $<HTMLInputElement>("tplName").value.trim();
+  const note = $<HTMLInputElement>("tplNote").value.trim();
+  if (!name) {
+    badge($("tplBadge"), "先填模板名", "err");
+    return;
+  }
+
+  const res = await api.saveTemplate(name, note);
+  if (res.status === 200 && res.data?.ok) {
+    badge($("tplBadge"), "已保存 " + name, "ok");
+    $("tplMsg").textContent = "模板已写入：" + res.data.file + "（含 " + res.data.cameraCount + " 台相机）";
+    $<HTMLInputElement>("tplName").value = "";
+    $<HTMLInputElement>("tplNote").value = "";
+    await refreshTemplates();
+  } else {
+    badge($("tplBadge"), "保存失败", "err");
+    notify(res.message ?? "保存失败");
+  }
+}
+
+async function showTemplateDiff(name: string): Promise<void> {
+  const res = await api.templateDiff(name);
+  if (res.status !== 200 || !res.data) {
+    $("tplDiff").textContent = "对比失败：" + (res.message ?? "HTTP " + res.status);
+    return;
+  }
+
+  const data = res.data;
+  const lines: string[] = [];
+  lines.push("模板「" + data.name + "」　创建于 " + (data.templateCreatedAt ?? "?") + "　来源：" + (data.templateSource ?? "?"));
+  lines.push("模板：相机 " + data.template.cameraCount + " 台 / 触发模式 " + (data.template.triggerMode ?? "?") +
+    "　　当前：相机 " + data.current.cameraCount + " 台 / 触发模式 " + (data.current.triggerMode ?? "?"));
+  lines.push("");
+  if (data.same) {
+    lines.push("✓ 当前配置和模板一致，不用套用");
+  } else {
+    lines.push("套用后会改 " + data.changeCount + " 处：");
+    for (const c of data.changes) {
+      lines.push("  [" + c.area + "] " + c.item + "　" + c.kind + "：模板=" + c.template + "　当前=" + c.current);
+    }
+  }
+  $("tplDiff").textContent = lines.join("\n");
+}
+
+async function applyTemplate(): Promise<void> {
+  if (!templatePicked) {
+    notify("先在列表里点某份模板的「套用」");
+    return;
+  }
+
+  const body = {
+    name: templatePicked,
+    applyCameras: $<HTMLInputElement>("tplApplyCameras").checked,
+    applyTrigger: $<HTMLInputElement>("tplApplyTrigger").checked,
+    applyStorage: $<HTMLInputElement>("tplApplyStorage").checked,
+    skipVerify: $<HTMLInputElement>("tplApplySkipVerify").checked,
+    stopHost: $<HTMLInputElement>("cfgStopHost").checked,
+    restartHost: $<HTMLInputElement>("cfgRestartHost").checked
+  };
+
+  if (!body.applyCameras && !body.applyTrigger && !body.applyStorage) {
+    notify("至少勾一项要套用的内容");
+    return;
+  }
+  if (!window.confirm("确定把模板「" + templatePicked + "」套用到本机吗？\n（相机清单/触发模式会写 cfg 并做校验，失败自动回滚）")) {
+    return;
+  }
+
+  const button = $<HTMLButtonElement>("btnTplApply");
+  button.disabled = true;
+  button.textContent = "套用中…";
+  $("tplDiff").textContent = "正在套用…（会启动一次 SDK 做校验，最长 4 分钟；勾了 -SkipVerify 则只写配置）";
+
+  try {
+    const res = await api.applyTemplate(body);
+    if (res.status === 200 && res.data?.ok) {
+      const applied = res.data.applied as { cameras?: number; triggerMode?: string | null } | null;
+      badge($("tplBadge"), "已套用 " + res.data.name, "ok");
+      const apply = res.data.apply as { conclusion?: string; exitCode?: number } | null;
+      $("tplDiff").textContent =
+        "套用完成：模板「" + res.data.name + "」\n" +
+        "  相机清单：" + (applied?.cameras ?? 0) + " 台\n" +
+        "  触发模式：" + (applied?.triggerMode ?? "（未套用）") + "\n" +
+        (apply ? "  一键应用结论：" + (apply.conclusion ?? "") + "（退出码 " + (apply.exitCode ?? 0) + "）\n" : "") +
+        (res.data.storage ? "  存图策略：已写入 gateway.ini（重启采集宿主后生效）\n" : "") +
+        "\n" + (res.data.note ?? "");
+      await refreshConfig();
+    } else {
+      badge($("tplBadge"), "套用失败", "err");
+      $("tplDiff").textContent = "套用失败：" + (res.message ?? "HTTP " + res.status);
+    }
+  } finally {
+    button.disabled = false;
+    button.textContent = "套用选中的内容";
+  }
 }

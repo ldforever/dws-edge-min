@@ -861,3 +861,49 @@ export interface DiagTailResponse {
   content: string[];
   truncated: boolean;
 }
+
+// ---------------------------------------------------------------- A8-3 配置模板
+
+/** 一份模板的摘要（GET /api/config/templates） */
+export interface ConfigTemplateSummary {
+  name: string;
+  note?: string | null;
+  createdAt?: string | null;
+  source?: string | null;
+  triggerMode?: string | null;
+  triggerName?: string | null;
+  cameraCount: number;
+  retentionDays?: number;
+  maxDiskPercent?: number;
+  fileName: string;
+  sizeText: string;
+  filePath: string;
+}
+
+export interface TemplatesResponse {
+  directory: string;
+  templates: ConfigTemplateSummary[];
+  note?: string;
+}
+
+/** 模板 vs 当前配置的一条差异 */
+export interface TemplateDiffItem {
+  area: string;
+  /** 缺少 / 多出 / 方位不同 / 不同 */
+  kind: string;
+  item: string;
+  template: string;
+  current: string;
+}
+
+export interface TemplateDiffResponse {
+  name: string;
+  templateCreatedAt?: string | null;
+  templateSource?: string | null;
+  template: { triggerMode?: string | null; cameras: string[]; cameraCount: number };
+  current: { triggerMode?: string | null; cameras: string[]; cameraCount: number };
+  changeCount: number;
+  same: boolean;
+  changes: TemplateDiffItem[];
+  note?: string;
+}

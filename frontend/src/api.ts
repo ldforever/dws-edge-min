@@ -19,6 +19,8 @@ import type {
   CameraCounter,
   CameraRecord,
   ConfigSummary,
+  TemplateDiffResponse,
+  TemplatesResponse,
   DedupStats,
   DeviceView,
   DiagFilesResponse,
@@ -333,7 +335,39 @@ export const api = {
 
   /** 一键打包地址（zip） */
   diagBundleUrl: (from: string, to: string, sources: string[]): string =>
-    "/api/diag/bundle?from=" + from + "&to=" + to + "&sources=" + encodeURIComponent(sources.join(","))
+    "/api/diag/bundle?from=" + from + "&to=" + to + "&sources=" + encodeURIComponent(sources.join(",")),
+
+  // ---- A8-3 配置模板 ----
+  templates: (): Promise<ApiResult<TemplatesResponse>> => request<TemplatesResponse>("/api/config/templates"),
+
+  saveTemplate: (name: string, note: string): Promise<ApiResult<{ ok: boolean; file: string; cameraCount: number; note?: string }>> =>
+    request<{ ok: boolean; file: string; cameraCount: number; note?: string }>("/api/config/templates", {
+      method: "POST",
+      json: { name, note }
+    }),
+
+  templateDiff: (name: string): Promise<ApiResult<TemplateDiffResponse>> =>
+    request<TemplateDiffResponse>("/api/config/templates/diff?name=" + encodeURIComponent(name)),
+
+  applyTemplate: (body: {
+    name: string;
+    applyCameras: boolean;
+    applyTrigger: boolean;
+    applyStorage: boolean;
+    skipVerify: boolean;
+    stopHost: boolean;
+    restartHost: boolean;
+  }): Promise<ApiResult<{ ok: boolean; name: string; applied: unknown; apply: unknown; storage: unknown; note?: string }>> =>
+    request<{ ok: boolean; name: string; applied: unknown; apply: unknown; storage: unknown; note?: string }>(
+      "/api/config/templates/apply",
+      { method: "POST", json: body }
+    ),
+
+  deleteTemplate: (name: string): Promise<ApiResult<{ ok: boolean; note?: string }>> =>
+    request<{ ok: boolean; note?: string }>("/api/config/templates/delete", { method: "POST", json: { name } }),
+
+  templateDownloadUrl: (name: string): string =>
+    "/api/config/templates/download?name=" + encodeURIComponent(name)
 };
 
 export const STREAM_URL = "/api/stream";

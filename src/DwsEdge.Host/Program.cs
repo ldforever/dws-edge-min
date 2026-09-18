@@ -211,14 +211,22 @@ namespace DwsEdge.Host
                     return exitCode;
                 }
 
+                string sdkCfgPath = Path.Combine(baseDir, config.Get(providerId, "cfgPath", @"Cfg\LogisticsBase.cfg"));
+
+                // A4：--command-status 只是"查能力和当前模式"，不需要启动 SDK ——
+                // 设备异常/没插狗时也能秒回，而不是卡在 SDK 启动上等超时。
+                if (string.Equals(commandName, "status", StringComparison.OrdinalIgnoreCase))
+                {
+                    exitCode = RunCommand(provider, sink, sdkCfgPath, commandName, null, 0, forceCommand);
+                    return exitCode;
+                }
+
                 provider.Start();
 
-                // A4：一次性命令（软触发 / 人工补码 / 看能力）——执行完带着退出码退出，
-                // 不进常驻循环，也不需要 Ctrl+C。finally 里会正常停掉 provider。
+                // A4：软触发 / 补码必须等 SDK 就绪，所以放在 Start 之后。
+                // 执行完带着退出码退出，不进常驻循环，也不需要 Ctrl+C；finally 里会正常停掉 provider。
                 if (!string.IsNullOrEmpty(commandName))
                 {
-                    // 触发模式校验读的是 SDK 配置（和 provider 用的是同一份）
-                    string sdkCfgPath = Path.Combine(baseDir, config.Get(providerId, "cfgPath", @"Cfg\LogisticsBase.cfg"));
                     exitCode = RunCommand(provider, sink, sdkCfgPath, commandName, recodeCode, recodeTimeMs, forceCommand);
                     return exitCode;
                 }
@@ -487,6 +495,7 @@ namespace DwsEdge.Host
                 Console.WriteLine("[cmd] provider=" + providerId);
                 Console.WriteLine("[cmd] 支持软触发/补码=" + (control != null ? "是" : "否"));
                 Console.WriteLine("[cmd] 触发模式=" + modeText);
+                Console.WriteLine("[cmd] 注意：本命令只查能力与模式，不启动 SDK；要验证设备请用 --verify-config 或 --soft-trigger");
                 sink.Log(LogLevel.Info, "[cmd] 能力查询：支持命令=" + (control != null ? "是" : "否") + "，触发模式=" + modeText);
                 return 0;
             }

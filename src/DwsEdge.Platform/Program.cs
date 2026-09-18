@@ -58,6 +58,8 @@ namespace DwsEdge.Platform
             builder.Services.AddSingleton<ShiftStore>();
             // C6：日志查看与导出（采集/SDK/spool/审计）
             builder.Services.AddSingleton<LogStore>();
+            // A8-3：配置模板（相机清单 + 触发模式 + 存图策略的另存/对比/套用）
+            builder.Services.AddSingleton<TemplateStore>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<DownstreamSender>());
             builder.Services.AddHostedService<SpoolTailer>();
             builder.Services.AddHostedService<StorageProbe>();
@@ -290,6 +292,67 @@ namespace DwsEdge.Platform
             app.MapGet("/api/config", (ConfigStore cfg) => Results.Json(cfg.Read()));
             app.MapPost("/api/config/apply", (ConfigStore cfg, ConfigApplyRequest request) =>
                 cfg.Apply(request));
+
+            // A8-3：配置模板 —— 另存当前配置 / 列表 / 差异对比 / 套用 / 删除 / 导出
+            app.MapGet("/api/config/templates", (TemplateStore templates) => Results.Json(new
+            {
+                directory = templates.DirectoryPath,
+                templates = templates.List(),
+                note = "模板装的是采集侧配置：相机清单 + 触发模式 + 存图策略；拷 json 到别的设备即可套用"
+            }));
+
+            app.MapPost("/api/config/templates", (TemplateStore templates, TemplateSaveRequest request) =>
+            {
+                try
+                {
+                    return Results.Json(templates.Save(request != null ? request.name : null,
+                        request != null ? request.note : null));
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapGet("/api/config/templates/diff", (TemplateStore templates, string name) =>
+            {
+                try
+                {
+                    return Results.Json(templates.Diff(name));
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapPost("/api/config/templates/apply", (TemplateStore templates, TemplateApplyRequest request) =>
+            {
+                try
+                {
+                    return Results.Json(templates.Apply(request));
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapPost("/api/config/templates/delete", (TemplateStore templates, TemplateSaveRequest request) =>
+            {
+                try
+                {
+                    templates.Delete(request != null ? request.name : null);
+                    return Results.Json(new { ok = true, note = "模板已删除" });
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapGet("/api/config/templates/download", (TemplateStore templates, string name) =>
+                templates.Download(name));
 
             // C5：配置页（简版）—— 存图策略图形化 + 配置备份/回滚
             app.MapGet("/api/config/storage", (ConfigStore cfg) => Results.Json(cfg.ReadStorage()));

@@ -139,7 +139,17 @@ export const api = {
     /** 单文件下载地址（浏览器直接下载） */
     diagDownloadUrl: (source, file) => "/api/diag/download?source=" + encodeURIComponent(source) + "&file=" + encodeURIComponent(file),
     /** 一键打包地址（zip） */
-    diagBundleUrl: (from, to, sources) => "/api/diag/bundle?from=" + from + "&to=" + to + "&sources=" + encodeURIComponent(sources.join(","))
+    diagBundleUrl: (from, to, sources) => "/api/diag/bundle?from=" + from + "&to=" + to + "&sources=" + encodeURIComponent(sources.join(",")),
+    // ---- A8-3 配置模板 ----
+    templates: () => request("/api/config/templates"),
+    saveTemplate: (name, note) => request("/api/config/templates", {
+        method: "POST",
+        json: { name, note }
+    }),
+    templateDiff: (name) => request("/api/config/templates/diff?name=" + encodeURIComponent(name)),
+    applyTemplate: (body) => request("/api/config/templates/apply", { method: "POST", json: body }),
+    deleteTemplate: (name) => request("/api/config/templates/delete", { method: "POST", json: { name } }),
+    templateDownloadUrl: (name) => "/api/config/templates/download?name=" + encodeURIComponent(name)
 };
 export const STREAM_URL = "/api/stream";
 /** 历史查询串：导出时不要 limit/offset（要全量） */

@@ -108,6 +108,95 @@ namespace DwsEdge.Platform
             get { return _runtimeRoot; }
         }
 
+        // ================================================================
+        // A8-3 配置模板要用的"当前值"取数（模板 = 相机清单 + 触发模式 + 存图策略）
+        // ================================================================
+
+        /// <summary>当前 cfg 里的触发模式（0/1/2）；读不到返回空串。</summary>
+        public string CurrentTriggerMode()
+        {
+            try
+            {
+                CameraPlan plan = CameraPlan.Read(_cfgPath);
+                return plan == null || plan.TriggerMode == null ? string.Empty : plan.TriggerMode.Trim();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("读触发模式失败：{0}", ex.Message);
+                return string.Empty;
+            }
+        }
+
+        /// <summary>当前 cfg 里启用的相机清单（每行 ip=...,pos=top 这种文本）。</summary>
+        public List<string> CurrentCameraLines()
+        {
+            List<string> lines = new List<string>();
+            try
+            {
+                CameraPlan plan = CameraPlan.Read(_cfgPath);
+                CameraPositions positions = CameraPositions.Load(_positionsPath);
+                if (plan == null)
+                {
+                    return lines;
+                }
+                for (int i = 0; i < plan.Cameras.Count; i++)
+                {
+                    CameraPlanEntry entry = plan.Cameras[i];
+                    if (!entry.Enabled)
+                    {
+                        continue;
+                    }
+                    string position = positions.Resolve(entry.Value);
+                    lines.Add(entry.Kind + "=" + entry.Value +
+                        (string.IsNullOrEmpty(position) ? string.Empty : ",pos=" + position));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("读相机清单失败：{0}", ex.Message);
+            }
+            return lines;
+        }
+
+        /// <summary>当前 provider（模板里记一下来源，方便分辨是哪台设备的模板）。</summary>
+        public string CurrentProvider()
+        {
+            string provider = ReadGatewayProvider();
+            return string.IsNullOrEmpty(provider) ? "unknown" : provider;
+        }
+
+        /// <summary>当前存图策略（模板里要带上它）。</summary>
+        public StorageOptions CurrentStorage()
+        {
+            return ReadStorageOptions();
+        }
+
+        /// <summary>只把存图策略读成强类型（ReadStorage / CurrentStorage 共用）。</summary>
+        private StorageOptions ReadStorageOptions()
+        {
+            string text = File.Exists(_gatewayPath) ? File.ReadAllText(_gatewayPath, Encoding.UTF8) : string.Empty;
+            string provider = ReadGatewayProvider();
+            if (string.IsNullOrEmpty(provider))
+            {
+                provider = "dahua-dws";
+            }
+            string switchSection = StorageSwitchSection(text, provider);
+
+            StorageOptions options = new StorageOptions();
+            options.saveOriginal = IniBool(text, switchSection, "saveOriginal", true);
+            options.saveWaybill = IniBool(text, switchSection, "saveWaybill", true);
+            options.savePerCamera = IniBool(text, switchSection, "savePerCamera", false);
+            options.attachAllCameraCodeInfo = IniBool(text, switchSection, "attachAllCameraCodeInfo", false);
+            options.providerImageDir = IniText(text, provider, "imageDir");
+            options.imageDir = IniText(text, "storage", "imageDir");
+            options.retentionDays = IniInt(text, "storage", "retentionDays", 7);
+            options.maxDiskPercent = IniInt(text, "storage", "maxDiskPercent", 85);
+            options.cleanupIntervalMinutes = IniInt(text, "storage", "cleanupIntervalMinutes", 30);
+            options.cleanupOnStart = IniBool(text, "storage", "cleanupOnStart", true);
+            options.spoolRetentionDays = IniInt(text, "storage", "spoolRetentionDays", 7);
+            return options;
+        }
+
         /// <summary>GET /api/config：把当前配置整理成界面能直接渲染的形状。</summary>
         public object Read()
         {
@@ -168,6 +257,35 @@ namespace DwsEdge.Platform
         /// <summary>POST /api/config/apply：一键应用 + 校验 + 自动回滚。</summary>
         public IResult Apply(ConfigApplyRequest request)
         {
+            ConfigApplyResult typed;
+            IResult rejected = TryApply(request, out typed);
+            return rejected != null ? rejected : Results.Json(typed);
+        }
+
+        /// <summary>
+        /// A8-3：给"套用配置模板"用的强类型入口 —— 走的是和界面一键应用**完全相同**的路径，
+        /// 只是把结果直接给调用方（模板套用要把结果和存图策略的结果拼在一起返回）。
+        /// </summary>
+        public ConfigApplyResult ApplyTyped(ConfigApplyRequest request)
+        {
+            ConfigApplyResult typed;
+            IResult rejected = TryApply(request, out typed);
+            if (rejected != null)
+            {
+                return new ConfigApplyResult
+                {
+                    ok = false,
+                    conclusion = "参数不合法",
+                    error = "相机清单或触发模式不合法，已拒绝（详情见接口返回）"
+                };
+            }
+            return typed;
+        }
+
+        /// <summary>Apply 的实际逻辑。成功时 out 出结果并返回 null；失败时返回要回给界面的错误 IResult。</summary>
+        private IResult TryApply(ConfigApplyRequest request, out ConfigApplyResult result)
+        {
+            result = null;
             if (request == null)
             {
                 return Results.BadRequest(new { error = "请求体不能为空" });
@@ -240,9 +358,9 @@ namespace DwsEdge.Platform
 
             try
             {
-                ConfigApplyResult result = RunApply(triggerMode, cameraLines, request);
+                result = RunApply(triggerMode, cameraLines, request);
                 _lastApply = result;
-                return Results.Json(result);
+                return null;
             }
             finally
             {
