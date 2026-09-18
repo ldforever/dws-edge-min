@@ -20,6 +20,19 @@ namespace DwsEdge.Core.Config
         /// <summary>在候选标识里找与声明匹配的那一条；找不到返回 null。</summary>
         public static CameraPlanEntry Match(CameraPlan plan, IEnumerable<string> candidates)
         {
+            return Match(plan, candidates, null);
+        }
+
+        /// <summary>
+        /// 在候选标识里找与声明匹配的那一条；找不到返回 null。
+        ///
+        /// aliases 用来把"声明值"扩展成一组等价标识，典型用法是 IP ↔ SDK Key 对照表：
+        /// 清单写 ip=100.100.100.11，而 SDK 上报的是 Key=Huaray Technology:BK27440AAK00036，
+        /// 有了对照表就能把这条声明挂到那台设备上，界面不会出现"一条在线一条幽灵离线"。
+        /// 传 null 时行为与不带 aliases 的版本一致。
+        /// </summary>
+        public static CameraPlanEntry Match(CameraPlan plan, IEnumerable<string> candidates, Func<string, string[]> aliases)
+        {
             if (plan == null || candidates == null)
             {
                 return null;
@@ -40,42 +53,103 @@ namespace DwsEdge.Core.Config
 
             List<CameraPlanEntry> declared = EnabledEntries(plan);
 
+            // 第一轮：精确匹配（声明值本身，加上它的等价标识）
             for (int d = 0; d < declared.Count; d++)
             {
-                string value = declared[d].Value;
-                for (int c = 0; c < list.Count; c++)
+                string[] values = ValuesOf(declared[d].Value, aliases);
+                for (int v = 0; v < values.Length; v++)
                 {
-                    if (string.Equals(value, list[c], StringComparison.OrdinalIgnoreCase))
+                    for (int c = 0; c < list.Count; c++)
                     {
-                        return declared[d];
+                        if (string.Equals(values[v], list[c], StringComparison.OrdinalIgnoreCase))
+                        {
+                            return declared[d];
+                        }
                     }
                 }
             }
 
+            // 第二轮：包含匹配 —— 清单里写完整 id（厂商:序列号）、SDK 只给序列号这类情况
             for (int d = 0; d < declared.Count; d++)
             {
                 CameraPlanEntry entry = declared[d];
-                if (entry.Value.Length < 4 || LooksLikeIp(entry.Value))
+                string[] values = ValuesOf(entry.Value, aliases);
+                for (int v = 0; v < values.Length; v++)
                 {
-                    continue;
-                }
-
-                for (int c = 0; c < list.Count; c++)
-                {
-                    string candidate = list[c];
-                    if (candidate.Length < 4)
+                    string value = values[v];
+                    if (value.Length < 4 || LooksLikeIp(value))
                     {
                         continue;
                     }
-                    if (candidate.IndexOf(entry.Value, StringComparison.OrdinalIgnoreCase) >= 0
-                        || entry.Value.IndexOf(candidate, StringComparison.OrdinalIgnoreCase) >= 0)
+
+                    for (int c = 0; c < list.Count; c++)
                     {
-                        return entry;
+                        string candidate = list[c];
+                        if (candidate.Length < 4)
+                        {
+                            continue;
+                        }
+                        if (candidate.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0
+                            || value.IndexOf(candidate, StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            return entry;
+                        }
                     }
                 }
             }
 
             return null;
+        }
+
+        /// <summary>声明值 + 等价标识（去重）。aliases 抛异常时退回"只用声明值"，不影响采集。</summary>
+        private static string[] ValuesOf(string declaredValue, Func<string, string[]> aliases)
+        {
+            if (string.IsNullOrEmpty(declaredValue))
+            {
+                return new string[0];
+            }
+            if (aliases == null)
+            {
+                return new string[] { declaredValue };
+            }
+
+            string[] extra;
+            try
+            {
+                extra = aliases(declaredValue);
+            }
+            catch (Exception)
+            {
+                return new string[] { declaredValue };
+            }
+
+            List<string> values = new List<string>();
+            values.Add(declaredValue);
+            if (extra != null)
+            {
+                for (int i = 0; i < extra.Length; i++)
+                {
+                    if (string.IsNullOrEmpty(extra[i]))
+                    {
+                        continue;
+                    }
+
+                    bool duplicated = false;
+                    for (int j = 0; j < values.Count; j++)
+                    {
+                        if (string.Equals(values[j], extra[i], StringComparison.OrdinalIgnoreCase))
+                        {
+                            duplicated = true;
+                            break;
+                        }
+                    }
+                    if (!duplicated)
+                    {
+                        values.Add(extra[i]);
+                    }
+                }
+            }
+            return values.ToArray();
         }
 
         /// <summary>cfg 里所有 enable="1" 的相机声明。</summary>

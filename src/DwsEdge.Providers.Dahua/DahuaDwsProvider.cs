@@ -55,6 +55,18 @@ namespace DwsEdge.Providers.Dahua
         private readonly Dictionary<string, string> _positionByDevice =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// 相机 IP ↔ SDK Key（厂商:序列号）对照表。
+        /// 大华的状态接口不回报 IP，现场又习惯按 IP 配清单，靠这张表把两边对上号
+        /// （否则界面会把同一台相机显示成两条：一条 ip 声明永远离线、一条 SDK 发现"未在清单中"）。
+        /// </summary>
+        private readonly CameraIdentityMap _identityMap = new CameraIdentityMap();
+        private string _identityFilePath;
+
+        /// <summary>已经打过"按 IP 对上号"日志的 SDK Key，避免日志刷屏。</summary>
+        private readonly HashSet<string> _identityLogged =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         private bool _cameraDisconnectCbAttached;
         private bool _allCameraCbAttached;
         private bool _statusHandlerAttached;
@@ -162,6 +174,9 @@ namespace DwsEdge.Providers.Dahua
             // 相机方位映射（回调不带方位时用它兜底）
             LoadCameraPositions();
 
+            // 相机 IP ↔ Key 对照表（清单按 IP 写、SDK 按 厂商:序列号 上报时靠它对上号）
+            LoadCameraIdentityMap();
+
             _queue = new BlockingCollection<WorkItem>(_queueCapacity);
             _running = true;
             _worker = new Thread(WorkerLoop);
@@ -204,6 +219,10 @@ namespace DwsEdge.Providers.Dahua
                 _dws.AllCameraCodeInfoEventHandler += OnAllCameraCodeInfo;
                 _allCameraHandlerAttached = true;
             }
+
+            // SDK 启动时会把自己的相机清单（含 IP-Key 配对）写进日志，这里读一遍，
+            // 这样"一次包裹都还没过"的时候界面就能按 IP 认出相机。
+            ResolveCameraIdentitiesFromSdkLog();
 
             LogCameraInventory();
             EmitCameraSnapshot();
@@ -344,6 +363,12 @@ namespace DwsEdge.Providers.Dahua
                     read.CameraIp = info.CameraIP;
                     read.CapturedAtMs = info.CodeTimeStamp;
                     read.ReceivedAtMs = NowMs();
+
+                    // SDK 官方字段：这条回调同时带 Key 与 CameraIP，是 IP↔Key 对照最权威的来源
+                    if (_identityMap.Record(info.CameraIP, info.Key))
+                    {
+                        SaveIdentityMap();
+                    }
 
                     if (info.CodeList != null)
                     {
@@ -848,7 +873,8 @@ namespace DwsEdge.Providers.Dahua
                 return;
             }
 
-            string position = _cameraPositions.Resolve(cameraId);
+            // 方位表里可能按 IP 写的（清单习惯用 IP），这里同时拿 SDK Key 和它的 IP 去查
+            string position = _cameraPositions.ResolveAny(new string[] { cameraId, _identityMap.IpOf(cameraId) });
             if (string.IsNullOrEmpty(position))
             {
                 return;
@@ -860,6 +886,78 @@ namespace DwsEdge.Providers.Dahua
                 {
                     codes[i].Position = position;
                 }
+            }
+        }
+
+        /// <summary>
+        /// 加载相机 IP ↔ Key 对照表（默认 runtime\config\camera-identity.ini）。
+        /// 文件不存在也不报错：启动后会用 SDK 日志与扫码回调重建。
+        /// </summary>
+        private void LoadCameraIdentityMap()
+        {
+            _identityFilePath = _settings.ResolvePath(
+                _settings.Get("cameraIdentityFile", CameraIdentityMap.DefaultRelativePath));
+
+            int loaded = _identityMap.Load(_identityFilePath);
+            if (loaded > 0)
+            {
+                _sink.Log(LogLevel.Info, "已加载相机 IP↔Key 对照 " + loaded + " 条：" + _identityFilePath);
+            }
+        }
+
+        /// <summary>
+        /// 从 SDK 日志里补全 IP ↔ Key 对照。
+        /// 大华 SDK 的状态接口只给 Key，不给 IP；但它的日志里会写
+        /// "Camera[IP-100.100.100.11][Key-Huaray Technology:BK27440AAK00036]" 这类成对信息。
+        /// 解析不到也没关系：第一个包裹过后，扫码回调里的 CameraIP 会把对照补上。
+        /// </summary>
+        private void ResolveCameraIdentitiesFromSdkLog()
+        {
+            try
+            {
+                string cfgDir = Path.GetDirectoryName(_cfgPath);           // <runtime>\Cfg
+                string runtimeRoot = cfgDir != null ? Path.GetDirectoryName(cfgDir) : null;
+                if (string.IsNullOrEmpty(runtimeRoot))
+                {
+                    return;
+                }
+
+                string logDir = Path.Combine(runtimeRoot, "Log");
+                int added = 0;
+                string[] names = new string[] { "default.log", "camera.log", "MVP_Default.log" };
+                for (int i = 0; i < names.Length; i++)
+                {
+                    added += _identityMap.ParseLog(Path.Combine(logDir, names[i]));
+                }
+
+                if (added > 0)
+                {
+                    SaveIdentityMap();
+                }
+
+                if (_identityMap.Count > 0)
+                {
+                    _sink.Log(LogLevel.Info, "相机 IP↔Key 对照：" + _identityMap.Count
+                        + " 条（本次从 SDK 日志新增 " + added + " 条）—— 清单按 IP 写的相机也能对上号");
+                }
+                else
+                {
+                    _sink.Log(LogLevel.Info, "暂未拿到相机 IP↔Key 对照（SDK 日志里还没有配对记录，"
+                        + "过第一个包裹后会自动补上）");
+                }
+            }
+            catch (Exception ex)
+            {
+                _sink.Log(LogLevel.Warn, "解析相机 IP↔Key 对照失败（不影响采集）：" + ex.Message);
+            }
+        }
+
+        /// <summary>对照表有变化时落盘（写失败只记一条日志，不影响采集）。</summary>
+        private void SaveIdentityMap()
+        {
+            if (_identityMap.Save(_identityFilePath) && _identityFilePath != null)
+            {
+                _sink.Log(LogLevel.Info, "相机 IP↔Key 对照已更新：" + _identityFilePath);
             }
         }
 
@@ -979,11 +1077,15 @@ namespace DwsEdge.Providers.Dahua
                 if (declaredMissing > 0)
                 {
                     _sink.Log(LogLevel.Warn, "相机快照：" + declaredMissing
-                        + " 台在 cfg 里声明了 enable=\"1\" 但 SDK 没发现（已按离线上报，请检查上电/网线/网段）");
+                        + " 台在 cfg 里声明了 enable=\"1\" 但 SDK 没发现（已按离线上报，请检查上电/网线/网段）"
+                        + (_identityMap.Count == 0
+                            ? "；提示：清单按 IP 写时，等 SDK 日志出现 IP-Key 配对或过第一个包裹后会自动按 IP 对上号"
+                            : string.Empty));
                 }
 
                 _sink.Log(LogLevel.Info, "已上报相机快照 " + sent + " 台"
-                    + (declared.Count > 0 ? "（cfg 声明 " + declared.Count + " 台）" : string.Empty));
+                    + (declared.Count > 0 ? "（cfg 声明 " + declared.Count + " 台）" : string.Empty)
+                    + (_identityMap.Count > 0 ? "，IP↔Key 对照 " + _identityMap.Count + " 条" : string.Empty));
             }
             catch (Exception ex)
             {
@@ -1015,10 +1117,19 @@ namespace DwsEdge.Providers.Dahua
                 info != null ? info.camDevExtraInfo : null
             };
 
-            CameraPlanEntry entry = CameraIdentity.Match(_cameraPlan, candidates);
+            // 匹配时带上 IP↔Key 对照表：清单写 ip=100.100.100.11、SDK 报 Key=厂商:序列号 时也能对上
+            CameraPlanEntry entry = CameraIdentity.Match(_cameraPlan, candidates, _identityMap.AliasesOf);
             if (entry != null && matched != null)
             {
                 matched.Add(entry);
+            }
+
+            if (entry != null && !string.IsNullOrEmpty(deviceId)
+                && !string.Equals(entry.Value, deviceId, StringComparison.OrdinalIgnoreCase)
+                && _identityLogged.Add(deviceId))
+            {
+                _sink.Log(LogLevel.Info, "相机身份关联：" + CameraIdentity.Describe(entry)
+                    + " ↔ SDK Key " + deviceId + "（清单按 " + entry.Kind + " 写，SDK 按 Key 上报）");
             }
 
             CameraPlanEntry known;

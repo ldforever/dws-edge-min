@@ -80,7 +80,9 @@ $platformConfigs = @(
     'auth.json', 'auth.json.bak-*', 'users.json', 'users.json.bak-*', 'admin-initial-password.txt',
     'monitor.json', 'monitor.json.bak-*', 'downstream.json', 'downstream.json.bak-*',
     'barcode-rules.json', 'barcode-rules.json.bak-*', 'shifts.json', 'shifts.json.bak-*',
-    'camera-positions.ini.bak-*', 'cameras-applied.txt'
+    'camera-positions.ini.bak-*', 'cameras-applied.txt',
+    # 相机 IP↔Key 对照表：现场首次启动会自动从 SDK 日志重建，出厂包不带走上一台设备的 IP/序列号
+    'camera-identity.ini', 'camera-identity.ini.bak-*'
 )
 foreach ($pattern in $platformConfigs) {
     Get-ChildItem -Path $configDir -Filter $pattern -ErrorAction SilentlyContinue | ForEach-Object {
