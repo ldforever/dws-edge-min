@@ -8,8 +8,8 @@
  *   * 存图策略表单（写 gateway.ini，校验 + 自动备份）；
  *   * 配置备份与回滚（config\ 与 Cfg\ 下的 .bak-* 都能一键还原）。
  */
-import { api } from "./api.js?v=dca6df58";
-import { $, badge, cell, clear, dash, el, notify, positionLabel } from "./dom.js?v=dca6df58";
+import { api } from "./api.js?v=56b0944d";
+import { $, badge, cell, clear, dash, el, notify, positionLabel } from "./dom.js?v=56b0944d";
 const TRIGGER_LABEL = {
     hard: "硬触发（光电）",
     soft: "软触发",

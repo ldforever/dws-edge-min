@@ -167,6 +167,7 @@ namespace DwsEdge.Host
             HostEventSink sink = new HostEventSink(baseDir, spoolEnabled);
             IAcquisitionProvider provider = null;
             TestConsole testConsole = null;
+            HostCommandServer commandServer = null;
             ImageRetentionService retention = null;
             SpoolRetentionService spoolRetention = null;
             int exitCode = 0;
@@ -217,7 +218,7 @@ namespace DwsEdge.Host
                 // 设备异常/没插狗时也能秒回，而不是卡在 SDK 启动上等超时。
                 if (string.Equals(commandName, "status", StringComparison.OrdinalIgnoreCase))
                 {
-                    exitCode = RunCommand(provider, sink, sdkCfgPath, commandName, null, 0, forceCommand);
+                    exitCode = RunCommand(provider, sink, sdkCfgPath, commandName, null, 0, forceCommand, Console.Out);
                     return exitCode;
                 }
 
@@ -227,7 +228,8 @@ namespace DwsEdge.Host
                 // 执行完带着退出码退出，不进常驻循环，也不需要 Ctrl+C；finally 里会正常停掉 provider。
                 if (!string.IsNullOrEmpty(commandName))
                 {
-                    exitCode = RunCommand(provider, sink, sdkCfgPath, commandName, recodeCode, recodeTimeMs, forceCommand);
+                    exitCode = RunCommand(provider, sink, sdkCfgPath, commandName, recodeCode, recodeTimeMs, forceCommand,
+                        Console.Out);
                     return exitCode;
                 }
 
@@ -235,6 +237,20 @@ namespace DwsEdge.Host
                 retention = StartRetention(baseDir, config, providerId, sink);
                 // spool 事件文件保留策略（带业务端消费保护）
                 spoolRetention = StartSpoolRetention(baseDir, config, sink);
+
+                // 常驻命令通道：宿主跑着也能软触发/补码/查状态（不用再起一个宿主进程抢相机）
+                commandServer = new HostCommandServer(baseDir,
+                    delegate(string cmd, string cmdCode, long cmdTimeMs, bool cmdForce, TextWriter cmdOutput)
+                    {
+                        return RunCommand(provider, sink, sdkCfgPath, cmd, cmdCode, cmdTimeMs, cmdForce, cmdOutput);
+                    },
+                    delegate(string message, bool warning)
+                    {
+                        sink.Log(warning ? LogLevel.Warn : LogLevel.Info, message);
+                    });
+                commandServer.Start();
+                sink.Log(LogLevel.Info, "命令通道已开启（命名管道 " + commandServer.PipeName
+                    + "）：宿主运行中也能软触发/补码，用 tools\\host-command.ps1 -SoftTrigger 或平台界面上的按钮");
 
                 if (testOptions.EnableSoftTrigger)
                 {
@@ -278,6 +294,11 @@ namespace DwsEdge.Host
             }
             finally
             {
+                if (commandServer != null)
+                {
+                    commandServer.Dispose();
+                }
+
                 if (spoolRetention != null)
                 {
                     spoolRetention.Dispose();
@@ -473,10 +494,19 @@ namespace DwsEdge.Host
         ///   5 触发模式不允许（当前不是软触发模式，加 --force 可跳过校验）
         ///   6 当前 provider 不支持这条命令
         /// 每条命令都会写进 logs\host-*.log，日志里带命令、参数、结果与退出码。
+        ///
+        /// output 决定"给人看的输出"往哪儿写：
+        ///   * 命令行一次性模式传 Console.Out（原来的行为不变）；
+        ///   * 常驻命令通道（命名管道）传 StringWriter，把输出原样回给调用方（界面/脚本）。
         /// </summary>
         private static int RunCommand(IAcquisitionProvider provider, HostEventSink sink, string cfgPath,
-            string command, string code, long timeMs, bool force)
+            string command, string code, long timeMs, bool force, TextWriter output)
         {
+            if (output == null)
+            {
+                output = Console.Out;
+            }
+
             string providerId = provider != null ? provider.ProviderId : "unknown";
             ITriggerControl control = provider as ITriggerControl;
 
@@ -492,10 +522,10 @@ namespace DwsEdge.Host
 
             if (string.Equals(command, "status", StringComparison.OrdinalIgnoreCase))
             {
-                Console.WriteLine("[cmd] provider=" + providerId);
-                Console.WriteLine("[cmd] 支持软触发/补码=" + (control != null ? "是" : "否"));
-                Console.WriteLine("[cmd] 触发模式=" + modeText);
-                Console.WriteLine("[cmd] 注意：本命令只查能力与模式，不启动 SDK；要验证设备请用 --verify-config 或 --soft-trigger");
+                output.WriteLine("[cmd] provider=" + providerId);
+                output.WriteLine("[cmd] 支持软触发/补码=" + (control != null ? "是" : "否"));
+                output.WriteLine("[cmd] 触发模式=" + modeText);
+                output.WriteLine("[cmd] 注意：本命令只查能力与模式，不启动 SDK；要验证设备请用 --verify-config 或 --soft-trigger");
                 sink.Log(LogLevel.Info, "[cmd] 能力查询：支持命令=" + (control != null ? "是" : "否") + "，触发模式=" + modeText);
                 return 0;
             }
@@ -503,7 +533,7 @@ namespace DwsEdge.Host
             if (control == null)
             {
                 string message = "[cmd] 当前 provider（" + providerId + "）不支持软触发/补码命令";
-                Console.WriteLine(message);
+                output.WriteLine(message);
                 sink.Log(LogLevel.Error, message + "　退出码 6");
                 return 6;
             }
@@ -516,7 +546,7 @@ namespace DwsEdge.Host
                     string tip = "[cmd] 当前触发模式是 " + modeText + "，软触发不会生效："
                         + "先用 tools\\set-trigger-mode.ps1 -Mode soft 改成软触发模式（triggerMode=2），"
                         + "或用 --force 跳过这条校验。退出码 5";
-                    Console.WriteLine(tip);
+                    output.WriteLine(tip);
                     sink.Log(LogLevel.Warn, tip);
                     return 5;
                 }
@@ -528,12 +558,12 @@ namespace DwsEdge.Host
                 int ret = control.SoftTrigger();
                 if (ret == 0)
                 {
-                    Console.WriteLine("[cmd] 软触发成功（返回 0）");
+                    output.WriteLine("[cmd] 软触发成功（返回 0）");
                     sink.Log(LogLevel.Info, "[cmd] 软触发成功（返回 0）　退出码 0");
                     return 0;
                 }
 
-                Console.WriteLine("[cmd] 软触发失败（返回 " + ret + "）");
+                output.WriteLine("[cmd] 软触发失败（返回 " + ret + "）");
                 sink.Log(LogLevel.Error, "[cmd] 软触发失败（返回 " + ret + "）　退出码 4");
                 return 4;
             }
@@ -543,7 +573,7 @@ namespace DwsEdge.Host
                 if (string.IsNullOrWhiteSpace(code))
                 {
                     string tip = "[cmd] 补码命令缺少 --code <条码>。退出码 1";
-                    Console.WriteLine(tip);
+                    output.WriteLine(tip);
                     sink.Log(LogLevel.Error, tip);
                     return 1;
                 }
@@ -551,17 +581,17 @@ namespace DwsEdge.Host
                 int ret = control.ComplementCode(code.Trim(), timeMs);
                 if (ret == 0)
                 {
-                    Console.WriteLine("[cmd] 补码成功：" + code.Trim() + "（返回 0）");
+                    output.WriteLine("[cmd] 补码成功：" + code.Trim() + "（返回 0）");
                     sink.Log(LogLevel.Info, "[cmd] 补码成功：" + code.Trim() + "（返回 0）　退出码 0");
                     return 0;
                 }
 
-                Console.WriteLine("[cmd] 补码失败：" + code.Trim() + "（返回 " + ret + "）");
+                output.WriteLine("[cmd] 补码失败：" + code.Trim() + "（返回 " + ret + "）");
                 sink.Log(LogLevel.Error, "[cmd] 补码失败：" + code.Trim() + "（返回 " + ret + "）　退出码 4");
                 return 4;
             }
 
-            Console.WriteLine("[host] 未知命令：" + command);
+            output.WriteLine("[host] 未知命令：" + command);
             sink.Log(LogLevel.Error, "[cmd] 未知命令：" + command + "　退出码 1");
             return 1;
         }
@@ -614,6 +644,11 @@ namespace DwsEdge.Host
             Console.WriteLine("  DwsEdge.Host.exe --soft-trigger                软触发一次（要求 triggerMode=2）");
             Console.WriteLine("  DwsEdge.Host.exe --soft-trigger --force        跳过触发模式校验（排查用）");
             Console.WriteLine("  DwsEdge.Host.exe --recode --code SF1234567890  人工补码（可加 --time-ms <Unix 毫秒>）");
+            Console.WriteLine();
+            Console.WriteLine("宿主【运行中】发命令（常驻命名管道通道，不用停宿主、不抢相机）：");
+            Console.WriteLine("  tools\\host-command.ps1 -SoftTrigger           软触发一次（宿主跑着也能用）");
+            Console.WriteLine("  tools\\host-command.ps1 -Recode -Code SF123    人工补码");
+            Console.WriteLine("  平台界面实时监控页的「软触发一次」按钮走的也是这条通道");
             Console.WriteLine();
             Console.WriteLine("退出码：0 成功 / 1 参数错误 / 2 provider 启动失败 / 3 未处理异常 /");
             Console.WriteLine("        4 命令执行失败 / 5 触发模式不允许（加 --force） / 6 provider 不支持该命令");

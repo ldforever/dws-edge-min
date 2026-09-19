@@ -67,6 +67,7 @@ export function initRealtime(): void {
 
   $("viewCards").addEventListener("click", () => setView("cards"));
   $("viewTable").addEventListener("click", () => setView("table"));
+  $("btnSoftTrigger").addEventListener("click", () => void softTriggerOnce());
   $("camViewCards").addEventListener("click", () => setCamView("cards"));
   $("camViewTable").addEventListener("click", () => setCamView("table"));
 
@@ -81,6 +82,55 @@ export function initRealtime(): void {
   }
   setView(saved === "table" ? "table" : "cards");
   setCamView(savedCam === "table" ? "table" : "cards");
+}
+
+/**
+ * A4：软触发一次。
+ *
+ * 走的是采集宿主的【常驻命令通道】（命名管道）—— 宿主在跑就能直接触发，
+ * 不用先停宿主（以前只能再起一个宿主进程去触发，会和正在跑的宿主抢相机，报 3001）。
+ * 宿主没在跑时通道连不上，这里会提示先启动采集宿主。
+ */
+async function softTriggerOnce(): Promise<void> {
+  const button = $<HTMLButtonElement>("btnSoftTrigger");
+  const result = $("triggerResult");
+
+  button.disabled = true;
+  result.className = "muted";
+  result.textContent = "正在给采集宿主发软触发…";
+
+  try {
+    const res = await api.hostCommand({ command: "soft-trigger" });
+    const data = res.data;
+
+    if (!data) {
+      result.className = "warnText";
+      result.textContent = "软触发失败：" + (res.message ?? ("HTTP " + res.status));
+      return;
+    }
+
+    if (!data.available) {
+      result.className = "warnText";
+      result.textContent =
+        "命令通道连不上（采集宿主没在跑？）：先用 run.ps1 / runtime\\tools\\start-all.ps1 把宿主起来。" +
+        (data.message ? "　" + data.message : "");
+      return;
+    }
+
+    const firstLine =
+      (data.message ?? "")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)[0] ?? "";
+
+    result.className = data.ok ? "okText" : "warnText";
+    result.textContent = (data.ok ? "已触发（退出码 0）：" : "退出码 " + data.exitCode + "：") + firstLine;
+  } catch (e) {
+    result.className = "warnText";
+    result.textContent = "软触发调用失败：" + (e instanceof Error ? e.message : String(e));
+  } finally {
+    button.disabled = false;
+  }
 }
 
 /** C2：相机状态墙 / 表格 两种视图切换（和过包区一样记住选择） */

@@ -34,6 +34,8 @@ dws-edge-min/
 ├─ run.ps1                       运行采集宿主 / 业务平台
 ├─ tools/set-trigger-mode.ps1    切换大华 cfg 的触发模式（软/硬/狂扫）
 ├─ tools/host-command.ps1        A4 命令通道：-Status / -SoftTrigger / -Recode（退出码翻译成人话）
+│                                宿主在跑时走常驻命名管道，不用停宿主；没跑才新起进程
+├─ tools/test-a4-channel.ps1     A4 命令通道回归（运行中触发 / 停掉后自动退回老办法）
 ├─ tools/test-a4-command.ps1     A4 回归（软触发 / 补码 / 模式校验 / 退出码）
 ├─ tools/self-check.ps1          现场一键自检（环境 / 触发 / 平台 / 磁盘 / 相机 / 下游 + 该做什么）
 ├─ tools/test-a8-template.ps1    A8-3 配置模板回归（另存 / 差异 / 套用）
@@ -1390,7 +1392,15 @@ powershell -ExecutionPolicy Bypass -File .\tools\test-c6-diag.ps1 -KeepRunning  
 
 ## 二十、软触发与补码命令（A4）
 
-采集宿主的"命令通道"：给脚本、上位机和现场运维用。三条命令，**执行完带着退出码退出**（不会留下常驻进程）：
+采集宿主的"命令通道"有两条路，`tools\host-command.ps1` 会自己挑（看输出第一行）：
+
+1. **宿主正在跑** → 走**常驻命令通道**（本机命名管道 `dws-edge-host-<runtime 路径哈希前 8 位>`）。
+   这是正常生产路径：不用停宿主，也不会出现"再起一个宿主进程抢相机 → 3001 相机被占用"。
+   平台实时监控页的「软触发一次」按钮走的也是这条通道（`POST /api/host/command`）。
+2. **宿主没在跑** → 退回老办法：新起一个 `DwsEdge.Host.exe` 进程执行命令，**执行完带着退出码退出**
+   （不会留下常驻进程；但因为要自己开一次 SDK，必须宿主没在跑）。
+
+底层的三条一次性命令：
 
 ```
 DwsEdge.Host.exe --command-status              看当前 provider、支持哪些命令、当前触发模式

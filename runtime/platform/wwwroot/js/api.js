@@ -57,6 +57,10 @@ export const api = {
     savePositions: (positions) => request("/api/camera-positions", { method: "POST", json: { positions } }),
     config: () => request("/api/config"),
     applyConfig: (body) => request("/api/config/apply", { method: "POST", json: body }),
+    /** A4：给正在跑的采集宿主发命令（软触发 / 补码），不用停宿主 */
+    hostCommand: (body) => request("/api/host/command", { method: "POST", json: body }),
+    /** A4：命令通道是否可用（宿主在不在跑） */
+    hostChannel: () => request("/api/host/channel"),
     // ---- B2 条码过滤规则 ----
     rules: () => request("/api/rules"),
     saveRules: (ruleSet) => request("/api/rules", { method: "POST", json: ruleSet }),

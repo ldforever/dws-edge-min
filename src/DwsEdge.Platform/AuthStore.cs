@@ -808,6 +808,7 @@ namespace DwsEdge.Platform
                 || StartsWith(path, "/api/monitor/config")
                 || StartsWith(path, "/api/stats/shifts")
                 || StartsWith(path, "/api/diag")
+                || StartsWith(path, "/api/host")
                 || StartsWith(path, "/api/dedup/compact")
                 || StartsWith(path, "/api/dispatch/ack");
         }

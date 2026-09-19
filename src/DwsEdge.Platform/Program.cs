@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
 using DwsEdge.Core.Rules;
+using DwsEdge.Core.Ipc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -292,6 +293,63 @@ namespace DwsEdge.Platform
             app.MapGet("/api/config", (ConfigStore cfg) => Results.Json(cfg.Read()));
             app.MapPost("/api/config/apply", (ConfigStore cfg, ConfigApplyRequest request) =>
                 cfg.Apply(request));
+
+            // A4：给【正在跑的】采集宿主发命令（常驻命名管道通道）
+            //
+            // 为什么要这条通道：以前"软触发一次"只能再起一个 DwsEdge.Host.exe 去执行命令，
+            // 那个进程会自己开一次 SDK —— 相机被正在跑的宿主占着，结果是 3001（相机被占用），
+            // 所以必须先停宿主。现在宿主运行中就能触发/补码。
+            app.MapGet("/api/host/channel", (ConfigStore cfg) =>
+            {
+                HostCommandResult probe = HostCommandChannel.Send(cfg.RuntimeRoot, "status", 2000);
+                return Results.Json(new
+                {
+                    available = probe.ChannelAvailable,
+                    pipeName = HostCommandChannel.PipeNameFor(cfg.RuntimeRoot),
+                    exitCode = probe.ExitCode,
+                    message = probe.Message,
+                    runtimeRoot = cfg.RuntimeRoot
+                });
+            });
+
+            app.MapPost("/api/host/command", (ConfigStore cfg, HostCommandRequest request) =>
+            {
+                string command = request != null && request.command != null
+                    ? request.command.Trim().ToLowerInvariant()
+                    : string.Empty;
+
+                if (command != "soft-trigger" && command != "recode" && command != "status")
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = "命令只支持 soft-trigger / recode / status（收到：" + command + "）"
+                    });
+                }
+                if (command == "recode" && string.IsNullOrWhiteSpace(request.code))
+                {
+                    return Results.BadRequest(new { error = "补码要带条码：{\"command\":\"recode\",\"code\":\"SF123\"}" });
+                }
+
+                string line = command;
+                if (command == "recode")
+                {
+                    line = "recode " + request.code.Trim() + (request.timeMs > 0 ? " " + request.timeMs : string.Empty);
+                }
+                else if (request.force)
+                {
+                    line = command + " --force";
+                }
+
+                HostCommandResult result = HostCommandChannel.Send(cfg.RuntimeRoot, line, HostCommandChannel.DefaultTimeoutMs);
+                return Results.Json(new
+                {
+                    available = result.ChannelAvailable,
+                    ok = result.Ok,
+                    exitCode = result.ExitCode,
+                    request = line,
+                    message = result.Message
+                });
+            });
 
             // A8-3：配置模板 —— 另存当前配置 / 列表 / 差异对比 / 套用 / 删除 / 导出
             app.MapGet("/api/config/templates", (TemplateStore templates) => Results.Json(new

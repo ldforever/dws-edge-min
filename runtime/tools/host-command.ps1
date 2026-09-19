@@ -8,8 +8,15 @@
         .\tools\host-command.ps1 -SoftTrigger -Force      跳过触发模式校验（排查用）
         .\tools\host-command.ps1 -Recode -Code SF123      人工补码
 
+    两条路，脚本自己挑：
+      1) 【宿主正在跑】走常驻命令通道（命名管道）—— 不用停宿主、也不跟它抢相机，推荐；
+      2) 宿主没在跑时才退回老办法：新起一个 DwsEdge.Host.exe 进程执行命令再退出。
+         老办法会自己开一次 SDK，所以**必须宿主没在跑**，否则报 3001（相机被占用）。
+
+    -PreferProcess 可以强制走老办法（排查"通道"本身的问题时用）。
+
     退出码与宿主一致：0 成功 / 1 参数错误 / 2 启动失败 / 3 未处理异常 /
-                      4 命令执行失败 / 5 触发模式不允许 / 6 provider 不支持
+                       4 命令执行失败 / 5 触发模式不允许 / 6 provider 不支持
 #>
 param(
     [switch]$Status,
@@ -18,6 +25,7 @@ param(
     [string]$Code = '',
     [long]$TimeMs = 0,
     [switch]$Force,
+    [switch]$PreferProcess,
     [string]$RuntimeDir = ''
 )
 
@@ -53,13 +61,87 @@ if ($Recode -and [string]::IsNullOrEmpty($Code)) {
     exit 1
 }
 
-Push-Location $RuntimeDir
-try {
-    & $exe @args
-    $code = $LASTEXITCODE
+# ---------------------------------------------------------------- 常驻命令通道
+# 算法必须与 DwsEdge.Core\Ipc\HostCommandChannel.PipeNameFor 完全一致：
+#   dws-edge-host-<runtime 路径规范化后 SHA1 的前 8 位十六进制>
+function Get-HostPipeName {
+    param([string]$Dir)
+    $normalized = [System.IO.Path]::GetFullPath($Dir).Replace('/', '\').TrimEnd('\').ToLowerInvariant()
+    $sha1 = [System.Security.Cryptography.SHA1]::Create()
+    try {
+        $hash = $sha1.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($normalized))
+    }
+    finally {
+        $sha1.Dispose()
+    }
+    $hex = -join ($hash | ForEach-Object { $_.ToString('x2') })
+    return 'dws-edge-host-' + $hex.Substring(0, 8)
 }
-finally {
-    Pop-Location
+
+# 返回 $null 表示"通道不可用"（宿主没在跑），返回对象表示拿到了宿主的应答
+function Invoke-HostChannel {
+    param([string]$Dir, [string]$Request, [int]$TimeoutMs = 20000)
+
+    $pipe = $null
+    try {
+        $pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', (Get-HostPipeName -Dir $Dir), [System.IO.Pipes.PipeDirection]::InOut)
+        $pipe.Connect($TimeoutMs)
+
+        $utf8 = New-Object System.Text.UTF8Encoding($false)
+        $payload = $utf8.GetBytes($Request.Trim() + "`n")
+        $pipe.Write($payload, 0, $payload.Length)
+        $pipe.Flush()
+
+        $reader = New-Object System.IO.StreamReader($pipe, $utf8, $false, 4096, $true)
+        $first = $reader.ReadLine()
+        $rest = $reader.ReadToEnd()
+
+        $exit = 4
+        if (![string]::IsNullOrWhiteSpace($first)) { [void][int]::TryParse($first.Trim(), [ref]$exit) }
+        return [pscustomobject]@{ ExitCode = $exit; Message = ($rest -as [string]) }
+    }
+    catch {
+        return $null
+    }
+    finally {
+        if ($pipe) { try { $pipe.Dispose() } catch { } }
+    }
+}
+
+$requestLine = ''
+if ($Status) { $requestLine = 'status' }
+elseif ($SoftTrigger) { $requestLine = if ($Force) { 'soft-trigger --force' } else { 'soft-trigger' } }
+elseif ($Recode) {
+    $requestLine = 'recode ' + $Code.Trim()
+    if ($TimeMs -gt 0) { $requestLine += ' ' + $TimeMs.ToString() }
+}
+
+$usedChannel = $false
+$code = -1
+
+if (!$PreferProcess -and ![string]::IsNullOrEmpty($requestLine)) {
+    $channel = Invoke-HostChannel -Dir $RuntimeDir -Request $requestLine
+    if ($channel) {
+        $usedChannel = $true
+        $code = $channel.ExitCode
+        Write-Host ("[命令通道] 宿主在跑 → 走常驻通道（" + (Get-HostPipeName -Dir $RuntimeDir) + "）") -ForegroundColor DarkGray
+        Write-Host ("[命令] " + $requestLine) -ForegroundColor DarkGray
+        if (![string]::IsNullOrWhiteSpace($channel.Message)) { Write-Host $channel.Message }
+    }
+    else {
+        Write-Host "[命令通道] 连不上（采集宿主没在跑）→ 退回【新起一个宿主进程】执行" -ForegroundColor DarkGray
+    }
+}
+
+if (!$usedChannel) {
+    Push-Location $RuntimeDir
+    try {
+        & $exe @args
+        $code = $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+    }
 }
 
 $conclusion = switch ($code) {

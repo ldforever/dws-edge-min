@@ -907,3 +907,27 @@ export interface TemplateDiffResponse {
   changes: TemplateDiffItem[];
   note?: string;
 }
+
+/** A4：给【正在跑的】采集宿主发命令（走常驻命名管道通道，不用停宿主） */
+export interface HostCommandRequest {
+  /** soft-trigger（软触发一次）/ recode（人工补码）/ status（查能力与模式） */
+  command: string;
+  /** 补码用 */
+  code?: string;
+  /** 补码用：Unix 毫秒，0/不传表示用当前时间 */
+  timeMs?: number;
+  /** 跳过"必须软触发模式"的校验（排查用） */
+  force?: boolean;
+}
+
+export interface HostCommandResult {
+  /** false = 宿主没在跑（或命令通道没起来） */
+  available: boolean;
+  ok: boolean;
+  /** 0 成功 / 2 宿主启动失败 / 4 命令失败 / 5 触发模式不允许 / 6 provider 不支持 */
+  exitCode: number;
+  /** 实际发出去的请求行，便于排查 */
+  request?: string;
+  /** 宿主输出原文 */
+  message: string;
+}

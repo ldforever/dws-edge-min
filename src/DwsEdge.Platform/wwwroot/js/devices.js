@@ -5,9 +5,9 @@
  * runtime\config\camera-positions.ini；采集宿主重启后才影响条码上的方位字段，
  * 所以后端会给"已保存但未重启"的行打上 positionPending，这里显示"待重启生效"。
  */
-import { api } from "./api.js?v=dca6df58";
-import { $, cell, clear, csvCell, downloadText, el, positionLabel, FACE_ORDER, notify } from "./dom.js?v=dca6df58";
-import { statusText } from "./realtime.js?v=dca6df58";
+import { api } from "./api.js?v=56b0944d";
+import { $, cell, clear, csvCell, downloadText, el, positionLabel, FACE_ORDER, notify } from "./dom.js?v=56b0944d";
+import { statusText } from "./realtime.js?v=56b0944d";
 /** 待保存的方位改动：key（清单标识或相机标识）→ 方位代码 */
 const dirty = new Map();
 let view = null;

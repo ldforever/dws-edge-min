@@ -19,6 +19,8 @@ import type {
   CameraCounter,
   CameraRecord,
   ConfigSummary,
+  HostCommandRequest,
+  HostCommandResult,
   TemplateDiffResponse,
   TemplatesResponse,
   DedupStats,
@@ -142,6 +144,14 @@ export const api = {
 
   applyConfig: (body: ApplyRequest): Promise<ApiResult<ApplyResult>> =>
     request<ApplyResult>("/api/config/apply", { method: "POST", json: body }),
+
+  /** A4：给正在跑的采集宿主发命令（软触发 / 补码），不用停宿主 */
+  hostCommand: (body: HostCommandRequest): Promise<ApiResult<HostCommandResult>> =>
+    request<HostCommandResult>("/api/host/command", { method: "POST", json: body }),
+
+  /** A4：命令通道是否可用（宿主在不在跑） */
+  hostChannel: (): Promise<ApiResult<{ available: boolean; pipeName: string; message: string }>> =>
+    request<{ available: boolean; pipeName: string; message: string }>("/api/host/channel"),
 
   // ---- B2 条码过滤规则 ----
   rules: (): Promise<ApiResult<RulesResponse>> => request<RulesResponse>("/api/rules"),
