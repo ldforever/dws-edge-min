@@ -27,8 +27,14 @@ import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js";
 import { initStats, refreshStats } from "./stats.js";
 import { initDiag, refreshDiag } from "./diag.js";
 
-type PageName = "realtime" | "devices" | "history" | "stats" | "diag" | "config";
-const PAGES: PageName[] = ["realtime", "devices", "history", "stats", "diag", "config"];
+/**
+ * P0：页签按"现场任务"分，不再按代码模块分：
+ *   监控类（实时/设备/历史/统计/诊断） + 配置类（相机/输出对接/规则/系统与安全）。
+ * 配置类被拆开的原因：原来一个"配置"页塞了 10 个板块、50 多个输入框。
+ * 应用配置这件事独立成页头下方那条全局「一键应用」条（applybar.ts）。
+ */
+type PageName = "realtime" | "devices" | "history" | "stats" | "diag" | "cameras" | "output" | "rules" | "system";
+const PAGES: PageName[] = ["realtime", "devices", "history", "stats", "diag", "cameras", "output", "rules", "system"];
 
 function showPage(name: PageName): void {
   for (const page of PAGES) {
@@ -44,12 +50,19 @@ function showPage(name: PageName): void {
   if (name === "history") void refreshHistory();
   if (name === "stats") void refreshStats();
   if (name === "diag") void refreshDiag();
-  if (name === "config") {
+  if (name === "cameras") {
+    // 相机页：清单表格 + 存图策略 + 配置模板 + 当前 SDK 配置摘要
     void refreshConfig();
-    void refreshRules();
-    void refreshDedup();
+  }
+  if (name === "output") {
     void refreshDownstream();
+    void refreshDedup();
+  }
+  if (name === "rules") {
+    void refreshRules();
     void refreshMonitorConfig();
+  }
+  if (name === "system") {
     void refreshAuthPanel();
   }
 }
@@ -77,6 +90,8 @@ function bootstrap(): void {
   }
 
   void loadInitial();
+  // P0：首屏就把配置（触发模式 + 相机清单）拉一次，顶部「一键应用」条才能显示基线
+  void refreshConfig();
 
   connectStream({
     onParcel: (p) => {

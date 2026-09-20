@@ -99,6 +99,24 @@ a.img:hover img.thumb { border-color: #58a6ff; }
 .alertbar .more { color: #8b98a9; font-size: 12px; }
 .alertbar.ok { border-color: #2ea04366; background: #14251b; color: #3fb950; }
 .alertbar.warn { border-color: #d2992266; background: #2a2213; color: #d29922; }
+
+/* P0：全局「一键应用」条 —— 任何页签都看得见，清单有改动就变黄 */
+.navsep { display: inline-block; width: 1px; height: 20px; background: #263041; margin: 0 2px; }
+.applybar {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 24px; background: #12181f; border-bottom: 1px solid #263041;
+}
+.applybar .barTitle { font-size: 13px; font-weight: 600; color: #c9d1d9; }
+.applybar .barItem { font-size: 12px; color: #8b98a9; }
+.applybar .dirty { color: #d29922; font-weight: 600; }
+.applybar .hidden { display: none; }
+.applybar.dirtyState { background: #1d1a10; border-bottom-color: #d2992288; }
+.applybar .barAdvanced { width: 100%; }
+.applybar .barAdvanced summary { font-size: 12px; color: #8b98a9; cursor: pointer; }
+.probe-ok { color: #3fb950; }
+.probe-bad { color: #f85149; }
+.probe-warn { color: #d29922; }
 .alertbar.err { border-color: #f8514966; background: #2a1a17; color: #f85149; }
 
 /* B9：登录遮罩与顶栏用户区 */

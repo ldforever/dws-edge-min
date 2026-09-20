@@ -9,7 +9,7 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=b51baf08" />
+<link rel="stylesheet" href="./app.css?v=56b0944d" />
 </head>
 <body>
 <header>
@@ -23,11 +23,7 @@
     <button id="tab-history">历史查询</button>
     <button id="tab-stats">统计</button>
     <button id="tab-diag">诊断</button>
-    <span class="navsep"></span>
-    <button id="tab-cameras">相机</button>
-    <button id="tab-output">输出对接</button>
-    <button id="tab-rules">规则</button>
-    <button id="tab-system">系统与安全</button>
+    <button id="tab-config">配置</button>
   </nav>
   <div class="status">
     <span id="dot" class="dot"></span><span id="conn">连接中…</span>
@@ -35,36 +31,6 @@
     <button class="btn secondary small" id="btnLogout" style="display:none">退出</button>
   </div>
 </header>
-
-<!-- ==================== 全局「一键应用」条：在任何页签都看得见，改了就亮 ==================== -->
-<div id="applyBar" class="applybar">
-  <span class="barTitle">一键应用配置</span>
-
-  <label class="barItem">触发模式
-    <select id="cfgTrigger">
-      <option value="hard">硬触发（光电）</option>
-      <option value="soft">软触发（调试用）</option>
-      <option value="free">自由拉流（狂扫）</option>
-    </select>
-  </label>
-
-  <span class="barItem" id="applySummary">相机清单：加载中…</span>
-  <span class="barItem dirty hidden" id="applyDirty">● 有未保存改动</span>
-
-  <button class="btn" id="btnApply">一键应用</button>
-  <span id="applyBadge"></span>
-  <span class="barItem muted" id="applyStatus"></span>
-
-  <details id="applyAdvanced" class="barAdvanced">
-    <summary>应用选项与输出</summary>
-    <div class="toolbar">
-      <label class="chk"><input type="checkbox" id="cfgStopHost" checked /> 校验前停止采集宿主（校验要独占 SDK）</label>
-      <label class="chk"><input type="checkbox" id="cfgRestartHost" checked /> 通过后自动重启采集宿主</label>
-      <label class="chk"><input type="checkbox" id="cfgSkipVerify" /> 只写配置，不做校验（跳过 SDK 校验，快但不验证）</label>
-    </div>
-    <pre class="out" id="applyOut">（还没执行过一键应用）</pre>
-  </details>
-</div>
 
 <!-- ==================== B9 登录遮罩 ==================== -->
 <div id="loginMask" class="mask hidden">
@@ -394,46 +360,7 @@
 
   <!-- ==================== 相机（清单 / 方位 / 扫描 / 预检 / 存图） ==================== -->
   <section id="page-cameras" class="page">
-    <div class="panel">
-      <h2>相机清单（表格编辑）</h2>
-      <div class="muted" style="font-size:12px;margin-bottom:8px">
-        每行一台相机：接入方式 + 值 + 方位。改完点顶部那条 <b>一键应用</b>（写配置 → 启动 SDK 回读校验 → 不通过自动回滚）。
-        清单按 <b>IP</b> 写最省事 —— 采集宿主会自动把它和 SDK 上报的「厂商:序列号」关联起来（对照表见 <span class="code">config\camera-identity.ini</span>）。
-      </div>
-      <div class="toolbar">
-        <button class="btn secondary small" id="btnCamScan">扫描在线相机</button>
-        <button class="btn secondary small" id="btnCamProbe">连通性预检</button>
-        <button class="btn secondary small" id="btnCamAdd">新增一行</button>
-        <button class="btn secondary small" id="btnCamCheck">校验清单</button>
-        <button class="btn secondary small" id="btnCamFill">用当前 cfg 填充</button>
-        <button class="btn" id="btnCamApply">保存并应用</button>
-        <span id="camEditMsg" class="muted" style="font-size:12px"></span>
-      </div>
-      <div class="scroll-x">
-        <table>
-          <thead>
-            <tr><th>#</th><th>接入方式</th><th>值（IP / 序列号 / id）</th><th>方位</th><th>预检</th><th>操作</th></tr>
-          </thead>
-          <tbody id="camEditRows"></tbody>
-        </table>
-      </div>
-      <div id="camEditProblems"></div>
-      <div id="camProbeResult" style="font-size:12px;margin-top:8px"></div>
-    </div>
-
-    <div class="panel">
-      <h2>相机清单（文本模式，高级）</h2>
-      <div class="muted" style="font-size:12px;margin-bottom:8px">
-        批量粘贴用这里：一行一台（<span class="code">ip=...</span> / <span class="code">key=...</span> / <span class="code">id=...</span>，可选 <span class="code">,pos=top</span>）。
-        文本和上面的表格是<b>同一份清单</b>，改哪边都会同步，最后都靠顶部的「一键应用」生效。
-      </div>
-      <textarea id="cfgCameras" spellcheck="false"></textarea>
-      <div class="toolbar">
-        <label class="chk"><input type="checkbox" id="cfgUseCameras" checked /> 应用相机清单</label>
-        <button class="btn secondary" id="btnReloadConfig">重新读取</button>
-        <button class="btn secondary" id="btnFillCameras">用当前清单填充</button>
-      </div>
-    </div>
+    <!--@CAMERALIST@-->
     <div class="panel">
       <h2>存图策略（C5）</h2>
       <div class="muted" style="font-size:12px;margin-bottom:12px">
@@ -823,6 +750,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=b51baf08"></script>
+<script type="module" src="./js/main.js?v=56b0944d"></script>
 </body>
 </html>

@@ -931,3 +931,28 @@ export interface HostCommandResult {
   /** 宿主输出原文 */
   message: string;
 }
+
+/** P0：相机连通性预检（平台侧 ping + 与 SDK 发现结果对照） */
+export interface CameraProbeRequest {
+  /** 要预检的 IP 列表（只对 ip= 的清单行有意义） */
+  ips: string[];
+}
+
+export interface CameraProbeItem {
+  ip: string;
+  /** ping 通不通 */
+  ping: boolean;
+  /** ping 往返毫秒（不通时为 0） */
+  pingMs: number;
+  /** 采集宿主上报的 SDK 发现列表里有没有它 */
+  discovered: boolean;
+  /** SDK 给的设备标识（厂商:序列号），没发现时为空 */
+  deviceId: string | null;
+  /** 一句话结论（界面直接显示） */
+  message: string;
+}
+
+export interface CameraProbeResult {
+  results: CameraProbeItem[];
+  note?: string;
+}

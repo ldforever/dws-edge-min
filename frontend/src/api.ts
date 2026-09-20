@@ -21,6 +21,7 @@ import type {
   ConfigSummary,
   HostCommandRequest,
   HostCommandResult,
+  CameraProbeResult,
   TemplateDiffResponse,
   TemplatesResponse,
   DedupStats,
@@ -152,6 +153,10 @@ export const api = {
   /** A4：命令通道是否可用（宿主在不在跑） */
   hostChannel: (): Promise<ApiResult<{ available: boolean; pipeName: string; message: string }>> =>
     request<{ available: boolean; pipeName: string; message: string }>("/api/host/channel"),
+
+  /** P0：相机连通性预检（ping + 与 SDK 发现结果对照） */
+  cameraProbe: (ips: string[]): Promise<ApiResult<CameraProbeResult>> =>
+    request<CameraProbeResult>("/api/camera-probe", { method: "POST", json: { ips } }),
 
   // ---- B2 条码过滤规则 ----
   rules: (): Promise<ApiResult<RulesResponse>> => request<RulesResponse>("/api/rules"),

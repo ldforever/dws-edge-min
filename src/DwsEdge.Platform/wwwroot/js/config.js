@@ -8,26 +8,36 @@
  *   * 存图策略表单（写 gateway.ini，校验 + 自动备份）；
  *   * 配置备份与回滚（config\ 与 Cfg\ 下的 .bak-* 都能一键还原）。
  */
-import { api } from "./api.js?v=56b0944d";
-import { $, badge, cell, clear, dash, el, notify, positionLabel } from "./dom.js?v=56b0944d";
+import { api } from "./api.js?v=b51baf08";
+import { $, badge, cell, clear, dash, el, notify, positionLabel } from "./dom.js?v=b51baf08";
+import { applyBarError, applyBarFinish, applyBarStart, initApplyBar, refreshApplyBar, setApplyBaseline, triggerModeToUi } from "./applybar.js?v=b51baf08";
 const TRIGGER_LABEL = {
     hard: "硬触发（光电）",
     soft: "软触发",
     free: "自由拉流（狂扫）"
 };
 let summary = null;
+/** 文本模式与表格互相同步时用它防抖（否则会 table→text→table 无限循环） */
+let syncing = false;
 export function initConfig() {
     $("btnReloadConfig").addEventListener("click", () => void refreshConfig());
     $("btnFillCameras").addEventListener("click", () => fillCamerasFromConfig());
     $("btnApply").addEventListener("click", () => void applyConfig());
+    // P0：全局应用条 —— 由它来判断"有没有未保存的改动"
+    initApplyBar(() => cameraLinesFromEditor(), () => $("cfgTrigger").value);
+    $("cfgCameras").addEventListener("input", () => syncTableFromText());
     // C5：相机清单表格
     $("btnCamAdd").addEventListener("click", () => {
         $("camEditRows").appendChild(cameraEditRow("ip", "", ""));
         renumberCameraEditor();
+        syncTextFromTable();
     });
     $("btnCamFill").addEventListener("click", () => refreshConfig());
     $("btnCamCheck").addEventListener("click", () => checkCameraEditor(true));
     $("btnCamApply").addEventListener("click", () => void applyCamerasFromEditor());
+    // P0：扫描在线相机 + 连通性预检
+    $("btnCamScan").addEventListener("click", () => void scanOnlineCameras());
+    $("btnCamProbe").addEventListener("click", () => void probeCameras());
     // C5：存图策略与备份
     $("btnStorageSave").addEventListener("click", () => void saveStorage());
     $("btnStorageReload").addEventListener("click", () => void refreshStorage());
@@ -44,6 +54,13 @@ export async function refreshConfig() {
     summary = res.data;
     render();
     renderCameraEditor(res.data.cameras ?? []);
+    // P0：把触发模式下拉同步成服务器上的实际值，并把它与清单一起记为"应用基线"，
+    // 这样用户一改，顶部那条就会变黄提示"有未保存改动"。
+    const mode = triggerModeToUi(res.data.triggerMode);
+    if (mode) {
+        $("cfgTrigger").value = mode;
+    }
+    setApplyBaseline(mode, cameraLinesFromEditor());
     await refreshStorage();
     await refreshBackups();
     await refreshTemplates();
@@ -112,18 +129,18 @@ async function applyConfig() {
     const skipVerify = $("cfgSkipVerify").checked;
     let cameras = null;
     if (useCameras) {
-        cameras = $("cfgCameras")
-            .value.split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0 && !line.startsWith("#"));
+        // P0：以"相机页表格"为准（文本与表格本来就同步）；表格空时才退回文本框
+        const fromTable = cameraLinesFromEditor();
+        cameras = fromTable.length > 0
+            ? fromTable
+            : $("cfgCameras")
+                .value.split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0 && !line.startsWith("#"));
         if (!cameras.length) {
             notify("相机清单是空的：请先填写，或取消勾选「应用上面的相机清单」");
             return;
         }
-    }
-    if (!triggerMode && !cameras) {
-        notify("至少要改一项：触发模式 或 相机清单");
-        return;
     }
     const body = {
         triggerMode,
@@ -132,25 +149,27 @@ async function applyConfig() {
         stopHost: $("cfgStopHost").checked,
         restartHost: $("cfgRestartHost").checked
     };
-    const button = $("btnApply");
-    button.disabled = true;
-    button.textContent = "应用中…（启动 SDK 校验，最长 4 分钟）";
-    $("applyBadge").textContent = "";
+    // P0：进度与结果都走顶部那条全局应用条（切页也不会中断提示）
+    applyBarStart();
     $("applyOut").textContent =
         "正在执行：\n" + JSON.stringify(body, null, 2) + "\n\n（校验会真的启动一次 SDK，请稍等…）";
     try {
         const res = await api.applyConfig(body);
         if (res.data) {
             renderApplyResult(res.data);
+            applyBarFinish(res.data.exitCode === 0, res.data.conclusion ?? "");
         }
         else {
             $("applyOut").textContent = "调用失败：" + (res.message ?? "HTTP " + res.status);
             badge($("applyBadge"), "调用失败", "err");
+            applyBarError(res.message ?? "HTTP " + res.status);
         }
     }
+    catch (e) {
+        applyBarError(e instanceof Error ? e.message : String(e));
+        throw e;
+    }
     finally {
-        button.disabled = false;
-        button.textContent = "一键应用";
         await refreshConfig();
     }
 }
@@ -201,11 +220,22 @@ function cameraEditRow(kind, value, position) {
     posSelect.value = position;
     posTd.appendChild(posSelect);
     tr.appendChild(posTd);
+    // P0：这一行任何改动都要（1）同步到文本模式（2）让顶部应用条提示"有未保存改动"
+    const onEdit = () => {
+        syncTextFromTable();
+    };
+    input.addEventListener("input", onEdit);
+    kindSelect.addEventListener("change", onEdit);
+    posSelect.addEventListener("change", onEdit);
+    // P0：预检列 —— 点「连通性预检」后在这里显示 ping / 是否被 SDK 发现
+    const probeTd = el("td", "—", "muted probe");
+    tr.appendChild(probeTd);
     const actionTd = el("td");
     const remove = el("button", "删除", "btn secondary small");
     remove.addEventListener("click", () => {
         tr.remove();
         renumberCameraEditor();
+        syncTextFromTable();
     });
     actionTd.appendChild(remove);
     tr.appendChild(actionTd);
@@ -239,6 +269,142 @@ function cameraEditorRows() {
 }
 function cameraLinesFromEditor() {
     return cameraEditorRows().map((row) => row.kind + "=" + row.value + (row.position ? ",pos=" + row.position : ""));
+}
+/** 表格 → 文本模式（保持两边是同一份清单）＋顺便刷新顶部应用条的"改动"提示 */
+function syncTextFromTable() {
+    if (syncing)
+        return;
+    syncing = true;
+    try {
+        $("cfgCameras").value = cameraLinesFromEditor().join("\r\n");
+    }
+    finally {
+        syncing = false;
+    }
+    refreshApplyBar();
+}
+/** 文本模式 → 表格（批量粘贴后立刻看到表格） */
+function syncTableFromText() {
+    if (syncing)
+        return;
+    const lines = $("cfgCameras")
+        .value.split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0 && !line.startsWith("#"));
+    const parsed = [];
+    for (const line of lines) {
+        const parts = line.split(",");
+        const head = (parts[0] ?? "").trim();
+        const eq = head.indexOf("=");
+        if (eq <= 0)
+            continue;
+        const kind = head.substring(0, eq).trim().toLowerCase();
+        const value = head.substring(eq + 1).trim();
+        let position = "";
+        for (let i = 1; i < parts.length; i++) {
+            const opt = parts[i].trim();
+            if (opt.startsWith("pos="))
+                position = opt.substring(4).trim();
+        }
+        if (!value || (kind !== "ip" && kind !== "key" && kind !== "id"))
+            continue;
+        parsed.push({
+            index: parsed.length + 1,
+            kind,
+            value,
+            line: kind + "=" + value + (position ? ",pos=" + position : ""),
+            position
+        });
+    }
+    syncing = true;
+    try {
+        renderCameraEditor(parsed);
+    }
+    finally {
+        syncing = false;
+    }
+    $("camEditMsg").textContent = "文本已同步到表格：" + parsed.length + " 台";
+    refreshApplyBar();
+}
+function cameraMsg(text, kind = "muted") {
+    const el0 = $("camEditMsg");
+    el0.className = kind;
+    el0.textContent = text;
+}
+/** P0：扫描在线相机 —— 把 SDK 已经发现的设备直接补进清单（用 id=厂商:序列号，和 SDK 上报身份一致） */
+async function scanOnlineCameras() {
+    cameraMsg("正在向采集宿主要在线相机列表…");
+    const res = await api.devices();
+    if (res.status !== 200 || !res.data) {
+        cameraMsg("扫描失败：" + (res.message ?? "HTTP " + res.status), "probe-bad");
+        return;
+    }
+    const discovered = (res.data.cameras ?? []).filter((cam) => cam.discovered);
+    const existing = new Set(cameraEditorRows().map((row) => row.kind + "=" + row.value.toLowerCase()));
+    let added = 0;
+    for (const cam of discovered) {
+        const value = cam.deviceId ?? "";
+        if (!value)
+            continue;
+        if (existing.has("id=" + value.toLowerCase()))
+            continue;
+        if (cam.declaredValue && existing.has(((cam.declaredKind ?? "") + "=" + cam.declaredValue).toLowerCase()))
+            continue;
+        $("camEditRows").appendChild(cameraEditRow("id", value, cam.position ?? ""));
+        added++;
+    }
+    renumberCameraEditor();
+    syncTextFromTable();
+    cameraMsg("扫描到 " + discovered.length + " 台在线相机，补进清单 " + added + " 行" +
+        (added > 0 ? "（记得点顶部「一键应用」生效）" : "（清单里已经有了）"), added > 0 ? "probe-warn" : "muted");
+}
+/** P0：连通性预检 —— 平台 ping + 和 SDK 发现列表对照，结果直接写进每一行的"预检"列 */
+async function probeCameras() {
+    const rows = cameraEditorRows();
+    const ips = rows.filter((row) => row.kind === "ip").map((row) => row.value);
+    if (ips.length === 0) {
+        cameraMsg("预检只对 ip= 的行有效：清单里没有 IP 形式的相机", "probe-warn");
+        return;
+    }
+    cameraMsg("正在预检 " + ips.length + " 个 IP…");
+    const res = await api.cameraProbe(ips);
+    if (res.status !== 200 || !res.data) {
+        cameraMsg("预检失败：" + (res.message ?? "HTTP " + res.status), "probe-bad");
+        return;
+    }
+    const byIp = new Map();
+    for (const item of res.data.results ?? []) {
+        byIp.set(item.ip.toLowerCase(), item);
+    }
+    const trs = Array.from($("camEditRows").children);
+    let okCount = 0;
+    let badCount = 0;
+    trs.forEach((tr, index) => {
+        const row = rows[index];
+        const cellEl = tr.querySelector("td.probe");
+        if (!cellEl || !row)
+            return;
+        if (row.kind !== "ip") {
+            cellEl.className = "muted probe";
+            cellEl.textContent = "（非 IP，不预检）";
+            return;
+        }
+        const item = byIp.get(row.value.toLowerCase());
+        if (!item) {
+            cellEl.className = "muted probe";
+            cellEl.textContent = "—";
+            return;
+        }
+        const kind = item.ping && item.discovered ? "probe-ok" : (item.ping ? "probe-warn" : "probe-bad");
+        if (kind === "probe-ok")
+            okCount++;
+        else
+            badCount++;
+        cellEl.className = kind + " probe";
+        cellEl.textContent = item.message + (item.pingMs > 0 ? "（" + item.pingMs + "ms）" : "");
+        cellEl.title = item.deviceId ? "SDK 标识：" + item.deviceId : "SDK 没有发现这台相机";
+    });
+    cameraMsg("预检完成：" + okCount + " 台正常" + (badCount > 0 ? "，" + badCount + " 台要看一眼（悬停预检单元格看 SDK 标识）" : ""), badCount > 0 ? "probe-warn" : "probe-ok");
 }
 /** 前端先校验一遍（后端还会再校验一次，两边口径一致）：空值、重复、IP 形式、台数提示 */
 function checkCameraEditor(showResult) {
@@ -309,16 +475,23 @@ async function applyCamerasFromEditor() {
     const button = $("btnCamApply");
     button.disabled = true;
     button.textContent = "应用中…";
+    applyBarStart();
     $("applyOut").textContent = "正在按表格里的清单应用：\n" + cameras.join("\n") + "\n\n（校验会真的启动一次 SDK，请稍等…）";
     try {
         const res = await api.applyConfig(body);
         if (res.data) {
             renderApplyResult(res.data);
+            applyBarFinish(res.data.exitCode === 0, res.data.conclusion ?? "");
         }
         else {
             $("applyOut").textContent = "调用失败：" + (res.message ?? "HTTP " + res.status);
             badge($("applyBadge"), "调用失败", "err");
+            applyBarError(res.message ?? "HTTP " + res.status);
         }
+    }
+    catch (e) {
+        applyBarError(e instanceof Error ? e.message : String(e));
+        throw e;
     }
     finally {
         button.disabled = false;

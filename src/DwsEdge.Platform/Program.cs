@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Globalization;
 using System.Collections.Generic;
+using System.Net.NetworkInformation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
@@ -349,6 +350,81 @@ namespace DwsEdge.Platform
                     request = line,
                     message = result.Message
                 });
+            });
+
+            // P0：相机连通性预检 —— ping 通不通 + SDK 发现列表里有没有它（结果直接标在相机清单的"预检"列）
+            app.MapPost("/api/camera-probe", async (SpoolStore store, ConfigStore cfg, CameraProbeRequest request) =>
+            {
+                List<string> ips = new List<string>();
+                if (request != null && request.ips != null)
+                {
+                    for (int i = 0; i < request.ips.Count && ips.Count < 32; i++)
+                    {
+                        string ip = (request.ips[i] ?? "").Trim();
+                        if (ip.Length == 0) continue;
+                        if (ips.Exists(x => string.Equals(x, ip, StringComparison.OrdinalIgnoreCase))) continue;
+                        ips.Add(ip);
+                    }
+                }
+
+                if (ips.Count == 0)
+                {
+                    return Results.Json(new CameraProbeResult
+                    {
+                        results = new List<CameraProbeItem>(),
+                        note = "没有要预检的 IP（清单里没有 ip= 形式的相机）"
+                    });
+                }
+
+                // 采集宿主在不在跑？不在的话下面那份"已发现"是上一轮会话留下的旧记录，
+                // 拿它下结论会骗人（相机其实早拔了还显示"已发现"）——所以直接说明不可用。
+                HostCommandResult hostAlive =
+                    HostCommandChannel.Send(cfg.RuntimeRoot, "status", 1200);
+
+                // 采集宿主上报的"已发现"设备（deviceId = 厂商:序列号）；按 IP 声明的也把 IP 记进来
+                HashSet<string> discovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (hostAlive.ChannelAvailable)
+                {
+                    try
+                    {
+                        CameraDeviceView view = store.DeviceList(cfg.PositionsPath);
+                        for (int i = 0; i < view.cameras.Count; i++)
+                        {
+                            CameraRecord cam = view.cameras[i];
+                            if (!cam.discovered) continue;
+                            if (!string.IsNullOrEmpty(cam.deviceId)) discovered.Add(cam.deviceId);
+                            if (string.Equals(cam.declaredKind, "ip", StringComparison.OrdinalIgnoreCase)
+                                && !string.IsNullOrEmpty(cam.declaredValue))
+                            {
+                                discovered.Add(cam.declaredValue);
+                            }
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        // 设备列表拿不到时，只按 ping 出结论
+                    }
+                }
+
+                Dictionary<string, string> ipToKey =
+                    ReadIdentityMap(Path.Combine(cfg.RuntimeRoot, @"config\camera-identity.ini"));
+
+                Task<CameraProbeItem>[] tasks = new Task<CameraProbeItem>[ips.Count];
+                for (int i = 0; i < ips.Count; i++)
+                {
+                    string ip = ips[i];
+                    tasks[i] = Task.Run(() => ProbeCamera(ip, discovered, ipToKey));
+                }
+                CameraProbeItem[] done = await Task.WhenAll(tasks);
+
+                CameraProbeResult result = new CameraProbeResult();
+                result.results = new List<CameraProbeItem>(done);
+                result.note = !hostAlive.ChannelAvailable
+                    ? "采集宿主没在跑：下面只有 ping 结论，“已发现”一律按否（先把宿主起来再看这一列）"
+                    : (discovered.Count == 0
+                        ? "宿主在跑，但 SDK 一台相机都没发现——下面只有 ping 结论"
+                        : "已与 SDK 发现列表（" + discovered.Count + " 个标识）对照");
+                return Results.Json(result);
             });
 
             // A8-3：配置模板 —— 另存当前配置 / 列表 / 差异对比 / 套用 / 删除 / 导出
@@ -891,6 +967,104 @@ namespace DwsEdge.Platform
             query.Limit = limit.HasValue ? Math.Clamp(limit.Value, 1, 5000) : 200;
             query.Offset = offset.HasValue ? Math.Max(0, offset.Value) : 0;
             return query;
+        }
+
+        /// <summary>
+        /// P0：单个 IP 的预检 —— ping 通不通 + 采集宿主上报的 SDK 发现列表里有没有它。
+        /// 现场两种最常见的"相机连不上"：IP/网段写错（ping 不通）、被别的程序占着或不是这套
+        /// SDK 支持的相机（ping 通但 SDK 没发现）。清单按 IP 写时，靠 camera-identity.ini 把
+        /// IP 认到 SDK 的设备标识上。
+        /// </summary>
+        private static CameraProbeItem ProbeCamera(string ip, HashSet<string> discovered,
+            Dictionary<string, string> ipToKey)
+        {
+            CameraProbeItem item = new CameraProbeItem();
+            item.ip = ip;
+
+            bool alive = false;
+            long ms = 0;
+            try
+            {
+                using (Ping ping = new Ping())
+                {
+                    PingReply reply = ping.Send(ip, 800);
+                    if (reply != null && reply.Status == IPStatus.Success)
+                    {
+                        alive = true;
+                        ms = reply.RoundtripTime;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // ping 失败（无权限、网卡异常）按"不通"处理，后面按 IP 结论提示
+            }
+            item.ping = alive;
+            item.pingMs = ms;
+
+            bool found = discovered.Contains(ip);
+            string key;
+            if (!found && ipToKey.TryGetValue(ip, out key) && discovered.Contains(key))
+            {
+                found = true;
+                item.deviceId = key;
+            }
+            item.discovered = found;
+
+            if (alive && found)
+            {
+                item.message = "在线，SDK 已发现";
+            }
+            else if (alive)
+            {
+                item.message = "能 ping 通，但 SDK 没发现（被别的程序占用 / 不是这套 SDK 支持的相机）";
+            }
+            else
+            {
+                item.message = "ping 不通（没上电 / IP 网段不对 / 网线）";
+            }
+            return item;
+        }
+
+        /// <summary>读 config\camera-identity.ini（ip=key，一行一条）——用来把 IP 认到 SDK 设备标识上。</summary>
+        private static Dictionary<string, string> ReadIdentityMap(string path)
+        {
+            Dictionary<string, string> map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                {
+                    return map;
+                }
+
+                string[] lines = File.ReadAllLines(path);
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    string text = lines[i].Trim();
+                    if (text.Length == 0 || text.StartsWith("#") || text.StartsWith(";"))
+                    {
+                        continue;
+                    }
+
+                    int eq = text.IndexOf('=');
+                    if (eq <= 0 || eq >= text.Length - 1)
+                    {
+                        continue;
+                    }
+
+                    string ip = text.Substring(0, eq).Trim();
+                    string key = text.Substring(eq + 1).Trim();
+                    if (ip.Length > 0 && key.Length > 0)
+                    {
+                        map[ip] = key;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // 读不到就退化成"只看 SDK 发现列表"
+            }
+            return map;
         }
     }
 }
