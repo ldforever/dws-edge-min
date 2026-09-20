@@ -447,7 +447,7 @@ namespace DwsEdge.Platform
                 // 明文初始密码只写这个文件：不进日志（日志会被拷来拷去），现场登录后请删除它
                 StringBuilder text = new StringBuilder();
                 text.AppendLine("DWS 物流解码平台 —— 初始管理员账号");
-                text.AppendLine("（首次运行自动生成；登录后请在【配置 → 账号与安全】里改密，然后删除本文件）");
+                text.AppendLine("（首次运行自动生成；登录后请在【系统与安全 → 账号与安全】里改密，然后删除本文件）");
                 text.AppendLine();
                 text.AppendLine("用户名：" + admin.username);
                 text.AppendLine("初始密码：" + password);
