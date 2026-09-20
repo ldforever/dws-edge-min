@@ -7,8 +7,8 @@
  *   * 配置页"账号与安全" —— 改自己的密码、管理员改策略 / 管账号 / 看登录记录 / 轮换服务令牌；
  *   * 401 统一处理 —— 任何接口回 401（会话过期、被别人踢下线）都自动弹回登录框。
  */
-import { api, onUnauthorized } from "./api.js?v=b51baf08";
-import { $, badge, cell, clear, el, notify } from "./dom.js?v=b51baf08";
+import { api, onUnauthorized } from "./api.js?v=09d3c4d0";
+import { $, badge, cell, clear, el, notify } from "./dom.js?v=09d3c4d0";
 const ROLE_LABEL = {
     admin: "管理员",
     operator: "操作员",
@@ -128,7 +128,9 @@ async function doLogin() {
         await refreshAuth();
         await refreshAuthPanel();
         if (res.data.mustChangePassword) {
-            notify("登录成功。这是初始密码/被重置的密码，请到【配置 → 账号与安全】里尽快修改。");
+            // P0：配置页拆成四个页签后，账号面板在【系统与安全】里；顺手把用户带过去，免得找不着
+            notify("登录成功。这是初始密码/被重置的密码，请到【系统与安全 → 账号与安全 → 改密码】里尽快修改。");
+            $("tab-system").click();
         }
         return;
     }

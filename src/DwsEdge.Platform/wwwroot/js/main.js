@@ -4,20 +4,20 @@
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
  * 也没有全局变量：模块之间只通过 import 通信，方便以后换壳（WebView2）或加页面。
  */
-import { api } from "./api.js?v=b51baf08";
-import { connectStream } from "./sse.js?v=b51baf08";
-import { $ } from "./dom.js?v=b51baf08";
-import { applyCameraCounters, applyMonitorStats, initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=b51baf08";
-import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=b51baf08";
-import { initConfig, refreshConfig } from "./config.js?v=b51baf08";
-import { initRules, refreshRules } from "./rules.js?v=b51baf08";
-import { initDedup, refreshDedup } from "./dedup.js?v=b51baf08";
-import { initHistory, refreshHistory } from "./history.js?v=b51baf08";
-import { initDownstream, refreshDownstream } from "./downstream.js?v=b51baf08";
-import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=b51baf08";
-import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=b51baf08";
-import { initStats, refreshStats } from "./stats.js?v=b51baf08";
-import { initDiag, refreshDiag } from "./diag.js?v=b51baf08";
+import { api } from "./api.js?v=09d3c4d0";
+import { connectStream } from "./sse.js?v=09d3c4d0";
+import { $ } from "./dom.js?v=09d3c4d0";
+import { applyCameraCounters, applyMonitorStats, initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=09d3c4d0";
+import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=09d3c4d0";
+import { initConfig, refreshConfig } from "./config.js?v=09d3c4d0";
+import { initRules, refreshRules } from "./rules.js?v=09d3c4d0";
+import { initDedup, refreshDedup } from "./dedup.js?v=09d3c4d0";
+import { initHistory, refreshHistory } from "./history.js?v=09d3c4d0";
+import { initDownstream, refreshDownstream } from "./downstream.js?v=09d3c4d0";
+import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=09d3c4d0";
+import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=09d3c4d0";
+import { initStats, refreshStats } from "./stats.js?v=09d3c4d0";
+import { initDiag, refreshDiag } from "./diag.js?v=09d3c4d0";
 const PAGES = ["realtime", "devices", "history", "stats", "diag", "cameras", "output", "rules", "system"];
 function showPage(name) {
     for (const page of PAGES) {

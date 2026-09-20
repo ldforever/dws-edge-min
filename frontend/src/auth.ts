@@ -144,7 +144,9 @@ async function doLogin(): Promise<void> {
     await refreshAuth();
     await refreshAuthPanel();
     if (res.data.mustChangePassword) {
-      notify("登录成功。这是初始密码/被重置的密码，请到【配置 → 账号与安全】里尽快修改。");
+      // P0：配置页拆成四个页签后，账号面板在【系统与安全】里；顺手把用户带过去，免得找不着
+      notify("登录成功。这是初始密码/被重置的密码，请到【系统与安全 → 账号与安全 → 改密码】里尽快修改。");
+      $("tab-system").click();
     }
     return;
   }

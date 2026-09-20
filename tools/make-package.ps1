@@ -109,6 +109,14 @@ if (Test-Path $staleCore) {
     $removed.Add('providers\DwsEdge.Core.dll（历史遗留副本，宿主从 runtime 根解析 Core）')
 }
 
+# 2.2c 开发过程留下的中间文件（*.new / *.orig / *.rej 之类）不该进交付包：
+#      它们是重构/对比时的临时产物，留在包里既不生效又容易让人误以为"页面有两个版本"。
+Get-ChildItem -Path $dstRuntime -Recurse -File -Include '*.new', '*.orig', '*.rej' -ErrorAction SilentlyContinue |
+    ForEach-Object {
+        Remove-Item -LiteralPath $_.FullName -Force
+        $removed.Add($_.FullName.Substring($dstRuntime.Length).TrimStart('\'))
+    }
+
 # 2.3 运行期数据（历史/去重/审计/spool/图片/日志/缩略图缓存）
 foreach ($sub in @('data', 'spool', 'images', 'logs', 'Log', 'cache')) {
     $dir = Join-Path $dstRuntime $sub

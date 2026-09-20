@@ -8,9 +8,9 @@
  *     点缩略图看原图；喜欢表格的现场可以切回表格，选择记在浏览器里；
  *   * 相机状态表与"设备信息"页共用同一份数据源（平台推送的 camera 事件）。
  */
-import { api } from "./api.js?v=b51baf08";
-import { $, cell, clear, el, gb, imageCell, positionLabel, dash } from "./dom.js?v=b51baf08";
-import { alertLabel, fmtAge, fmtRate } from "./monitor.js?v=b51baf08";
+import { api } from "./api.js?v=09d3c4d0";
+import { $, cell, clear, el, gb, imageCell, positionLabel, dash } from "./dom.js?v=09d3c4d0";
+import { alertLabel, fmtAge, fmtRate } from "./monitor.js?v=09d3c4d0";
 const MAX_ROWS = 120;
 /** 卡片墙最多留多少张（一屏大概 6-12 张，多出来的往下滚） */
 const MAX_CARDS = 30;
