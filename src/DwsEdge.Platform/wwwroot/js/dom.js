@@ -1,3 +1,4 @@
+import { inferKind, toast } from "./ui.js?v=d9347d14";
 /** 取元素（找不到直接抛，避免后面出现"神秘的空指针"） */
 export function $(id) {
     const el = document.getElementById(id);
@@ -67,9 +68,17 @@ export function downloadText(fileName, content, mime) {
 export function csvCell(value) {
     return '"' + String(value ?? "").replace(/"/g, '""') + '"';
 }
-/** 页面提示（现在是 alert；壳 app 里换成自绘提示只改这一个函数） */
-export function notify(message) {
-    window.alert(message);
+/**
+ * 页面提示：右下角自绘 toast（C7，实现在 ui.ts）。
+ *
+ * 以前是 window.alert —— 它会把整个界面冻住（WebView2 壳里连 SSE 都跟着卡），
+ * 而且扫一个包弹一次窗根本没法用。现在改成不打断操作的右下角提示：
+ *   * 单参数的老调用（全项目二十多处）一个字都不用改：语义由 inferKind() 猜；
+ *     ok 绿 3 秒、warn 黄 6 秒、err 红常驻（必须手动关）；
+ *   * 遇到猜不准的文案，调用方可以显式传第二个参数：notify(msg, "err")。
+ */
+export function notify(message, kind) {
+    toast(message, kind ?? inferKind(message));
 }
 /** 打开图片：浏览器里新开窗口，壳（WebView2）里由壳接管 NewWindowRequested */
 export function openImage(url) {

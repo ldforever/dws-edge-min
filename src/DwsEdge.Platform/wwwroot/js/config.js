@@ -8,9 +8,10 @@
  *   * 存图策略表单（写 gateway.ini，校验 + 自动备份）；
  *   * 配置备份与回滚（config\ 与 Cfg\ 下的 .bak-* 都能一键还原）。
  */
-import { api } from "./api.js?v=09d3c4d0";
-import { $, badge, cell, clear, dash, el, notify, positionLabel } from "./dom.js?v=09d3c4d0";
-import { applyBarError, applyBarFinish, applyBarStart, initApplyBar, refreshApplyBar, setApplyBaseline, triggerModeToUi } from "./applybar.js?v=09d3c4d0";
+import { api } from "./api.js?v=d9347d14";
+import { $, badge, cell, clear, dash, el, notify, positionLabel } from "./dom.js?v=d9347d14";
+import { confirmBox } from "./ui.js?v=d9347d14";
+import { applyBarError, applyBarFinish, applyBarStart, initApplyBar, refreshApplyBar, setApplyBaseline, triggerModeToUi } from "./applybar.js?v=d9347d14";
 const TRIGGER_LABEL = {
     hard: "硬触发（光电）",
     soft: "软触发",
@@ -591,10 +592,15 @@ async function refreshBackups() {
         tr.appendChild(cell(item.effect));
         const action = el("td");
         const button = el("button", "回滚", "btn secondary small");
-        button.addEventListener("click", () => {
-            if (window.confirm("确定用 " + item.fileName + " 覆盖 " + item.target + " 吗？当前内容会先另存一份。")) {
-                void rollbackBackup(item.fileName);
-            }
+        // C7：确认框是自绘的异步对话框，回调跟着改成 async
+        button.addEventListener("click", async () => {
+            const yes = await confirmBox("确定用 " + item.fileName + " 覆盖 " + item.target + " 吗？当前内容会先另存一份。", {
+                title: "回滚配置",
+                danger: true
+            });
+            if (!yes)
+                return;
+            void rollbackBackup(item.fileName);
         });
         action.appendChild(button);
         tr.appendChild(action);
@@ -663,8 +669,9 @@ function templateRow(tpl) {
     action.appendChild(download);
     const remove = el("button", "删除", "btn secondary small");
     remove.style.marginLeft = "6px";
-    remove.addEventListener("click", () => {
-        if (!window.confirm("删除模板「" + tpl.name + "」？"))
+    // C7：确认框是自绘的异步对话框，回调跟着改成 async
+    remove.addEventListener("click", async () => {
+        if (!await confirmBox("删除模板「" + tpl.name + "」？", { title: "删除模板", danger: true }))
             return;
         void api.deleteTemplate(tpl.name).then(async (res) => {
             if (res.status !== 200) {
@@ -743,9 +750,10 @@ async function applyTemplate() {
         notify("至少勾一项要套用的内容");
         return;
     }
-    if (!window.confirm("确定把模板「" + templatePicked + "」套用到本机吗？\n（相机清单/触发模式会写 cfg 并做校验，失败自动回滚）")) {
+    // C7：window.confirm → 自绘确认框（异步）
+    const yes = await confirmBox("确定把模板「" + templatePicked + "」套用到本机吗？\n（相机清单/触发模式会写 cfg 并做校验，失败自动回滚）", { title: "套用模板", danger: true });
+    if (!yes)
         return;
-    }
     const button = $("btnTplApply");
     button.disabled = true;
     button.textContent = "套用中…";

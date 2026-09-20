@@ -9,6 +9,7 @@
  */
 import { api, onUnauthorized } from "./api.js";
 import { $, badge, cell, clear, el, notify } from "./dom.js";
+import { confirmBox } from "./ui.js";
 import type { AuthEventRecord, AuthOptions, AuthStatus, AuthUserView } from "./types.js";
 
 const ROLE_LABEL: Record<string, string> = {
@@ -250,7 +251,12 @@ async function saveAuthConfig(): Promise<void> {
 }
 
 async function rotateServiceKey(): Promise<void> {
-  if (!window.confirm("轮换后旧的服务令牌立刻失效，所有用它的脚本/上位机都要更新。继续？")) return;
+  // C7：window.confirm → 自绘确认框（异步）
+  const yes = await confirmBox("轮换后旧的服务令牌立刻失效，所有用它的脚本/上位机都要更新。继续？", {
+    title: "轮换服务令牌",
+    danger: true
+  });
+  if (!yes) return;
   const res = await api.rotateServiceKey();
   if (res.data?.ok) {
     $("authServiceKey").textContent = res.data.serviceKey;
@@ -356,7 +362,9 @@ async function resetPassword(username: string): Promise<void> {
 }
 
 async function removeUser(username: string): Promise<void> {
-  if (!window.confirm("确定删除账号 " + username + " ？")) return;
+  // C7：window.confirm → 自绘确认框（异步）
+  const yes = await confirmBox("确定删除账号 " + username + " ？", { title: "删除账号", danger: true });
+  if (!yes) return;
   const res = await api.deleteUser(username);
   if (res.status !== 200) {
     notify(res.message ?? "删除失败");

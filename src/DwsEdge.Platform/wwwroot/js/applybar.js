@@ -9,7 +9,7 @@
  *   * 点「一键应用」→ 按钮禁用 + 已用时间在走，随时切页也不会中断
  *   * 结果（成功/失败 + 结论）直接显示在条上，原文收在「应用选项与输出」折叠区
  */
-import { $ } from "./dom.js?v=09d3c4d0";
+import { $ } from "./dom.js?v=d9347d14";
 let baseline = { triggerMode: "", cameras: [] };
 let readCameras = () => [];
 let readTrigger = () => "";
