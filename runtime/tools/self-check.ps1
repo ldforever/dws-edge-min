@@ -250,7 +250,7 @@ if (!$health.ok) {
         if ($limit -gt 0) {
             if ($stats.diskUsedPercent -ge $limit) {
                 Add-Result '磁盘水位' 'FAIL' ('已用 ' + $stats.diskUsedPercent + '% ≥ 存图策略上限 ' + $limit + '%（会开始清最旧的图）') `
-                    '清理磁盘或调大存图上限：配置页 → 存图策略'
+                    '清理磁盘或调大存图上限：相机页 → 存图策略'
             } else {
                 Add-Result '磁盘水位' 'PASS' ('已用 ' + $stats.diskUsedPercent + '%，上限 ' + $limit + '%')
             }
@@ -278,20 +278,20 @@ if (!$health.ok) {
     if ($downstream -and $downstream.config) {
         $cfg = $downstream.config
         if (!$cfg.enabled) {
-            Add-Result '下游输出' 'SKIP' '没启用下游输出（配置页 → 下游输出）'
+            Add-Result '下游输出' 'SKIP' '没启用下游输出（输出对接页 → 下游输出）'
         } elseif ($cfg.protocol -eq 'tcp-server') {
             $listening = $downstream.stats.listening
             if ($listening) {
                 Add-Result '下游输出（TCP 服务端）' 'PASS' ('监听 ' + $downstream.stats.listenTarget + '，已接入客户端 ' + $downstream.stats.clientCount)
             } else {
-                Add-Result '下游输出（TCP 服务端）' 'FAIL' '平台没在监听' '看端口是否被占用（配置页 → 下游输出 → 测试连接）'
+                Add-Result '下游输出（TCP 服务端）' 'FAIL' '平台没在监听' '看端口是否被占用（输出对接页 → 下游输出 → 测试连接）'
             }
         } else {
             if ($downstream.stats.connected) {
                 Add-Result '下游输出（连接下游）' 'PASS' ('目标 ' + $downstream.stats.target + '，待发 ' + $downstream.stats.queueDepth)
             } else {
                 Add-Result '下游输出（连接下游）' 'FAIL' ('目标 ' + $downstream.stats.target + ' 连不上，待发 ' + $downstream.stats.queueDepth) `
-                    '确认下游地址/端口与网络可达（配置页 → 测试连接）；断线期间包裹会排队不丢'
+                    '确认下游地址/端口与网络可达（输出对接页 → 测试连接）；断线期间包裹会排队不丢'
             }
         }
     }

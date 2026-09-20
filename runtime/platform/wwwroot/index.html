@@ -393,6 +393,28 @@
     </div>
 
   <!-- ==================== 相机（清单 / 方位 / 扫描 / 预检 / 存图） ==================== -->
+    <div class="panel">
+      <h2>班次设置（C4）</h2>
+      <div class="muted" style="font-size:12px;margin-bottom:10px">
+        班次决定"按班次"这个维度怎么分。跨天班次（如 20:00-08:00）的凌晨时段算<b>前一天</b>那一班，
+        符合现场口径。保存后立即生效（看板按新班次重新统计）。
+      </div>
+      <div class="toolbar">
+        <button class="btn secondary small" id="btnStatsShiftsAdd">新增班次</button>
+        <button class="btn" id="btnStatsShiftsSave">保存班次</button>
+        <span id="shiftsBadge"></span>
+      </div>
+      <div class="scroll-x">
+        <table>
+          <thead><tr><th>名称</th><th>开始</th><th>结束</th><th>时长</th><th>操作</th></tr></thead>
+          <tbody id="shiftRows"></tbody>
+        </table>
+      </div>
+      <div class="muted" id="shiftsFile" style="font-size:12px;margin-top:6px"></div>
+    </div>
+
+  </section>
+
   <section id="page-cameras" class="page">
     <div class="panel">
       <h2>相机清单（表格编辑）</h2>
