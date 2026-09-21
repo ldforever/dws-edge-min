@@ -96,6 +96,7 @@ function Read-CfgState {
 $before = Read-CfgState -Path $cfgPath
 
 # 0) 运行中的采集宿主：校验会再起一个实例去初始化 SDK，会互相抢相机
+$stoppedByUs = $false
 $running = @(Get-Process -Name 'DwsEdge.Host' -ErrorAction SilentlyContinue)
 if ($running.Count -gt 0) {
     if (!$StopHost) {
@@ -104,6 +105,7 @@ if ($running.Count -gt 0) {
     }
     Write-Host "停止运行中的采集宿主…" -ForegroundColor Yellow
     $running | Stop-Process -Force
+    $stoppedByUs = $true
     Start-Sleep -Seconds 2
 }
 
@@ -235,10 +237,22 @@ Write-Host ("  回滚后校验退出码：" + $script:VerifyExit) -ForegroundCol
 if ($script:VerifyExit -eq 0) {
     Write-Host "已回滚到应用前的配置，且回滚后校验通过。" -ForegroundColor Green
     Write-Host ("失败原因见上面的 校验不通过 明细以及日志：{0}" -f $verifyOut) -ForegroundColor Yellow
+    # 重要：宿主是"为了校验被我们停掉的"，配置已回滚到应用前（= 现场本来能跑的配置），
+    # 所以必须把它拉回来 —— 否则现场会变成"点一次应用失败 → 采集直接停摆"。
+    if ($RestartHost -or $stoppedByUs) {
+        Start-Process -FilePath $hostExe -WorkingDirectory $RuntimeDir | Out-Null
+        Write-Host "已按回滚后的配置重新启动采集宿主。" -ForegroundColor Green
+    }
     exit 2
 }
 
 Write-Host "回滚后校验仍失败，请人工检查配置与设备状态。" -ForegroundColor Red
 Write-Host ("  本次校验输出：{0}" -f $verifyOut) -ForegroundColor Red
 Write-Host ("  回滚后输出  ：{0}" -f $recheckOut) -ForegroundColor Red
+# 同样把宿主拉回来：配置已经回滚，现场至少保持"用旧配置继续跑"，
+# 而不是因为一次失败的应用把采集停在这里。
+if ($RestartHost -or $stoppedByUs) {
+    Start-Process -FilePath $hostExe -WorkingDirectory $RuntimeDir | Out-Null
+    Write-Host "已按回滚后的配置重新启动采集宿主（它会自己等相机/加密狗）。" -ForegroundColor Yellow
+}
 exit 3

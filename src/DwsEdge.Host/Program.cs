@@ -27,6 +27,9 @@ namespace DwsEdge.Host
     {
         private static readonly ManualResetEventSlim StopSignal = new ManualResetEventSlim(false);
 
+        /// <summary>是否允许把状态写进 logs\host-status.json（只有常驻模式才写，见 Main 里的说明）。</summary>
+        private static bool StatusFileEnabled;
+
         private static int Main(string[] args)
         {
             string baseDir = AppDomain.CurrentDomain.BaseDirectory;
@@ -177,6 +180,11 @@ namespace DwsEdge.Host
             // 启动重试：相机晚接上、加密狗晚插、相机被占用时，不要"起不来就退出"，
             // 而是按 [startup] 的配置重试，并把状态写进 logs\host-status.json（界面据此显示"正在等相机"）。
             StartupRetryOptions retryOptions = StartupRetryOptions.From(config);
+
+            // 只有"常驻模式"才写 host-status.json。
+            // 一次性命令（--verify-config / --soft-trigger / --recode）也会走 finally，
+            // 如果它们也写状态文件，界面就会在每次"一键应用"校验之后误报"宿主已停止"。
+            StatusFileEnabled = string.IsNullOrEmpty(commandName) && !verifyConfig;
 
             try
             {
@@ -756,6 +764,13 @@ namespace DwsEdge.Host
         private static void WriteHostStatus(string baseDir, string state, int attempt, int code,
             string message, int? retryInSeconds)
         {
+            // 一次性命令（校验/软触发/补码）不写状态文件：它们也会走 finally，
+            // 写了就会把常驻宿主的状态覆盖成"已停止"，界面跟着误报。
+            if (!StatusFileEnabled)
+            {
+                return;
+            }
+
             try
             {
                 string dir = Path.Combine(baseDir, "logs");
