@@ -117,6 +117,13 @@ Get-ChildItem -Path $dstRuntime -Recurse -File -Include '*.new', '*.orig', '*.re
         $removed.Add($_.FullName.Substring($dstRuntime.Length).TrimStart('\'))
     }
 
+# 外壳自检留下的结果文件（跑过 DwsEdge.Shell.exe -SelfTest 才会有）也不该进交付包
+Get-ChildItem -Path $dstRuntime -Recurse -File -Filter 'shell-selftest.txt' -ErrorAction SilentlyContinue |
+    ForEach-Object {
+        Remove-Item -LiteralPath $_.FullName -Force
+        $removed.Add($_.FullName.Substring($dstRuntime.Length).TrimStart('\'))
+    }
+
 # 2.3 运行期数据（历史/去重/审计/spool/图片/日志/缩略图缓存）
 foreach ($sub in @('data', 'spool', 'images', 'logs', 'Log', 'cache')) {
     $dir = Join-Path $dstRuntime $sub
@@ -356,13 +363,20 @@ $(if ($installer) { "  本包已附带安装包：" + (Split-Path -Leaf $install
   powershell -ExecutionPolicy Bypass -File runtime\tools\install-autostart.ps1
 卸载自启：
   powershell -ExecutionPolicy Bypass -File runtime\tools\uninstall-autostart.ps1
+
+界面外壳（可选，套壳/kiosk）：
+  runtime\DwsEdge.Shell.exe            双击即用：自动拉起宿主+平台，再用 Edge 应用模式打开界面（无地址栏）
+  runtime\DwsEdge.Shell.exe -Kiosk     全屏 kiosk（大屏/一体机）
+  runtime\DwsEdge.Shell.exe -SelfTest  自检（探平台、找 Edge、打印将执行的命令行，不开窗口）
+  套壳一体机自启：install-autostart.ps1 -Shell
+  外壳与平台都不需要额外运行时：宿主/外壳用系统自带的 .NET Framework 4.8，页面用系统自带的 Edge。
 ============================================================
 "@
 [System.IO.File]::WriteAllText($dotnetNote, $runtimeNote, (New-Object System.Text.UTF8Encoding($true)))
 
 # 校验和（只对"我们自己产出的"关键文件）
 $keyFiles = @(
-    'runtime\DwsEdge.Host.exe', 'runtime\DwsEdge.Core.dll',
+    'runtime\DwsEdge.Host.exe', 'runtime\DwsEdge.Shell.exe', 'runtime\DwsEdge.Core.dll',
     'runtime\platform\DwsEdge.Platform.exe', 'runtime\platform\DwsEdge.Platform.dll',
     'runtime\platform\appsettings.json', 'runtime\platform\wwwroot\index.html',
     'runtime\Cfg\LogisticsBase.cfg', 'runtime\config\gateway.ini',

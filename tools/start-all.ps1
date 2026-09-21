@@ -41,8 +41,14 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 
 function Test-AlreadyRunning {
     param([string]$ExePath)
+    # 只认采集宿主与业务平台这两个进程！
+    #   以前这里写的是 ProcessName -like 'DwsEdge*'，把"界面外壳 DwsEdge.Shell"也算成了在跑，
+    #   于是外壳来拉宿主+平台时，本脚本认为"已经有人跑了"直接退出 —— 外壳就只能干等到超时。
     $found = Get-Process -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and ($_.Path -like ($RuntimeDir + '*')) -and ($_.ProcessName -like 'DwsEdge*') }
+        Where-Object {
+            $_.Path -and ($_.Path -like ($RuntimeDir + '*')) -and
+            ($_.ProcessName -eq 'DwsEdge.Host' -or $_.ProcessName -eq 'DwsEdge.Platform')
+        }
     return @($found)
 }
 

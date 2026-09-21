@@ -90,6 +90,7 @@ $projHost     = Join-Path $srcDir 'DwsEdge.Host\DwsEdge.Host.csproj'
 $projDahua    = Join-Path $srcDir 'DwsEdge.Providers.Dahua\DwsEdge.Providers.Dahua.csproj'
 $projSim      = Join-Path $srcDir 'DwsEdge.Providers.Simulator\DwsEdge.Providers.Simulator.csproj'
 $projPlatform = Join-Path $srcDir 'DwsEdge.Platform\DwsEdge.Platform.csproj'
+$projShell    = Join-Path $srcDir 'DwsEdge.Shell\DwsEdge.Shell.csproj'
 
 if (!(Test-Path $RuntimeDir)) {
     throw "找不到 runtime 目录：$RuntimeDir`r`n请先把大华 SDK 的 bin\Release\x64 内容拷进 runtime\（详见 README.md）"
@@ -125,6 +126,7 @@ Build-Project -Project $projDahua    -Label "DwsEdge.Providers.Dahua（net48/x64
 Build-Project -Project $projSim      -Label "DwsEdge.Providers.Simulator（net48）"
 Build-Project -Project $projHost     -Label "DwsEdge.Host 采集宿主（net48/x64）"
 Build-Project -Project $projPlatform -Label "DwsEdge.Platform 业务平台（net10.0）"
+Build-Project -Project $projShell    -Label "DwsEdge.Shell 界面外壳（net48，kiosk 套壳）"
 
 $providerDir = Join-Path $RuntimeDir 'providers'
 $platformDir = Join-Path $RuntimeDir 'platform'
@@ -152,6 +154,10 @@ $wwwroot = Join-Path $srcDir 'DwsEdge.Platform\wwwroot'
 if (Test-Path $wwwroot) {
     Copy-Item -Path $wwwroot -Destination $platformDir -Recurse -Force
 }
+
+# 界面外壳（kiosk 套壳）：放到 runtime 根目录，和 DwsEdge.Host.exe 并排，
+# 现场双击 DwsEdge.Shell.exe 就能以"桌面应用"的方式打开平台页面。
+Copy-Files -From (Join-Path $srcDir "DwsEdge.Shell\bin\$Configuration\net48") -To $RuntimeDir -Filter 'DwsEdge.Shell.*'
 
 # 运维/配置脚本：拷进 runtime\tools，这样 runtime 目录单独交付到现场也能用"一键应用"
 $toolsOut = Join-Path $RuntimeDir 'tools'

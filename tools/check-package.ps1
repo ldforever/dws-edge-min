@@ -115,6 +115,7 @@ if ($pkgVer) {
 # 程序集版本（exe/dll 的文件属性）
 $asmTargets = @(
     'runtime\DwsEdge.Host.exe',
+    'runtime\DwsEdge.Shell.exe',
     'runtime\DwsEdge.Core.dll',
     'runtime\platform\DwsEdge.Platform.exe',
     'runtime\platform\DwsEdge.Platform.dll',

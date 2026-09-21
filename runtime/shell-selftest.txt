@@ -1,0 +1,11 @@
+DWS 外壳自检
+时间：2026-09-21 13:18:48
+runtime 目录：C:\Users\Administrator\Desktop\lightcookr\dws-edge-min\runtime\  存在=True
+平台地址：http://127.0.0.1:8090
+平台健康检查：通过
+Edge：C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+显示模式：应用窗口
+自动拉起平台：开
+等待上限：90 秒
+将要执行的 Edge 命令行：
+  "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --app="http://127.0.0.1:8090" --window-size=1680,1020 --window-position=40,40 --user-data-dir="C:\Users\Administrator\AppData\Local\DwsEdge\shell-profile" --no-first-run --no-default-browser-check --disable-features=Translate,msEdgeIdentityIntegration --disable-sync

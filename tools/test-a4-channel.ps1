@@ -170,6 +170,14 @@ Add-Check '输出里说明了通道连不上、走老办法' 'True' ($afterStop.
 Add-Check '老办法也给出了命令结论' 'True' ($afterStop.output -match '命令结论')
 
 Write-Host ''
+# ---------------------------------------------------------------- 6) start-all 的"已在运行"判断别误伤外壳
+Write-Host "`n=== 6) start-all.ps1 的进程判断范围 ===" -ForegroundColor Cyan
+$startAllText = [System.IO.File]::ReadAllText((Join-Path $scriptDir 'start-all.ps1'))
+# 只看代码，不看注释（注释里会提到这个历史 bug）
+$startAllCode = (@($startAllText -split "`r?`n" | Where-Object { -not $_.TrimStart().StartsWith('#') }) -join "`n")
+Add-Check 'start-all 不再用 DwsEdge* 宽匹配（会误伤界面外壳）' 'False' ($startAllCode -match "DwsEdge\*")
+Add-Check 'start-all 明确只认 Host / Platform' 'True' (($startAllText -match "DwsEdge\.Host") -and ($startAllText -match "DwsEdge\.Platform"))
+
 $results | Format-Table -AutoSize
 $failed = @($results | Where-Object { $_.结果 -eq 'FAIL' })
 if ($failed.Count -eq 0) {

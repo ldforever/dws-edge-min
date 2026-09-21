@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    界面外壳（kiosk 套壳）。
+
+    为什么是 net48 + WinForms：
+      * Win10/11 自带 .NET Framework 4.8，现场**不用为壳再装运行时**；
+      * 不引用任何 NuGet 包，离线也能编译 —— 内网交付最省事；
+      * 页面用系统自带的 Edge（Chromium 内核）承载，和平时调试的浏览器渲染一致。
+
+    形态说明：本版本用 Edge 的"应用模式 / 全屏 kiosk"承载页面（零依赖、立刻可用）。
+    要真正的 WebView2 内嵌（同一 Chromium 内核、把浏览器进程换成壳内控件），
+    得额外引 Microsoft.Web.WebView2 包（首次需要联网还原一次），渲染与性能不会有差别。
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>DwsEdge.Shell</RootNamespace>
+    <AssemblyName>DwsEdge.Shell</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+</Project>

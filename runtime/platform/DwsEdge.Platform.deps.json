@@ -6,31 +6,31 @@
   "compilationOptions": {},
   "targets": {
     ".NETCoreApp,Version=v10.0": {
-      "DwsEdge.Platform/1.0.8": {
+      "DwsEdge.Platform/1.0.9": {
         "dependencies": {
-          "DwsEdge.Core": "1.0.8"
+          "DwsEdge.Core": "1.0.9"
         },
         "runtime": {
           "DwsEdge.Platform.dll": {}
         }
       },
-      "DwsEdge.Core/1.0.8": {
+      "DwsEdge.Core/1.0.9": {
         "runtime": {
           "DwsEdge.Core.dll": {
-            "assemblyVersion": "1.0.8.0",
-            "fileVersion": "1.0.8.0"
+            "assemblyVersion": "1.0.9.0",
+            "fileVersion": "1.0.9.0"
           }
         }
       }
     }
   },
   "libraries": {
-    "DwsEdge.Platform/1.0.8": {
+    "DwsEdge.Platform/1.0.9": {
       "type": "project",
       "serviceable": false,
       "sha512": ""
     },
-    "DwsEdge.Core/1.0.8": {
+    "DwsEdge.Core/1.0.9": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

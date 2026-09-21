@@ -7,8 +7,9 @@
  *   * 配置页"账号与安全" —— 改自己的密码、管理员改策略 / 管账号 / 看登录记录 / 轮换服务令牌；
  *   * 401 统一处理 —— 任何接口回 401（会话过期、被别人踢下线）都自动弹回登录框。
  */
-import { api, onUnauthorized } from "./api.js?v=09d3c4d0";
-import { $, badge, cell, clear, el, notify } from "./dom.js?v=09d3c4d0";
+import { api, onUnauthorized } from "./api.js?v=d9347d14";
+import { $, badge, cell, clear, el, notify } from "./dom.js?v=d9347d14";
+import { confirmBox } from "./ui.js?v=d9347d14";
 const ROLE_LABEL = {
     admin: "管理员",
     operator: "操作员",
@@ -221,7 +222,12 @@ async function saveAuthConfig() {
     }
 }
 async function rotateServiceKey() {
-    if (!window.confirm("轮换后旧的服务令牌立刻失效，所有用它的脚本/上位机都要更新。继续？"))
+    // C7：window.confirm → 自绘确认框（异步）
+    const yes = await confirmBox("轮换后旧的服务令牌立刻失效，所有用它的脚本/上位机都要更新。继续？", {
+        title: "轮换服务令牌",
+        danger: true
+    });
+    if (!yes)
         return;
     const res = await api.rotateServiceKey();
     if (res.data?.ok) {
@@ -315,7 +321,9 @@ async function resetPassword(username) {
     await loadUsers();
 }
 async function removeUser(username) {
-    if (!window.confirm("确定删除账号 " + username + " ？"))
+    // C7：window.confirm → 自绘确认框（异步）
+    const yes = await confirmBox("确定删除账号 " + username + " ？", { title: "删除账号", danger: true });
+    if (!yes)
         return;
     const res = await api.deleteUser(username);
     if (res.status !== 200) {

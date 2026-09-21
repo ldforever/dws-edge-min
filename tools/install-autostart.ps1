@@ -11,12 +11,14 @@
     用法（**需要管理员权限的 PowerShell**）：
         powershell -ExecutionPolicy Bypass -File .\runtime\tools\install-autostart.ps1
         powershell -ExecutionPolicy Bypass -File .\runtime\tools\install-autostart.ps1 -Trigger onstart
+        powershell -ExecutionPolicy Bypass -File .\runtime\tools\install-autostart.ps1 -Shell          # 套壳一体机：登录后直接起界面外壳
         powershell -ExecutionPolicy Bypass -File .\runtime\tools\install-autostart.ps1 -WhatIfOnly   # 只看会建什么
 #>
 param(
     [string]$RuntimeDir = '',
     [string]$TaskPrefix = 'DWS-Edge',
     [ValidateSet('onlogon', 'onstart')][string]$Trigger = 'onlogon',
+    [switch]$Shell,                    # 用 DwsEdge.Shell.exe（界面外壳）自启：它自己会把宿主+平台拉起来
     [switch]$WhatIfOnly
 )
 
@@ -49,11 +51,23 @@ if (!$isAdmin -and !$WhatIfOnly) {
 #>
 $startAll = Join-Path $RuntimeDir 'tools\start-all.ps1'
 if (!(Test-Path $startAll)) { throw "找不到 $startAll（交付包 tools 目录不完整）" }
-$tasks = @(
-    @{ name = $TaskPrefix; label = '采集宿主 + 业务平台'; exe = 'powershell.exe';
-       work = $RuntimeDir
-       args = ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $startAll + '" -RuntimeDir "' + $RuntimeDir + '"') }
-)
+
+if ($Shell) {
+    # 套壳一体机：登录后直接起界面外壳，外壳自己会拉起采集宿主 + 平台，
+    # 现场看到的就是一个"桌面应用"窗口（无地址栏），而不是黑窗口 + 浏览器。
+    $shellExe = Join-Path $RuntimeDir 'DwsEdge.Shell.exe'
+    if (!(Test-Path $shellExe)) { throw "找不到界面外壳：$shellExe（先跑一次 build.ps1，或确认包里带了 DwsEdge.Shell.exe）" }
+    $tasks = @(
+        @{ name = $TaskPrefix; label = '界面外壳（内含采集宿主 + 业务平台）'; exe = $shellExe;
+           work = $RuntimeDir; args = '' }
+    )
+} else {
+    $tasks = @(
+        @{ name = $TaskPrefix; label = '采集宿主 + 业务平台'; exe = 'powershell.exe';
+           work = $RuntimeDir
+           args = ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $startAll + '" -RuntimeDir "' + $RuntimeDir + '"') }
+    )
+}
 
 Write-Host "============================================================"
 Write-Host " DWS 开机自启（形态 A：计划任务）"

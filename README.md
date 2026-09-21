@@ -41,6 +41,7 @@ dws-edge-min/
 ├─ tools/host-command.ps1        A4 命令通道：-Status / -SoftTrigger / -Recode（退出码翻译成人话）
 │                                宿主在跑时走常驻命名管道，不用停宿主；没跑才新起进程
 ├─ tools/test-a4-channel.ps1     A4 命令通道回归（运行中触发 / 停掉后自动退回老办法）
+├─ src/DwsEdge.Shell/            界面外壳（net48 WinForms，零依赖）：kiosk 套壳，等平台→拉进程→用 Edge 应用模式开界面
 ├─ tools/test-a4-command.ps1     A4 回归（软触发 / 补码 / 模式校验 / 退出码）
 ├─ tools/self-check.ps1          现场一键自检（环境 / 触发 / 平台 / 磁盘 / 相机 / 下游 + 该做什么）
 ├─ tools/test-a8-template.ps1    A8-3 配置模板回归（另存 / 差异 / 套用）

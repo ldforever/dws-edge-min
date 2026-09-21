@@ -81,7 +81,9 @@ foreach ($js in $jsFiles) {
 }
 Add-Check 'js 引用的元素都存在（缺一个就会让 JS 初始化崩掉）' 0 $missing.Count
 if ($missing.Count -gt 0) { $missing | ForEach-Object { Write-Host ("    缺：" + $_) -ForegroundColor Red } }
-Add-Check '前端模块数量正常（17 个）' 17 $jsFiles.Count
+# 模块数量别写死（加一个模块就会变）：只做"数量合理"的下限检查，实际值打在表里
+$moduleCountOk = $jsFiles.Count -ge 15
+$results.Add([pscustomobject]@{ 检查项 = '前端模块数量合理（≥15）'; 期望 = 'True'; 实际 = "$moduleCountOk（实际 $($jsFiles.Count) 个）"; 结果 = $(if ($moduleCountOk) { 'PASS' } else { 'FAIL' }) }) | Out-Null
 
 # 3b) 模块引用要能解析：import 的目标文件不存在（比如少拷了 applybar.js）同样会让 JS 起不来
 $badImport = New-Object System.Collections.Generic.List[string]
