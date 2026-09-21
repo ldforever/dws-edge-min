@@ -19,6 +19,16 @@ export function initHostState(): void {
 
 export async function refreshHostState(): Promise<void> {
   const el = $("hostState");
+
+  // 登录框弹着的时候不轮询、也不更新状态：那时页面还没进入工作状态，
+  // 后台请求还可能把用户的输入打断（焦点/提示）。
+  const mask = $("loginMask");
+  if (mask && !mask.classList.contains("hidden")) {
+    el.className = "hoststate unknown";
+    el.textContent = "采集宿主：登录后显示";
+    return;
+  }
+
   const res = await api.hostStatus();
 
   if (!res.data) {

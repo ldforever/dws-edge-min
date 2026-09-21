@@ -808,7 +808,10 @@ namespace DwsEdge.Platform
                 || StartsWith(path, "/api/monitor/config")
                 || StartsWith(path, "/api/stats/shifts")
                 || StartsWith(path, "/api/diag")
-                || StartsWith(path, "/api/host")
+                // 只保护"写操作"：/api/host/command（触发一次，可能影响生产）。
+                // 状态类只读接口（/api/host/status、/api/host/channel）不要求登录 ——
+                // 否则未登录时页面每 5 秒轮询一次就拿 401，触发弹登录框、把光标抢回用户名。
+                || string.Equals(path, "/api/host/command", StringComparison.OrdinalIgnoreCase)
                 || StartsWith(path, "/api/camera-probe")
                 || StartsWith(path, "/api/dedup/compact")
                 || StartsWith(path, "/api/dispatch/ack");

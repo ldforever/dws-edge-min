@@ -116,8 +116,13 @@ function renderHeader(): void {
 }
 
 function showMask(): void {
-  $("loginMask").classList.remove("hidden");
-  $<HTMLInputElement>("loginUser").focus?.();
+  const mask = $("loginMask");
+  // 只在"本来藏着的"时候抢焦点：否则任何后台请求拿到 401 都会把正在输密码的光标拽回用户名框
+  const wasHidden = mask.classList.contains("hidden");
+  mask.classList.remove("hidden");
+  if (wasHidden) {
+    $<HTMLInputElement>("loginUser").focus?.();
+  }
 }
 
 function hideMask(): void {

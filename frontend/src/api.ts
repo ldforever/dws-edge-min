@@ -71,6 +71,11 @@ interface RequestOptions {
   method?: string;
   /** 有值就按 JSON 提交 */
   json?: unknown;
+  /**
+   * 后台轮询用：401 时**不要**弹登录框。
+   * 页面在等用户输密码时，后台轮询（如宿主状态）拿到 401 会把光标抢走、反复弹登录框。
+   */
+  silent401?: boolean;
 }
 
 async function request<T>(url: string, options?: RequestOptions): Promise<ApiResult<T>> {
@@ -102,7 +107,7 @@ async function request<T>(url: string, options?: RequestOptions): Promise<ApiRes
 
   const result: ApiResult<T> = { status: res.status, data: (parsed as T) ?? null };
   // B9：会话过期/未登录 —— 交给 auth 模块弹登录框（登录接口自己的 401 不算，那是密码错）
-  if (res.status === 401 && url.indexOf("/api/auth/login") !== 0) {
+  if (res.status === 401 && !options?.silent401 && url.indexOf("/api/auth/login") !== 0) {
     if (unauthorizedHandler) unauthorizedHandler();
   }
   if (!res.ok) {
@@ -156,7 +161,8 @@ export const api = {
     request<{ available: boolean; pipeName: string; message: string }>("/api/host/channel"),
 
   /** 采集宿主状态（运行中 / 正在等相机重试 / 未运行） */
-  hostStatus: (): Promise<ApiResult<HostStatus>> => request<HostStatus>("/api/host/status"),
+  hostStatus: (): Promise<ApiResult<HostStatus>> =>
+    request<HostStatus>("/api/host/status", { silent401: true }),
 
   /** P0：相机连通性预检（ping + 与 SDK 发现结果对照） */
   cameraProbe: (ips: string[]): Promise<ApiResult<CameraProbeResult>> =>

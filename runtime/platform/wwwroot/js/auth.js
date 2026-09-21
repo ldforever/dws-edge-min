@@ -7,9 +7,9 @@
  *   * 配置页"账号与安全" —— 改自己的密码、管理员改策略 / 管账号 / 看登录记录 / 轮换服务令牌；
  *   * 401 统一处理 —— 任何接口回 401（会话过期、被别人踢下线）都自动弹回登录框。
  */
-import { api, onUnauthorized } from "./api.js?v=d9a080c0";
-import { $, badge, cell, clear, el, notify } from "./dom.js?v=d9a080c0";
-import { confirmBox } from "./ui.js?v=d9a080c0";
+import { api, onUnauthorized } from "./api.js?v=7e55d4ad";
+import { $, badge, cell, clear, el, notify } from "./dom.js?v=7e55d4ad";
+import { confirmBox } from "./ui.js?v=7e55d4ad";
 const ROLE_LABEL = {
     admin: "管理员",
     operator: "操作员",
@@ -105,8 +105,13 @@ function renderHeader() {
         : "";
 }
 function showMask() {
-    $("loginMask").classList.remove("hidden");
-    $("loginUser").focus?.();
+    const mask = $("loginMask");
+    // 只在"本来藏着的"时候抢焦点：否则任何后台请求拿到 401 都会把正在输密码的光标拽回用户名框
+    const wasHidden = mask.classList.contains("hidden");
+    mask.classList.remove("hidden");
+    if (wasHidden) {
+        $("loginUser").focus?.();
+    }
 }
 function hideMask() {
     $("loginMask").classList.add("hidden");

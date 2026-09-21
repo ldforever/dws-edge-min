@@ -26,7 +26,7 @@ async function request(url, options) {
     }
     const result = { status: res.status, data: parsed ?? null };
     // B9：会话过期/未登录 —— 交给 auth 模块弹登录框（登录接口自己的 401 不算，那是密码错）
-    if (res.status === 401 && url.indexOf("/api/auth/login") !== 0) {
+    if (res.status === 401 && !options?.silent401 && url.indexOf("/api/auth/login") !== 0) {
         if (unauthorizedHandler)
             unauthorizedHandler();
     }
@@ -62,7 +62,7 @@ export const api = {
     /** A4：命令通道是否可用（宿主在不在跑） */
     hostChannel: () => request("/api/host/channel"),
     /** 采集宿主状态（运行中 / 正在等相机重试 / 未运行） */
-    hostStatus: () => request("/api/host/status"),
+    hostStatus: () => request("/api/host/status", { silent401: true }),
     /** P0：相机连通性预检（ping + 与 SDK 发现结果对照） */
     cameraProbe: (ips) => request("/api/camera-probe", { method: "POST", json: { ips } }),
     // ---- B2 条码过滤规则 ----
