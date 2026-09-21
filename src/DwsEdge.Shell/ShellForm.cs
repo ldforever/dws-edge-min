@@ -35,6 +35,7 @@ namespace DwsEdge.Shell
         private int _retryCount;
         private string _lastError = "";
         private DateTime _downSince = DateTime.MinValue;
+        private DateTime _hostRestartAt = DateTime.MinValue;
 
         public ShellForm(Program.Options options, string edge)
         {
@@ -186,15 +187,7 @@ namespace DwsEdge.Shell
                 {
                     Thread.Sleep(5000);
                     string error;
-                    if (Program.IsPlatformHealthy(_options.Url, out error))
-                    {
-                        if (_downSince != DateTime.MinValue)
-                        {
-                            _downSince = DateTime.MinValue;
-                            Ui(Hide);
-                        }
-                    }
-                    else
+                    if (!Program.IsPlatformHealthy(_options.Url, out error))
                     {
                         if (_downSince == DateTime.MinValue)
                         {
@@ -216,7 +209,52 @@ namespace DwsEdge.Shell
                                 }
                             });
                         }
+                        continue;
                     }
+
+                    // 平台是好的 → 再看采集宿主在不在（以前这里没人管：平台活着、宿主死了，界面只是"没数据"）
+                    if (_downSince != DateTime.MinValue)
+                    {
+                        _downSince = DateTime.MinValue;
+                        Ui(Hide);
+                    }
+
+                    string hostError;
+                    if (Program.IsHostRunning(_options.Url, out hostError))
+                    {
+                        if (_hostRestartAt != DateTime.MinValue)
+                        {
+                            _hostRestartAt = DateTime.MinValue;
+                            Ui(Hide);
+                        }
+                        continue;
+                    }
+
+                    if (_hostRestartAt == DateTime.MinValue)
+                    {
+                        _hostRestartAt = DateTime.Now;   // 先观察 15 秒，避免和外部手动启动打架
+                        continue;
+                    }
+                    if ((DateTime.Now - _hostRestartAt).TotalSeconds < 15)
+                    {
+                        continue;
+                    }
+
+                    _hostRestartAt = DateTime.Now;
+                    Program.StartRuntime(_options.RuntimeDir);
+                    string hostDetail = hostError;
+                    Ui(delegate
+                    {
+                        _status.Text = "采集宿主未运行，正在拉起…";
+                        _hint.Text = "原因：" + hostDetail + Environment.NewLine +
+                                     "已执行 runtime\\tools\\start-all.ps1（输出见 logs\\shell-start.log）；" +
+                                     "如果一直起不来，多半是相机/加密狗不在线——宿主会自己重试，界面顶部会显示「正在等相机」。";
+                        if (!Visible)
+                        {
+                            Show();
+                            Activate();
+                        }
+                    });
                 }
 
                 Ui(Close);

@@ -26,6 +26,7 @@ import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderM
 import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js";
 import { initStats, refreshStats } from "./stats.js";
 import { initDiag, refreshDiag } from "./diag.js";
+import { initHostState } from "./hoststate.js";
 
 /**
  * P0：页签按"现场任务"分，不再按代码模块分：
@@ -84,6 +85,7 @@ function bootstrap(): void {
   initAuth();
   initStats();
   initDiag();
+  initHostState();
 
   for (const page of PAGES) {
     $("tab-" + page).addEventListener("click", () => showPage(page));

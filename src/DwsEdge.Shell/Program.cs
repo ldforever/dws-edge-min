@@ -159,6 +159,38 @@ namespace DwsEdge.Shell
             }
         }
 
+        /// <summary>
+        /// 探一次"采集宿主在不在"：平台没起来时宿主肯定也不在；平台起来后看命令通道能不能连上。
+        /// 这样外壳就能区分"平台挂了"和"平台在、宿主挂了"——后者以前没人管。
+        /// </summary>
+        internal static bool IsHostRunning(string url, out string error)
+        {
+            error = null;
+            try
+            {
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url.TrimEnd('/') + "/api/host/channel");
+                request.Method = "GET";
+                request.Timeout = 2500;
+                request.ReadWriteTimeout = 2500;
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                using (StreamReader reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
+                {
+                    string body = reader.ReadToEnd();
+                    if (body.IndexOf("\"available\":true", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        return true;
+                    }
+                    error = "命令通道连不上：采集宿主没在跑";
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
         /// <summary>把采集宿主 + 平台拉起来（复用包里的 start-all.ps1，隐藏窗口）。</summary>
         /// <summary>
         /// 把采集宿主 + 平台拉起来（复用包里的 start-all.ps1，隐藏窗口）。

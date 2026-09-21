@@ -9,7 +9,7 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=d9347d14" />
+<link rel="stylesheet" href="./app.css?v=d9a080c0" />
 </head>
 <body>
 <header>
@@ -30,6 +30,7 @@
     <button id="tab-system">系统与安全</button>
   </nav>
   <div class="status">
+    <span id="hostState" class="hoststate unknown">采集宿主：—</span>
     <span id="dot" class="dot"></span><span id="conn">连接中…</span>
     <span id="userBox" class="user">未登录</span>
     <button class="btn secondary small" id="btnLogout" style="display:none">退出</button>
@@ -845,6 +846,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=d9347d14"></script>
+<script type="module" src="./js/main.js?v=d9a080c0"></script>
 </body>
 </html>

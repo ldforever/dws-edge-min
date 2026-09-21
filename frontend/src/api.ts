@@ -21,6 +21,7 @@ import type {
   ConfigSummary,
   HostCommandRequest,
   HostCommandResult,
+  HostStatus,
   CameraProbeResult,
   TemplateDiffResponse,
   TemplatesResponse,
@@ -153,6 +154,9 @@ export const api = {
   /** A4：命令通道是否可用（宿主在不在跑） */
   hostChannel: (): Promise<ApiResult<{ available: boolean; pipeName: string; message: string }>> =>
     request<{ available: boolean; pipeName: string; message: string }>("/api/host/channel"),
+
+  /** 采集宿主状态（运行中 / 正在等相机重试 / 未运行） */
+  hostStatus: (): Promise<ApiResult<HostStatus>> => request<HostStatus>("/api/host/status"),
 
   /** P0：相机连通性预检（ping + 与 SDK 发现结果对照） */
   cameraProbe: (ips: string[]): Promise<ApiResult<CameraProbeResult>> =>

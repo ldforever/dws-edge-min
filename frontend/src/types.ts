@@ -956,3 +956,20 @@ export interface CameraProbeResult {
   results: CameraProbeItem[];
   note?: string;
 }
+
+/** 采集宿主状态（P0：启动重试期间界面能看出来"在等相机"，而不是以为软件坏了） */
+export interface HostStatus {
+  /** running / retrying / stopped / unknown */
+  state: string;
+  /** 人话结论，界面直接显示 */
+  note: string;
+  channelAvailable: boolean;
+  /** 第几次重试 */
+  attempt: number;
+  /** SDK 返回码（3000 没相机 / 3001 被占用 / 2200 没加密狗） */
+  code: number;
+  /** 还有几秒重试 */
+  retryInSeconds: number | null;
+  message: string | null;
+  ageSeconds: number;
+}

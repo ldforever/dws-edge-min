@@ -313,6 +313,87 @@ namespace DwsEdge.Platform
                 });
             });
 
+            // 采集宿主状态：运行中 / 正在等相机（第 N 次重试）/ 已停止 / 未知。
+            // 两个来源：命令通道探测（宿主活着就能应答）+ 宿主写的 logs\host-status.json（重试期间的状态）。
+            app.MapGet("/api/host/status", (ConfigStore cfg) =>
+            {
+                string statusPath = Path.Combine(cfg.RuntimeRoot, @"logs\host-status.json");
+                HostCommandResult probe = HostCommandChannel.Send(cfg.RuntimeRoot, "status", 1200);
+
+                string state = probe.ChannelAvailable ? "running" : "unknown";
+                int attempt = 0;
+                int code = 0;
+                int? retryInSeconds = null;
+                string message = null;
+                long atMs = 0;
+                double ageSeconds = -1;
+                bool fileExists = false;
+
+                try
+                {
+                    if (File.Exists(statusPath))
+                    {
+                        fileExists = true;
+                        using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(statusPath)))
+                        {
+                            JsonElement root = doc.RootElement;
+                            if (root.TryGetProperty("state", out JsonElement eState)) { state = eState.GetString() ?? state; }
+                            if (root.TryGetProperty("attempt", out JsonElement eAttempt) && eAttempt.TryGetInt32(out int a)) { attempt = a; }
+                            if (root.TryGetProperty("code", out JsonElement eCode) && eCode.TryGetInt32(out int c)) { code = c; }
+                            if (root.TryGetProperty("retryInSeconds", out JsonElement eRetry) && eRetry.ValueKind == JsonValueKind.Number)
+                            {
+                                retryInSeconds = eRetry.GetInt32();
+                            }
+                            if (root.TryGetProperty("message", out JsonElement eMessage)) { message = eMessage.GetString(); }
+                            if (root.TryGetProperty("atMs", out JsonElement eAt) && eAt.TryGetInt64(out long t)) { atMs = t; }
+                        }
+                        ageSeconds = Math.Round((DateTime.UtcNow - File.GetLastWriteTimeUtc(statusPath)).TotalSeconds, 1);
+                    }
+                }
+                catch (Exception)
+                {
+                    // 状态文件坏掉/读不到：不影响结论，退化成"只看命令通道"
+                }
+
+                // 命令通道能应答 = 宿主确实在跑，以它为准（状态文件可能是上一轮留下的）
+                if (probe.ChannelAvailable)
+                {
+                    state = "running";
+                }
+                else if (ageSeconds > 90)
+                {
+                    // 状态文件太旧（宿主已经死了、又没写 stopped）→ 不能当成"正在重试"
+                    state = "unknown";
+                }
+
+                string note;
+                if (state == "running") { note = "采集宿主运行中"; }
+                else if (state == "retrying")
+                {
+                    note = "采集宿主正在等设备：第 " + attempt + " 次重试"
+                        + (code > 0 ? "（SDK 返回 " + code + "）" : string.Empty)
+                        + (retryInSeconds.HasValue ? "，" + retryInSeconds.Value + " 秒后再试" : string.Empty);
+                }
+                else if (state == "stopped") { note = "采集宿主已停止（" + (message ?? "已退出") + "）"; }
+                else { note = "采集宿主未运行（命令通道连不上，也没有新状态）"; }
+
+                return Results.Json(new
+                {
+                    state,
+                    note,
+                    channelAvailable = probe.ChannelAvailable,
+                    attempt,
+                    code,
+                    retryInSeconds,
+                    message,
+                    atMs,
+                    ageSeconds,
+                    statusFile = statusPath,
+                    statusFileExists = fileExists,
+                    runtimeRoot = cfg.RuntimeRoot
+                });
+            });
+
             app.MapPost("/api/host/command", (ConfigStore cfg, HostCommandRequest request) =>
             {
                 string command = request != null && request.command != null

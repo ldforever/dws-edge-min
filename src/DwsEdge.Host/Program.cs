@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Globalization;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using DwsEdge.Core.Abstractions;
 using DwsEdge.Core.Config;
@@ -172,6 +174,10 @@ namespace DwsEdge.Host
             SpoolRetentionService spoolRetention = null;
             int exitCode = 0;
 
+            // 启动重试：相机晚接上、加密狗晚插、相机被占用时，不要"起不来就退出"，
+            // 而是按 [startup] 的配置重试，并把状态写进 logs\host-status.json（界面据此显示"正在等相机"）。
+            StartupRetryOptions retryOptions = StartupRetryOptions.From(config);
+
             try
             {
                 ProviderRegistry registry = new ProviderRegistry();
@@ -222,7 +228,24 @@ namespace DwsEdge.Host
                     return exitCode;
                 }
 
-                provider.Start();
+                if (string.IsNullOrEmpty(commandName))
+                {
+                    // 常驻模式：SDK 起不来（没相机 / 没加密狗 / 被占用）时按配置重试。
+                    // 重试期间进程保持存活、状态写进 logs\host-status.json，相机一接上就自动跑起来。
+                    if (!StartProviderWithRetry(provider, sink, baseDir, retryOptions))
+                    {
+                        exitCode = 2;
+                        WriteHostStatus(baseDir, "stopped", 0, 0, "启动重试已用尽或已取消", null);
+                        PrintTroubleshooting();
+                        return exitCode;
+                    }
+                }
+                else
+                {
+                    // 一次性命令（--soft-trigger / --recode / --verify-config）：快速失败，
+                    // 不能让脚本干等 30 分钟。
+                    provider.Start();
+                }
 
                 // A4：软触发 / 补码必须等 SDK 就绪，所以放在 Start 之后。
                 // 执行完带着退出码退出，不进常驻循环，也不需要 Ctrl+C；finally 里会正常停掉 provider。
@@ -335,6 +358,7 @@ namespace DwsEdge.Host
                 }
 
                 sink.Dispose();
+                WriteHostStatus(baseDir, "stopped", 0, 0, "宿主已退出", null);
                 Console.WriteLine("[host] 已退出。图片目录：images\\  事件 spool：spool\\  日志：logs\\");
             }
 
@@ -626,6 +650,212 @@ namespace DwsEdge.Host
             if (mode == "1") { return "硬触发（triggerMode=1，光电）"; }
             if (mode == "0") { return "自由拉流（triggerMode=0，狂扫）"; }
             return mode;
+        }
+
+        /// <summary>
+        /// 启动 provider，并在"可重试的 SDK 错误"上重试。
+        ///
+        /// 为什么需要它：宿主以前是"SDK 起不来就退出"。可现实里最常见的情况是
+        /// **相机还没上电 / 还没插网线 / 加密狗还没插** —— 这时候进程直接退出，
+        /// 等人把相机接好了，还得有人再点一次启动。现在改成：按 [startup] 的配置重试，
+        /// 期间进程活着、状态写进 logs\host-status.json（界面显示"正在等相机"），
+        /// 相机一接上就自动开始采集。
+        ///
+        /// 返回 true = 启动成功；false = 不该重试（真错误）或重试已用尽/被 Ctrl+C 取消。
+        /// </summary>
+        private static bool StartProviderWithRetry(IAcquisitionProvider provider, HostEventSink sink,
+            string baseDir, StartupRetryOptions options)
+        {
+            DateTime startedAt = DateTime.Now;
+            int attempt = 0;
+
+            while (true)
+            {
+                attempt++;
+                try
+                {
+                    provider.Start();
+                    WriteHostStatus(baseDir, "running", attempt, 0, null, null);
+                    if (attempt > 1)
+                    {
+                        sink.Log(LogLevel.Info, "采集已启动（第 " + attempt + " 次尝试成功）");
+                    }
+                    return true;
+                }
+                catch (ProviderException ex)
+                {
+                    int code;
+                    bool codeKnown = TryGetSdkCode(ex.Message, out code);
+                    double waitedMinutes = (DateTime.Now - startedAt).TotalMinutes;
+                    bool retryable = options.Enabled
+                        && codeKnown
+                        && options.Codes.Contains(code)
+                        && waitedMinutes < options.MaxMinutes
+                        && !StopSignal.IsSet;
+
+                    WriteHostStatus(baseDir, retryable ? "retrying" : "stopped", attempt,
+                        codeKnown ? code : 0, ex.Message, retryable ? (int?)options.IntervalSeconds : null);
+
+                    if (!retryable)
+                    {
+                        sink.Log(LogLevel.Error, "采集宿主启动失败：" + ex.Message);
+                        Console.WriteLine("[host] provider 启动失败：" + ex.Message);
+                        return false;
+                    }
+
+                    string line = "第 " + attempt + " 次启动失败（SDK 返回 " + code + "：" + DescribeSdkCode(code)
+                        + "）→ " + options.IntervalSeconds + " 秒后重试；已等 " + (int)waitedMinutes + " 分钟，上限 "
+                        + options.MaxMinutes + " 分钟（Ctrl+C 可退出）";
+                    sink.Log(LogLevel.Warn, line);
+                    Console.WriteLine("[host] " + line);
+
+                    // 分片等待：Ctrl+C 能立刻生效，不用等满一个间隔
+                    for (int i = 0; i < options.IntervalSeconds * 10; i++)
+                    {
+                        if (StopSignal.Wait(100))
+                        {
+                            sink.Log(LogLevel.Info, "收到停止信号，取消启动重试。");
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>从异常消息里取出 SDK 返回码（消息形如"Start 失败：返回 3000；相机数与配置不符…"）。</summary>
+        private static bool TryGetSdkCode(string message, out int code)
+        {
+            code = 0;
+            if (string.IsNullOrEmpty(message))
+            {
+                return false;
+            }
+
+            Match match = Regex.Match(message, @"返回\s*(-?\d{1,5})");
+            if (!match.Success)
+            {
+                return false;
+            }
+            return int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out code);
+        }
+
+        /// <summary>把 SDK 返回码翻译成现场看得懂的话。</summary>
+        private static string DescribeSdkCode(int code)
+        {
+            if (code == 2200) { return "没检测到加密狗"; }
+            if (code == 3000) { return "相机数与配置不符 / 没有相机连上"; }
+            if (code == 3001) { return "相机被占用"; }
+            if (code == 3002 || code == 3003) { return "相机清单与实际不符"; }
+            return "SDK 错误";
+        }
+
+        /// <summary>
+        /// 把宿主状态写到 logs\host-status.json，供平台与界面显示。
+        /// 平台据此区分"宿主没在跑"、"正在等相机（第 N 次重试）"与"运行中"。
+        /// </summary>
+        private static void WriteHostStatus(string baseDir, string state, int attempt, int code,
+            string message, int? retryInSeconds)
+        {
+            try
+            {
+                string dir = Path.Combine(baseDir, "logs");
+                Directory.CreateDirectory(dir);
+
+                StringBuilder json = new StringBuilder();
+                json.Append("{\"state\":\"").Append(state).Append('"');
+                json.Append(",\"attempt\":").Append(attempt.ToString(CultureInfo.InvariantCulture));
+                json.Append(",\"code\":").Append(code.ToString(CultureInfo.InvariantCulture));
+                json.Append(",\"retryInSeconds\":").Append(retryInSeconds.HasValue
+                    ? retryInSeconds.Value.ToString(CultureInfo.InvariantCulture)
+                    : "null");
+                json.Append(",\"pid\":").Append(Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture));
+                json.Append(",\"atMs\":").Append(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture));
+                json.Append(",\"message\":\"").Append(EscapeJson(message)).Append('"');
+                json.Append('}');
+
+                File.WriteAllText(Path.Combine(dir, "host-status.json"), json.ToString(), new UTF8Encoding(false));
+            }
+            catch (Exception)
+            {
+                // 状态文件写不进去不影响采集
+            }
+        }
+
+        private static string EscapeJson(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
+
+            StringBuilder sb = new StringBuilder(text.Length + 16);
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (c == '"' || c == '\\')
+                {
+                    sb.Append('\\').Append(c);
+                }
+                else if (c == '\r')
+                {
+                    sb.Append("\\r");
+                }
+                else if (c == '\n')
+                {
+                    sb.Append("\\n");
+                }
+                else if (c == '\t')
+                {
+                    sb.Append("\\t");
+                }
+                else if (c < ' ')
+                {
+                    sb.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>[startup] 段：启动重试策略（哪些错误重试、间隔、总时长上限）。</summary>
+        private sealed class StartupRetryOptions
+        {
+            public bool Enabled = true;
+            public int IntervalSeconds = 10;
+            public int MaxMinutes = 30;
+            public HashSet<int> Codes = new HashSet<int>();
+
+            public static StartupRetryOptions From(SimpleConfig config)
+            {
+                StartupRetryOptions options = new StartupRetryOptions();
+                options.Enabled = ParseBool(config.Get("startup", "retryEnabled", "true"), true);
+                options.IntervalSeconds = Math.Max(2, ParseInt(config.Get("startup", "retryIntervalSeconds", "10"), 10));
+                options.MaxMinutes = Math.Max(0, ParseInt(config.Get("startup", "retryMaxMinutes", "30"), 30));
+
+                string codes = config.Get("startup", "retryOn", "2200,3000,3001");
+                if (!string.IsNullOrEmpty(codes))
+                {
+                    string[] parts = codes.Split(',');
+                    for (int i = 0; i < parts.Length; i++)
+                    {
+                        int code;
+                        if (int.TryParse(parts[i].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out code))
+                        {
+                            options.Codes.Add(code);
+                        }
+                    }
+                }
+
+                // 上限为 0 就等于关掉重试（回归测试与"快速失败"场景用得上）
+                if (options.MaxMinutes <= 0)
+                {
+                    options.Enabled = false;
+                }
+                return options;
+            }
         }
 
         private static void PrintHelp()

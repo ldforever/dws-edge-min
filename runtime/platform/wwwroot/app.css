@@ -117,6 +117,13 @@ a.img:hover img.thumb { border-color: #58a6ff; }
 .probe-ok { color: #3fb950; }
 .probe-bad { color: #f85149; }
 .probe-warn { color: #d29922; }
+
+/* P0：页头的采集宿主状态（运行中 / 正在等相机 / 未运行） */
+.hoststate { font-size: 12px; }
+.hoststate.ok { color: #3fb950; }
+.hoststate.warn { color: #d29922; }
+.hoststate.bad { color: #f85149; }
+.hoststate.unknown { color: #8b98a9; }
 .alertbar.err { border-color: #f8514966; background: #2a1a17; color: #f85149; }
 
 /* B9：登录遮罩与顶栏用户区 */

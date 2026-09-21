@@ -117,6 +117,13 @@ Get-ChildItem -Path $dstRuntime -Recurse -File -Include '*.new', '*.orig', '*.re
         $removed.Add($_.FullName.Substring($dstRuntime.Length).TrimStart('\'))
     }
 
+# 外壳自检留下的结果文件（跑过 DwsEdge.Shell.exe -SelfTest 才会有）也不该进交付包
+Get-ChildItem -Path $dstRuntime -Recurse -File -Filter 'shell-selftest.txt' -ErrorAction SilentlyContinue |
+    ForEach-Object {
+        Remove-Item -LiteralPath $_.FullName -Force
+        $removed.Add($_.FullName.Substring($dstRuntime.Length).TrimStart('\'))
+    }
+
 # 2.3 运行期数据（历史/去重/审计/spool/图片/日志/缩略图缓存）
 foreach ($sub in @('data', 'spool', 'images', 'logs', 'Log', 'cache')) {
     $dir = Join-Path $dstRuntime $sub
