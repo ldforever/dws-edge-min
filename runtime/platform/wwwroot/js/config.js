@@ -8,10 +8,10 @@
  *   * 存图策略表单（写 gateway.ini，校验 + 自动备份）；
  *   * 配置备份与回滚（config\ 与 Cfg\ 下的 .bak-* 都能一键还原）。
  */
-import { api } from "./api.js?v=31477bcc";
-import { $, badge, cell, clear, dash, el, notify, positionLabel } from "./dom.js?v=31477bcc";
-import { confirmBox, toast } from "./ui.js?v=31477bcc";
-import { applyBarError, applyBarFinish, applyBarStart, initApplyBar, refreshApplyBar, setApplyBaseline, triggerModeToUi } from "./applybar.js?v=31477bcc";
+import { api } from "./api.js?v=e1f3c4b4";
+import { $, badge, cell, clear, dash, el, notify, positionLabel } from "./dom.js?v=e1f3c4b4";
+import { confirmBox, toast } from "./ui.js?v=e1f3c4b4";
+import { applyBarError, applyBarFinish, applyBarStart, initApplyBar, refreshApplyBar, setApplyBaseline, triggerModeToUi } from "./applybar.js?v=e1f3c4b4";
 const TRIGGER_LABEL = {
     hard: "硬触发（光电）",
     soft: "软触发",

@@ -27,13 +27,16 @@ try {
   /* 隐私模式 / 禁用存储：用样式表里的默认深色 */
 }
 </script>
-<link rel="stylesheet" href="./app.css?v=31477bcc" />
+<link rel="stylesheet" href="./app.css?v=e1f3c4b4" />
 </head>
 <body>
 <header>
-  <div>
-    <h1>DWS 物流解码平台</h1>
-    <div class="sub">采集监控 · 设备信息 · 配置管理（V1）</div>
+  <!-- T0.6：品牌区（logo + 产品名 + 版本号）。版本号由 frontend\build.mjs 从仓库根 VERSION 自动写入，
+       不要手改 —— 改版本号只改 VERSION 一处，再跑一次 build。 -->
+  <div class="brand">
+    <span class="logo" data-icon="scan-barcode" data-icon-size="15"></span>
+    <h1>莱茨酷氪 DWS 物流解码平台</h1>
+    <span class="ver" id="brandVer" title="当前交付版本">V1.0.9</span>
   </div>
   <div class="statusbar" id="statusBar">
     <!-- T1：五个常驻状态胶囊（宿主 / 命令通道 / 相机 / 下游 / 图片盘） -->
@@ -117,21 +120,21 @@ try {
     <!-- T0：按"现场任务"分组，而不是按代码模块堆一排 -->
     <div class="navgroup">
       <div class="navgrouplabel">监控</div>
-      <button id="tab-realtime" class="active">实时监控</button>
-      <button id="tab-devices">设备信息</button>
-      <button id="tab-history">历史查询</button>
-      <button id="tab-stats">统计</button>
-      <button id="tab-diag">诊断</button>
+      <button id="tab-realtime" class="active"><span class="ico" data-icon="activity"></span>实时监控</button>
+      <button id="tab-devices"><span class="ico" data-icon="camera"></span>设备信息<span class="navbadge" id="badgeDevices"></span></button>
+      <button id="tab-history"><span class="ico" data-icon="search"></span>历史查询</button>
+      <button id="tab-stats"><span class="ico" data-icon="chart"></span>统计</button>
+      <button id="tab-diag"><span class="ico" data-icon="diagnosis"></span>诊断</button>
     </div>
     <div class="navgroup">
       <div class="navgrouplabel">配置</div>
-      <button id="tab-cameras">相机</button>
-      <button id="tab-output">输出对接</button>
-      <button id="tab-rules">规则</button>
+      <button id="tab-cameras"><span class="ico" data-icon="list"></span>相机<span class="navbadge" id="badgeCameras"></span></button>
+      <button id="tab-output"><span class="ico" data-icon="send"></span>输出对接</button>
+      <button id="tab-rules"><span class="ico" data-icon="filter"></span>规则</button>
     </div>
     <div class="navgroup">
       <div class="navgrouplabel">系统</div>
-      <button id="tab-system">系统与安全</button>
+      <button id="tab-system"><span class="ico" data-icon="shield"></span>系统与安全</button>
     </div>
   </nav>
 
@@ -899,6 +902,6 @@ try {
 </main>
 </div>
 
-<script type="module" src="./js/main.js?v=31477bcc"></script>
+<script type="module" src="./js/main.js?v=e1f3c4b4"></script>
 </body>
 </html>

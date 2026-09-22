@@ -15,6 +15,7 @@ import { api } from "./api.js";
 import type { ApiResult } from "./api.js";
 import { canRead } from "./auth.js";
 import { $, gb } from "./dom.js";
+import { renderNavBadges } from "./navbadges.js";
 import type { DeviceView, DownstreamResponse, HostStatus, Stats } from "./types.js";
 
 type CapsuleState = "ok" | "warn" | "bad" | "unknown";
@@ -206,16 +207,19 @@ export async function refreshStatusBar(): Promise<void> {
     for (const capsule of CAPSULES) {
       set(capsule.id, "unknown", capsule.name + "：登录后显示");
     }
+    // T0.6：导航角标也跟着清空，别留着上一次的旧数字
+    renderNavBadges(null, null);
     return;
   }
 
-  // 五个接口互不依赖：并发发，最慢的那个决定这一轮耗时
-  const [host, channel, devices, downstream, stats] = await Promise.all([
+  // 这几个接口互不依赖：并发发，最慢的那个决定这一轮耗时
+  const [host, channel, devices, downstream, stats, monitor] = await Promise.all([
     api.hostStatus(),
     api.hostChannel(),
     api.devices(),
     api.downstreamQuiet(),
-    api.stats()
+    api.stats(),
+    api.monitorSummary()
   ]);
 
   const hostState = renderHost(host);
@@ -223,4 +227,6 @@ export async function refreshStatusBar(): Promise<void> {
   renderCameras(devices);
   renderDownstream(downstream);
   renderDisk(stats);
+  // T0.6：侧边栏角标复用这一轮的结果，不再单独轮一次
+  renderNavBadges(devices.data, monitor.data);
 }

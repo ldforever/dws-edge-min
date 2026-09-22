@@ -28,6 +28,7 @@ import { initStats, refreshStats } from "./stats.js";
 import { initDiag, refreshDiag } from "./diag.js";
 import { initStatusBar, refreshStatusBar } from "./statusbar.js";
 import { initShell } from "./shell.js";
+import { initIcons } from "./icons.js";
 
 /**
  * P0：页签按"现场任务"分，不再按代码模块分：
@@ -80,6 +81,8 @@ function setConnectionState(connected: boolean): void {
 function bootstrap(): void {
   // T0：主题 / 信息密度先贴，避免后面首屏数据回来才换色
   initShell();
+  // T0.6：导航与品牌区的图标（内联 SVG，离线可用；纯装饰，失败也不影响功能）
+  initIcons();
 
   initRealtime();
   initDevices();

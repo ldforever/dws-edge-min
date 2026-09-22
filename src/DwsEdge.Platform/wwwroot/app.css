@@ -66,13 +66,28 @@ html[data-density="compact"] {
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--text); font-size: var(--font-base); font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; display: flex; flex-direction: column; }
 header { flex: 0 0 auto; display: flex; align-items: center; gap: 16px; padding: var(--pad-y) var(--pad-x); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .5px; }
-header .sub { color: var(--muted); font-size: 12px; }
+/* T0.6：品牌区（logo 方块 + 产品名 + 版本号小字） */
+.brand { display: flex; align-items: center; gap: 9px; }
+.brand .logo {
+  width: 22px; height: 22px; border-radius: 5px; flex: 0 0 auto;
+  background: var(--primary); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.brand h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .3px; }
+.brand .ver { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; }
 .layout { flex: 1 1 auto; min-height: 0; display: flex; align-items: stretch; }
 nav { width: 178px; flex: 0 0 178px; overflow: auto; background: var(--surface); border-right: 1px solid var(--border); padding: 10px 8px; }
-nav button { display: block; width: 100%; text-align: left; background: transparent; color: var(--text-2); border: 1px solid transparent; border-radius: 6px; padding: 6px 9px; font-size: 13px; cursor: pointer; font-family: inherit; }
+nav button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent; color: var(--text-2); border: 1px solid transparent; border-radius: 6px; padding: 6px 9px; font-size: 13px; cursor: pointer; font-family: inherit; }
 nav button:hover { background: var(--surface-2); border-color: var(--border); }
 nav button.active { background: var(--surface-2); border-color: var(--border-strong); color: var(--text); font-weight: 600; }
+/* 图标是纯装饰：跟着文字颜色走（stroke: currentColor），也不参与点击 */
+.ico { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; pointer-events: none; }
+.ico svg { display: block; }
+/* T0.6：导航角标。空的时候整块不显示，所以"没事"时不会挂个 0 */
+.navbadge { margin-left: auto; font-size: 11px; line-height: 1.5; padding: 0 6px; border-radius: 999px; border: 1px solid transparent; }
+.navbadge:empty { display: none; }
+.navbadge.info { background: var(--surface-3); color: var(--muted); border-color: var(--border); }
+.navbadge.alert { background: var(--bad-bg); color: var(--bad); border-color: var(--bad-a40); font-weight: 600; }
 .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted-2); }
 .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok-glow); }
@@ -192,7 +207,9 @@ html[data-nav="top"] nav {
 html[data-nav="top"] .navgroup { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
 html[data-nav="top"] .navgroup + .navgroup { border-left: 1px solid var(--border); padding-left: 12px; }
 html[data-nav="top"] .navgrouplabel { display: inline; padding: 0 4px; }
-html[data-nav="top"] nav button { display: inline-block; width: auto; }
+/* 横排时按钮并排，角标不再"靠右顶到底"，跟文字挨着 */
+html[data-nav="top"] nav button { display: inline-flex; width: auto; }
+html[data-nav="top"] .navbadge { margin-left: 2px; }
 
 /* 窄屏（笔记本 / 小屏）：侧栏收窄，别把内容挤没 */
 @media (max-width: 860px) {

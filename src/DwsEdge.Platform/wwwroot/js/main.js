@@ -4,22 +4,23 @@
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
  * 也没有全局变量：模块之间只通过 import 通信，方便以后换壳（WebView2）或加页面。
  */
-import { api } from "./api.js?v=31477bcc";
-import { connectStream } from "./sse.js?v=31477bcc";
-import { $ } from "./dom.js?v=31477bcc";
-import { applyCameraCounters, applyMonitorStats, initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=31477bcc";
-import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=31477bcc";
-import { initConfig, refreshConfig } from "./config.js?v=31477bcc";
-import { initRules, refreshRules } from "./rules.js?v=31477bcc";
-import { initDedup, refreshDedup } from "./dedup.js?v=31477bcc";
-import { initHistory, refreshHistory } from "./history.js?v=31477bcc";
-import { initDownstream, refreshDownstream } from "./downstream.js?v=31477bcc";
-import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=31477bcc";
-import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=31477bcc";
-import { initStats, refreshStats } from "./stats.js?v=31477bcc";
-import { initDiag, refreshDiag } from "./diag.js?v=31477bcc";
-import { initStatusBar, refreshStatusBar } from "./statusbar.js?v=31477bcc";
-import { initShell } from "./shell.js?v=31477bcc";
+import { api } from "./api.js?v=e1f3c4b4";
+import { connectStream } from "./sse.js?v=e1f3c4b4";
+import { $ } from "./dom.js?v=e1f3c4b4";
+import { applyCameraCounters, applyMonitorStats, initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=e1f3c4b4";
+import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=e1f3c4b4";
+import { initConfig, refreshConfig } from "./config.js?v=e1f3c4b4";
+import { initRules, refreshRules } from "./rules.js?v=e1f3c4b4";
+import { initDedup, refreshDedup } from "./dedup.js?v=e1f3c4b4";
+import { initHistory, refreshHistory } from "./history.js?v=e1f3c4b4";
+import { initDownstream, refreshDownstream } from "./downstream.js?v=e1f3c4b4";
+import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=e1f3c4b4";
+import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=e1f3c4b4";
+import { initStats, refreshStats } from "./stats.js?v=e1f3c4b4";
+import { initDiag, refreshDiag } from "./diag.js?v=e1f3c4b4";
+import { initStatusBar, refreshStatusBar } from "./statusbar.js?v=e1f3c4b4";
+import { initShell } from "./shell.js?v=e1f3c4b4";
+import { initIcons } from "./icons.js?v=e1f3c4b4";
 const PAGES = ["realtime", "devices", "history", "stats", "diag", "cameras", "output", "rules", "system"];
 function showPage(name) {
     for (const page of PAGES) {
@@ -63,6 +64,8 @@ function setConnectionState(connected) {
 function bootstrap() {
     // T0：主题 / 信息密度先贴，避免后面首屏数据回来才换色
     initShell();
+    // T0.6：导航与品牌区的图标（内联 SVG，离线可用；纯装饰，失败也不影响功能）
+    initIcons();
     initRealtime();
     initDevices();
     initConfig();

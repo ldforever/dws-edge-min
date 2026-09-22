@@ -39,6 +39,7 @@ const jsOut = path.join(wwwroot, "js");
 const cssSrc = path.join(here, "src", "styles.css");
 const cssOut = path.join(wwwroot, "app.css");
 const htmlOut = path.join(wwwroot, "index.html");
+const versionFile = path.join(root, "VERSION");
 
 const VERSION_PATTERN = /\?v=[0-9a-f]{6,16}/g;
 
@@ -129,11 +130,33 @@ function stampAssets(version) {
   return { jsChanged, htmlChanged };
 }
 
+/**
+ * 把仓库根 VERSION 写进顶条品牌区（<span class="ver" id="brandVer">…</span>）。
+ *
+ * 版本号仍然只有 VERSION 一个来源：build.ps1 用它写程序集版本与包名，这里用它写界面。
+ * 不这么做的话，界面上那个版本号就是第二个来源 —— 迟早忘了同步，现场报版本号会对不上。
+ */
+function stampVersion() {
+  if (!existsSync(versionFile) || !existsSync(htmlOut)) return false;
+  const appVersion = readFileSync(versionFile, "utf8").replace(/^\uFEFF/, "").trim();
+  if (!appVersion) return false;
+
+  const html = readFileSync(htmlOut, "utf8");
+  const stamped = html.replace(
+    /(<span class="ver" id="brandVer"[^>]*>)[^<]*(<\/span>)/,
+    (_match, open, close) => open + appVersion + close
+  );
+  if (stamped === html) return false;
+  writeFileSync(htmlOut, stamped, "utf8");
+  return true;
+}
+
 function buildOnce() {
   copyCss();
   const version = contentVersion();
   const result = stampAssets(version);
-  return { version, ...result };
+  const versionStamped = stampVersion();
+  return { version, ...result, versionStamped };
 }
 
 if (process.argv.includes("--watch")) {
@@ -176,5 +199,6 @@ if (process.argv.includes("--watch")) {
   console.log("  " + path.relative(root, jsOut) + "\\*.js（" + jsFiles().length + " 个模块）");
   console.log("  " + path.relative(root, cssOut));
   console.log("  " + path.relative(root, htmlOut) + " → ?v=" + result.version
-    + (result.jsChanged + (result.htmlChanged ? 1 : 0) > 0 ? "（引用已更新）" : "（内容未变，引用保持不变）"));
+    + (result.jsChanged + (result.htmlChanged ? 1 : 0) > 0 ? "（引用已更新）" : "（内容未变，引用保持不变）")
+    + (result.versionStamped ? "，版本号已写入顶条" : ""));
 }

@@ -11,9 +11,10 @@
  *   2) 单个接口失败只染它自己那一个胶囊，不会把整条状态条拖红；
  *   3) 只在状态真的变化时写 DOM，避免每 5 秒无谓地动一次布局。
  */
-import { api } from "./api.js?v=31477bcc";
-import { canRead } from "./auth.js?v=31477bcc";
-import { $, gb } from "./dom.js?v=31477bcc";
+import { api } from "./api.js?v=e1f3c4b4";
+import { canRead } from "./auth.js?v=e1f3c4b4";
+import { $, gb } from "./dom.js?v=e1f3c4b4";
+import { renderNavBadges } from "./navbadges.js?v=e1f3c4b4";
 /** 五个胶囊的 id（顺序 = 页头从左到右） */
 const CAPSULES = [
     { id: "hostState", name: "采集宿主" },
@@ -175,19 +176,24 @@ export async function refreshStatusBar() {
         for (const capsule of CAPSULES) {
             set(capsule.id, "unknown", capsule.name + "：登录后显示");
         }
+        // T0.6：导航角标也跟着清空，别留着上一次的旧数字
+        renderNavBadges(null, null);
         return;
     }
-    // 五个接口互不依赖：并发发，最慢的那个决定这一轮耗时
-    const [host, channel, devices, downstream, stats] = await Promise.all([
+    // 这几个接口互不依赖：并发发，最慢的那个决定这一轮耗时
+    const [host, channel, devices, downstream, stats, monitor] = await Promise.all([
         api.hostStatus(),
         api.hostChannel(),
         api.devices(),
         api.downstreamQuiet(),
-        api.stats()
+        api.stats(),
+        api.monitorSummary()
     ]);
     const hostState = renderHost(host);
     renderChannel(channel, hostState);
     renderCameras(devices);
     renderDownstream(downstream);
     renderDisk(stats);
+    // T0.6：侧边栏角标复用这一轮的结果，不再单独轮一次
+    renderNavBadges(devices.data, monitor.data);
 }
