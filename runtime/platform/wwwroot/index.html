@@ -9,7 +9,23 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=3565c8bb" />
+<script>
+/*
+  T0：在样式表之前把上次选的主题/信息密度贴上（key 与 frontend\src\shell.ts 一致）。
+  不这么写的话，选了"浅色"的人每次刷新都会先闪一帧深色再跳成浅色。
+*/
+try {
+  var uiTheme = localStorage.getItem("dws.ui.theme") || "dark";
+  if (uiTheme === "auto") {
+    uiTheme = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+  }
+  document.documentElement.setAttribute("data-theme", uiTheme);
+  document.documentElement.setAttribute("data-density", localStorage.getItem("dws.ui.density") || "comfortable");
+} catch (e) {
+  /* 隐私模式 / 禁用存储：用样式表里的默认深色 */
+}
+</script>
+<link rel="stylesheet" href="./app.css?v=91099a1e" />
 </head>
 <body>
 <header>
@@ -18,23 +34,48 @@
     <div class="sub">采集监控 · 设备信息 · 配置管理（V1）</div>
   </div>
   <nav>
-    <button id="tab-realtime" class="active">实时监控</button>
-    <button id="tab-devices">设备信息</button>
-    <button id="tab-history">历史查询</button>
-    <button id="tab-stats">统计</button>
-    <button id="tab-diag">诊断</button>
-    <span class="navsep"></span>
-    <button id="tab-cameras">相机</button>
-    <button id="tab-output">输出对接</button>
-    <button id="tab-rules">规则</button>
-    <button id="tab-system">系统与安全</button>
+    <!-- T0：按"现场任务"分组，而不是按代码模块堆一排 -->
+    <span class="navgroup">
+      <span class="navgrouplabel">监控</span>
+      <button id="tab-realtime" class="active">实时监控</button>
+      <button id="tab-devices">设备信息</button>
+      <button id="tab-history">历史查询</button>
+      <button id="tab-stats">统计</button>
+      <button id="tab-diag">诊断</button>
+    </span>
+    <span class="navgroup">
+      <span class="navgrouplabel">配置</span>
+      <button id="tab-cameras">相机</button>
+      <button id="tab-output">输出对接</button>
+      <button id="tab-rules">规则</button>
+    </span>
+    <span class="navgroup">
+      <span class="navgrouplabel">系统</span>
+      <button id="tab-system">系统与安全</button>
+    </span>
   </nav>
-  <div class="status">
-    <span id="hostState" class="hoststate unknown">采集宿主：—</span>
-    <span id="dot" class="dot"></span><span id="conn">连接中…</span>
+  <div class="statusbar" id="statusBar">
+    <!-- T1：五个常驻状态胶囊（宿主 / 命令通道 / 相机 / 下游 / 图片盘） -->
+    <span id="hostState" class="sbar-item unknown" title="采集宿主状态"><span class="sbar-dot"></span>采集宿主：—</span>
+    <span id="sbChannel" class="sbar-item unknown" title="宿主命令通道（软触发/补码走它）"><span class="sbar-dot"></span>命令通道：—</span>
+    <span id="sbCameras" class="sbar-item unknown" title="相机在线 / 总数"><span class="sbar-dot"></span>相机：—</span>
+    <span id="sbDownstream" class="sbar-item unknown" title="下游输出连接状态"><span class="sbar-dot"></span>下游：—</span>
+    <span id="sbDisk" class="sbar-item unknown" title="图片盘占用"><span class="sbar-dot"></span>图片盘：—</span>
+    <span class="sbar-item unknown" id="connItem" title="与平台的实时通道（SSE）"><span class="sbar-dot" id="dot"></span><span id="conn">连接中…</span></span>
     <span id="userBox" class="user">未登录</span>
     <button class="btn secondary small" id="btnLogout" style="display:none">退出</button>
   </div>
+  <span class="uiops" title="显示设置（记在本机浏览器里）">
+    <select id="uiTheme" aria-label="主题">
+      <option value="dark" selected>深色</option>
+      <option value="light">浅色</option>
+      <option value="auto">跟随系统</option>
+    </select>
+    <select id="uiDensity" aria-label="信息密度">
+      <option value="comfortable">舒适</option>
+      <option value="compact">紧凑</option>
+    </select>
+  </span>
 </header>
 
 <!-- ==================== 全局「一键应用」条：在任何页签都看得见，改了就亮 ==================== -->
@@ -846,6 +887,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=3565c8bb"></script>
+<script type="module" src="./js/main.js?v=91099a1e"></script>
 </body>
 </html>

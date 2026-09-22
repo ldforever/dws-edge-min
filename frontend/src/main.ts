@@ -26,7 +26,8 @@ import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderM
 import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js";
 import { initStats, refreshStats } from "./stats.js";
 import { initDiag, refreshDiag } from "./diag.js";
-import { initHostState } from "./hoststate.js";
+import { initStatusBar, refreshStatusBar } from "./statusbar.js";
+import { initShell } from "./shell.js";
 
 /**
  * P0：页签按"现场任务"分，不再按代码模块分：
@@ -71,9 +72,15 @@ function showPage(name: PageName): void {
 function setConnectionState(connected: boolean): void {
   $("dot").className = "dot " + (connected ? "on" : "off");
   $("conn").textContent = connected ? "已连接" : "重连中…";
+  // 这一格也参与"一票否决"：连不上平台就什么都看不到，所以跟着变色
+  $("connItem").className = "sbar-item " + (connected ? "ok" : "bad");
+  $("connItem").title = connected ? "与平台的实时通道正常（SSE）" : "与平台的实时通道断了，正在重连";
 }
 
 function bootstrap(): void {
+  // T0：主题 / 信息密度先贴，避免后面首屏数据回来才换色
+  initShell();
+
   initRealtime();
   initDevices();
   initConfig();
@@ -85,7 +92,7 @@ function bootstrap(): void {
   initAuth();
   initStats();
   initDiag();
-  initHostState();
+  initStatusBar();
 
   for (const page of PAGES) {
     $("tab-" + page).addEventListener("click", () => showPage(page));
@@ -122,8 +129,9 @@ function bootstrap(): void {
 
   // 首屏也拉一次监控（SSE 会补发，但"页面比平台先起来"或断线期间得靠这个）
   void refreshMonitor();
-  // B9：先问一次登录态，决定要不要弹登录框
-  void refreshAuth();
+  // B9：先问一次登录态，决定要不要弹登录框；
+  // T1：登录态一确定就立刻刷一次页头状态条（不然要等 5 秒的轮询）
+  void refreshAuth().then(() => refreshStatusBar());
 }
 
 /** 新包裹到达后刷新统计（合并 500ms 内的多次刷新） */

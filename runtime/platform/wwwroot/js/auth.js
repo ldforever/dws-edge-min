@@ -7,9 +7,9 @@
  *   * 配置页"账号与安全" —— 改自己的密码、管理员改策略 / 管账号 / 看登录记录 / 轮换服务令牌；
  *   * 401 统一处理 —— 任何接口回 401（会话过期、被别人踢下线）都自动弹回登录框。
  */
-import { api, onUnauthorized } from "./api.js?v=3565c8bb";
-import { $, badge, cell, clear, el, notify } from "./dom.js?v=3565c8bb";
-import { confirmBox } from "./ui.js?v=3565c8bb";
+import { api, onUnauthorized } from "./api.js?v=91099a1e";
+import { $, badge, cell, clear, el, notify } from "./dom.js?v=91099a1e";
+import { confirmBox } from "./ui.js?v=91099a1e";
 const ROLE_LABEL = {
     admin: "管理员",
     operator: "操作员",
@@ -78,6 +78,21 @@ export async function refreshAuth(showMessage = false) {
     if (showMessage && status.enabled && !status.authenticated) {
         $("loginMsg").textContent = "登录已过期，请重新登录";
     }
+}
+/**
+ * T1：现在能不能读管理接口的数据？
+ *   已登录 / 根本没开鉴权 / 只读接口没受保护 —— 三种情况都算"能读"。
+ *   页头状态条用它来决定"要不要发这一轮轮询"：还没问过平台（status 为空）时先别发，
+ *   否则那一轮必然拿 401，而 401 会弹登录框、把用户正在输密码的光标抢回用户名框。
+ */
+export function canRead() {
+    if (!status)
+        return false;
+    if (!status.enabled)
+        return true;
+    if (status.authenticated)
+        return true;
+    return !status.protectRead;
 }
 function renderHeader() {
     const box = $("userBox");

@@ -88,6 +88,19 @@ export async function refreshAuth(showMessage = false): Promise<void> {
   }
 }
 
+/**
+ * T1：现在能不能读管理接口的数据？
+ *   已登录 / 根本没开鉴权 / 只读接口没受保护 —— 三种情况都算"能读"。
+ *   页头状态条用它来决定"要不要发这一轮轮询"：还没问过平台（status 为空）时先别发，
+ *   否则那一轮必然拿 401，而 401 会弹登录框、把用户正在输密码的光标抢回用户名框。
+ */
+export function canRead(): boolean {
+  if (!status) return false;
+  if (!status.enabled) return true;
+  if (status.authenticated) return true;
+  return !status.protectRead;
+}
+
 function renderHeader(): void {
   const box = $("userBox");
   const logout = $<HTMLButtonElement>("btnLogout");

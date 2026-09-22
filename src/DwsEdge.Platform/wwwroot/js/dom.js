@@ -1,4 +1,4 @@
-import { inferKind, toast } from "./ui.js?v=3565c8bb";
+import { inferKind, toast } from "./ui.js?v=91099a1e";
 /** 取元素（找不到直接抛，避免后面出现"神秘的空指针"） */
 export function $(id) {
     const el = document.getElementById(id);

@@ -4,21 +4,22 @@
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
  * 也没有全局变量：模块之间只通过 import 通信，方便以后换壳（WebView2）或加页面。
  */
-import { api } from "./api.js?v=3565c8bb";
-import { connectStream } from "./sse.js?v=3565c8bb";
-import { $ } from "./dom.js?v=3565c8bb";
-import { applyCameraCounters, applyMonitorStats, initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=3565c8bb";
-import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=3565c8bb";
-import { initConfig, refreshConfig } from "./config.js?v=3565c8bb";
-import { initRules, refreshRules } from "./rules.js?v=3565c8bb";
-import { initDedup, refreshDedup } from "./dedup.js?v=3565c8bb";
-import { initHistory, refreshHistory } from "./history.js?v=3565c8bb";
-import { initDownstream, refreshDownstream } from "./downstream.js?v=3565c8bb";
-import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=3565c8bb";
-import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=3565c8bb";
-import { initStats, refreshStats } from "./stats.js?v=3565c8bb";
-import { initDiag, refreshDiag } from "./diag.js?v=3565c8bb";
-import { initHostState } from "./hoststate.js?v=3565c8bb";
+import { api } from "./api.js?v=91099a1e";
+import { connectStream } from "./sse.js?v=91099a1e";
+import { $ } from "./dom.js?v=91099a1e";
+import { applyCameraCounters, applyMonitorStats, initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=91099a1e";
+import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=91099a1e";
+import { initConfig, refreshConfig } from "./config.js?v=91099a1e";
+import { initRules, refreshRules } from "./rules.js?v=91099a1e";
+import { initDedup, refreshDedup } from "./dedup.js?v=91099a1e";
+import { initHistory, refreshHistory } from "./history.js?v=91099a1e";
+import { initDownstream, refreshDownstream } from "./downstream.js?v=91099a1e";
+import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=91099a1e";
+import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=91099a1e";
+import { initStats, refreshStats } from "./stats.js?v=91099a1e";
+import { initDiag, refreshDiag } from "./diag.js?v=91099a1e";
+import { initStatusBar, refreshStatusBar } from "./statusbar.js?v=91099a1e";
+import { initShell } from "./shell.js?v=91099a1e";
 const PAGES = ["realtime", "devices", "history", "stats", "diag", "cameras", "output", "rules", "system"];
 function showPage(name) {
     for (const page of PAGES) {
@@ -55,8 +56,13 @@ function showPage(name) {
 function setConnectionState(connected) {
     $("dot").className = "dot " + (connected ? "on" : "off");
     $("conn").textContent = connected ? "已连接" : "重连中…";
+    // 这一格也参与"一票否决"：连不上平台就什么都看不到，所以跟着变色
+    $("connItem").className = "sbar-item " + (connected ? "ok" : "bad");
+    $("connItem").title = connected ? "与平台的实时通道正常（SSE）" : "与平台的实时通道断了，正在重连";
 }
 function bootstrap() {
+    // T0：主题 / 信息密度先贴，避免后面首屏数据回来才换色
+    initShell();
     initRealtime();
     initDevices();
     initConfig();
@@ -68,7 +74,7 @@ function bootstrap() {
     initAuth();
     initStats();
     initDiag();
-    initHostState();
+    initStatusBar();
     for (const page of PAGES) {
         $("tab-" + page).addEventListener("click", () => showPage(page));
     }
@@ -101,8 +107,9 @@ function bootstrap() {
     });
     // 首屏也拉一次监控（SSE 会补发，但"页面比平台先起来"或断线期间得靠这个）
     void refreshMonitor();
-    // B9：先问一次登录态，决定要不要弹登录框
-    void refreshAuth();
+    // B9：先问一次登录态，决定要不要弹登录框；
+    // T1：登录态一确定就立刻刷一次页头状态条（不然要等 5 秒的轮询）
+    void refreshAuth().then(() => refreshStatusBar());
 }
 /** 新包裹到达后刷新统计（合并 500ms 内的多次刷新） */
 let statsTimer = null;

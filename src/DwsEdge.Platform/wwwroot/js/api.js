@@ -82,6 +82,14 @@ export const api = {
     historyExportUrl: (filter) => "/api/history/export?" + historyQueryString(filter, false),
     // ---- B4 下游 TCP 输出 ----
     downstream: () => request("/api/downstream"),
+    /**
+     * T1：页头状态条专用的"安静版"下游状态。
+     *
+     * 打的是同一个接口，区别只在 401 时**不弹登录框**：状态条是 5 秒一次的后台轮询，
+     * 未登录（或会话过期）时让它去弹登录框，会把正在输密码的光标抢回用户名框（见 auth.ts showMask）。
+     * 所以它单独留一个入口，输出对接页仍然用上面的 downstream()（那里 401 该弹就得弹）。
+     */
+    downstreamQuiet: () => request("/api/downstream", { silent401: true }),
     saveDownstream: (options) => request("/api/downstream", { method: "POST", json: options }),
     testDownstream: (options) => request("/api/downstream/test", {
         method: "POST",
