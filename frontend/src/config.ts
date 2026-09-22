@@ -10,7 +10,7 @@
  */
 import { api } from "./api.js";
 import { $, badge, cell, clear, dash, el, notify, positionLabel } from "./dom.js";
-import { confirmBox } from "./ui.js";
+import { confirmBox, toast } from "./ui.js";
 import {
   applyBarError,
   applyBarFinish,
@@ -159,7 +159,7 @@ function exitKind(exitCode: number): "ok" | "warn" | "err" {
 async function applyConfig(): Promise<void> {
   const triggerMode = $<HTMLSelectElement>("cfgTrigger").value;
   const useCameras = $<HTMLInputElement>("cfgUseCameras").checked;
-  const skipVerify = $<HTMLInputElement>("cfgSkipVerify").checked;
+  let skipVerify = $<HTMLInputElement>("cfgSkipVerify").checked;
 
   let cameras: string[] | null = null;
   if (useCameras) {
@@ -175,6 +175,18 @@ async function applyConfig(): Promise<void> {
     if (!cameras.length) {
       notify("相机清单是空的：请先填写，或取消勾选「应用上面的相机清单」");
       return;
+    }
+  }
+
+  // 应用前预检：设备不可用就别白等（会先停宿主、校验必失败、再回滚）
+  if (!skipVerify) {
+    const decision = await precheckBeforeApply(cameras);
+    if (decision === "cancel") {
+      return;
+    }
+    if (decision === "skip") {
+      skipVerify = true;
+      markSkipVerify();
     }
   }
 
@@ -376,6 +388,71 @@ function cameraMsg(text: string, kind: "muted" | "probe-ok" | "probe-bad" | "pro
   el0.textContent = text;
 }
 
+/**
+ * 应用前的设备可用性预检。
+ *
+ * 为什么要有它：界面上「校验清单」只查**格式**（IP 合法性/重复/空值），永远能过；
+ * 而「一键应用」要**真的启动一次大华 SDK** 做回读校验 —— 设备不在线时必然失败，
+ * 而且 apply 会先把宿主停掉，现场白等 20 秒再看到"回滚后仍起不来"。
+ * 所以这里先问一句：要么只写配置（跳过校验），要么取消去查设备。
+ *
+ * 返回：ok = 设备看着正常，照常应用；skip = 用户选择只写配置；cancel = 用户放弃。
+ */
+async function precheckBeforeApply(cameras: string[] | null): Promise<"ok" | "skip" | "cancel"> {
+  const statusRes = await api.hostStatus();
+  const hostState = statusRes.data?.state ?? "";
+  const hostRetrying = hostState === "retrying";
+  const hostDown = hostState === "unknown" || hostState === "stopped";
+
+  const ips = (cameras ?? [])
+    .filter((line) => line.toLowerCase().startsWith("ip="))
+    .map((line) => (line.split(",")[0] ?? "").substring(3).trim())
+    .filter((ip) => ip.length > 0);
+
+  let missing: string[] = [];
+  if (ips.length > 0) {
+    const probe = await api.cameraProbe(ips);
+    missing = (probe.data?.results ?? []).filter((item) => !item.discovered).map((item) => item.ip);
+  }
+
+  if (!hostRetrying && !hostDown && missing.length === 0) {
+    return "ok";
+  }
+
+  const reasons: string[] = [];
+  if (hostRetrying) {
+    reasons.push("· 采集宿主正在等设备：" + (statusRes.data?.note ?? ""));
+  }
+  if (hostDown) {
+    reasons.push("· 采集宿主没在运行（" + (statusRes.data?.note ?? "") + "）");
+  }
+  if (missing.length > 0) {
+    reasons.push("· 这些 IP 还没被 SDK 发现：" + missing.join("、"));
+  }
+
+  const skip = await confirmBox(
+    "设备当前不可用，现在点「应用」会先停掉采集宿主，而且 SDK 校验必定失败并回滚：\n\n" +
+      reasons.join("\n") +
+      "\n\n选「只写配置（跳过校验）」会照常保存配置，但相机接上之前不会出数据；" +
+      "选「取消」请先给相机断电重上电（或插好加密狗）再试。",
+    {
+      title: "应用前预检：设备不可用",
+      okText: "只写配置（跳过校验）",
+      cancelText: "取消",
+      danger: true
+    }
+  );
+
+  return skip ? "skip" : "cancel";
+}
+
+/** 用户选择"只写配置"时，把界面上的勾选框也同步上，避免显示与实际不一致 */
+function markSkipVerify(): void {
+  const box = $<HTMLInputElement>("cfgSkipVerify");
+  box.checked = true;
+  toast("已按「只写配置」提交：跳过 SDK 校验，配置照常保存", "warn");
+}
+
 /** P0：扫描在线相机 —— 把 SDK 已经发现的设备直接补进清单（用 id=厂商:序列号，和 SDK 上报身份一致） */
 async function scanOnlineCameras(): Promise<void> {
   cameraMsg("正在向采集宿主要在线相机列表…");
@@ -526,7 +603,20 @@ async function applyCamerasFromEditor(): Promise<void> {
   }
 
   const cameras = cameraLinesFromEditor();
-  const skipVerify = $<HTMLInputElement>("cfgSkipVerify").checked;
+  let skipVerify = $<HTMLInputElement>("cfgSkipVerify").checked;
+
+  // 同一个预检：相机页的「保存并应用」走的是同一条 apply 路径
+  if (!skipVerify) {
+    const decision = await precheckBeforeApply(cameras);
+    if (decision === "cancel") {
+      return;
+    }
+    if (decision === "skip") {
+      skipVerify = true;
+      markSkipVerify();
+    }
+  }
+
   const body: ApplyRequest = {
     triggerMode: "",
     cameras,

@@ -7,8 +7,8 @@
  * 数据全部来自 B3 的历史库（同一个索引、同一套过滤），所以"看板的数字"就是"库里查出来的数字"。
  * 班次在页面下方可配（默认白班 08:00-20:00、夜班 20:00-08:00，跨天班次的凌晨算前一天）。
  */
-import { api } from "./api.js?v=7e55d4ad";
-import { $, badge, csvCell, cell, clear, downloadText, el, notify } from "./dom.js?v=7e55d4ad";
+import { api } from "./api.js?v=3565c8bb";
+import { $, badge, csvCell, cell, clear, downloadText, el, notify } from "./dom.js?v=3565c8bb";
 const DIM_LABEL = {
     camera: "按相机",
     shift: "按班次",

@@ -9,7 +9,7 @@
   由 frontend 工程编译成同目录下的 app.css 与 js\*.js（原生 ES Module，无打包器）。
   改界面：cd frontend && npm run build（或 npm run watch），刷新浏览器即可。
 -->
-<link rel="stylesheet" href="./app.css?v=7e55d4ad" />
+<link rel="stylesheet" href="./app.css?v=3565c8bb" />
 </head>
 <body>
 <header>
@@ -427,7 +427,7 @@
         <button class="btn secondary small" id="btnCamScan">扫描在线相机</button>
         <button class="btn secondary small" id="btnCamProbe">连通性预检</button>
         <button class="btn secondary small" id="btnCamAdd">新增一行</button>
-        <button class="btn secondary small" id="btnCamCheck">校验清单</button>
+        <button class="btn secondary small" id="btnCamCheck" title="只做格式校验：IP 是否合法、有没有重复、值是否为空。设备能不能连上由顶部「一键应用」里的 SDK 校验负责">校验清单格式</button>
         <button class="btn secondary small" id="btnCamFill">用当前 cfg 填充</button>
         <button class="btn" id="btnCamApply">保存并应用</button>
         <span id="camEditMsg" class="muted" style="font-size:12px"></span>
@@ -846,6 +846,6 @@
   </section>
 </main>
 
-<script type="module" src="./js/main.js?v=7e55d4ad"></script>
+<script type="module" src="./js/main.js?v=3565c8bb"></script>
 </body>
 </html>

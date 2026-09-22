@@ -6,8 +6,8 @@
  *   * 返回里带 total（命中总数）和 elapsedMs（服务端耗时），界面直接显示，方便现场自证性能；
  *   * 导出是打开一个下载链接（CSV，UTF-8 BOM，Excel 直接能开）。
  */
-import { api } from "./api.js?v=7e55d4ad";
-import { $, cell, clear, el, imageCell, notify, positionLabel } from "./dom.js?v=7e55d4ad";
+import { api } from "./api.js?v=3565c8bb";
+import { $, cell, clear, el, imageCell, notify, positionLabel } from "./dom.js?v=3565c8bb";
 let lastResult = null;
 export function initHistory() {
     $("btnHistoryQuery").addEventListener("click", () => {

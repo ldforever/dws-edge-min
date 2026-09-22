@@ -5,8 +5,8 @@
  * 现在宿主会在启动失败时按配置重试，并把状态写进 logs\host-status.json；平台把它整理成
  * "运行中 / 正在等相机（第 N 次重试，M 秒后再试）/ 未运行"，这里每 5 秒刷一次显示在页头。
  */
-import { api } from "./api.js?v=7e55d4ad";
-import { $ } from "./dom.js?v=7e55d4ad";
+import { api } from "./api.js?v=3565c8bb";
+import { $ } from "./dom.js?v=3565c8bb";
 let timer = null;
 /** 5 秒轮询一次；失败也不弹提示（页头状态本来就该是"安静的"） */
 export function initHostState() {

@@ -10,8 +10,8 @@
  *   * SSE 的 type=monitor 快照（平台按检查间隔推，界面上的秒数/在线率会自己走，不用轮询）；
  *   * /api/monitor/* 接口（切页、点刷新时拉一次，断线后也能补上）。
  */
-import { api } from "./api.js?v=7e55d4ad";
-import { $, badge, cell, clear, dash, el } from "./dom.js?v=7e55d4ad";
+import { api } from "./api.js?v=3565c8bb";
+import { $, badge, cell, clear, dash, el } from "./dom.js?v=3565c8bb";
 const EVENT_LABEL = {
     offline: "掉线",
     online: "上线",
