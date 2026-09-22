@@ -62,19 +62,22 @@ html[data-density="compact"] {
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); font-size: var(--font-base); font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; }
-header { display: flex; align-items: center; gap: 16px; padding: var(--pad-y) var(--pad-x); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+/* T0.5：应用外壳 —— 顶条与应用条固定，导航与内容各自滚动 */
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font-size: var(--font-base); font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; display: flex; flex-direction: column; }
+header { flex: 0 0 auto; display: flex; align-items: center; gap: 16px; padding: var(--pad-y) var(--pad-x); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .5px; }
 header .sub { color: var(--muted); font-size: 12px; }
-nav { display: flex; gap: 6px; margin-left: 12px; }
-nav button { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); border-radius: 6px; padding: 7px 14px; font-size: 13px; cursor: pointer; font-family: inherit; }
-nav button:hover { border-color: var(--border-strong); }
-nav button.active { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
+.layout { flex: 1 1 auto; min-height: 0; display: flex; align-items: stretch; }
+nav { width: 178px; flex: 0 0 178px; overflow: auto; background: var(--surface); border-right: 1px solid var(--border); padding: 10px 8px; }
+nav button { display: block; width: 100%; text-align: left; background: transparent; color: var(--text-2); border: 1px solid transparent; border-radius: 6px; padding: 6px 9px; font-size: 13px; cursor: pointer; font-family: inherit; }
+nav button:hover { background: var(--surface-2); border-color: var(--border); }
+nav button.active { background: var(--surface-2); border-color: var(--border-strong); color: var(--text); font-weight: 600; }
 .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted-2); }
 .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok-glow); }
 .dot.off { background: var(--bad); }
-main { padding: var(--pad-y) var(--pad-x) 40px; }
+main { flex: 1 1 auto; min-width: 0; overflow: auto; padding: var(--pad-y) var(--pad-x) 40px; }
 section.page { display: none; }
 section.page.active { display: block; }
 .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--gap-main); margin-bottom: 20px; }
@@ -159,7 +162,7 @@ a.img:hover img.thumb { border-color: var(--accent); }
 
 /* P0：全局「一键应用」条 —— 任何页签都看得见，清单有改动就变黄 */
 .applybar {
-  position: sticky; top: 0; z-index: 30;
+  position: sticky; top: 0; z-index: 30; flex: 0 0 auto;
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   padding: 10px var(--pad-x); background: var(--surface-3); border-bottom: 1px solid var(--border);
 }
@@ -170,13 +173,31 @@ a.img:hover img.thumb { border-color: var(--accent); }
 .applybar.dirtyState { background: var(--warn-bg-dirty); border-bottom-color: var(--warn-a53); }
 
 /* ------------------------------------------------------------------
-   T0：分组导航（监控 / 配置 / 系统）+ 显示设置（主题、密度）
+   T0：分组导航（监控 / 配置 / 系统）+ 显示设置（导航形态、主题、密度）
+   T0.5：导航默认是左侧侧边栏；<html data-nav="top"> 时改成页头下方的横排标签条。
+         DOM 完全不动，只换样式 —— 点位回归脚本断言的就是这些 id，不能因为换形态而改结构。
    ------------------------------------------------------------------ */
-.navgroup { display: inline-flex; align-items: center; gap: 6px; }
-.navgroup + .navgroup { border-left: 1px solid var(--border); padding-left: 12px; }
-.navgrouplabel { font-size: 11px; color: var(--muted-2); letter-spacing: .5px; }
+.navgroup { margin-bottom: 10px; }
+.navgrouplabel { display: block; padding: 4px 8px; font-size: 11px; color: var(--muted-2); letter-spacing: .5px; }
 .uiops { display: inline-flex; align-items: center; gap: 6px; }
 .uiops select { font-size: 12px; padding: 4px 6px; }
+
+/* 顶部标签形态（"显示设置 → 导航形态"切到"顶部标签"时走这一套） */
+html[data-nav="top"] .layout { flex-direction: column; }
+html[data-nav="top"] nav {
+  width: auto; flex: 0 0 auto; overflow: visible;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px var(--pad-x); border-right: 0; border-bottom: 1px solid var(--border);
+}
+html[data-nav="top"] .navgroup { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+html[data-nav="top"] .navgroup + .navgroup { border-left: 1px solid var(--border); padding-left: 12px; }
+html[data-nav="top"] .navgrouplabel { display: inline; padding: 0 4px; }
+html[data-nav="top"] nav button { display: inline-block; width: auto; }
+
+/* 窄屏（笔记本 / 小屏）：侧栏收窄，别把内容挤没 */
+@media (max-width: 860px) {
+  nav { width: 150px; flex-basis: 150px; }
+}
 
 /* ------------------------------------------------------------------
    T1：页头状态条（宿主 / 命令通道 / 相机 / 下游 / 图片盘）

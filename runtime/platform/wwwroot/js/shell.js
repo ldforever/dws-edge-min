@@ -1,5 +1,6 @@
 /**
- * T0：外壳级显示设置 —— 主题（跟随系统 / 深色 / 浅色）与信息密度（舒适 / 紧凑）。
+ * T0 / T0.5：外壳级显示设置 —— 导航形态（左侧栏 / 顶部标签）、主题（跟随系统 / 深色 / 浅色）、
+ * 信息密度（舒适 / 紧凑）。
  *
  * 为什么放在浏览器里、不放到后端配置：
  *   主题和密度是"看的人"的偏好，不是"这台设备"的配置。现场大屏要紧凑（一屏多塞几行），
@@ -7,12 +8,14 @@
  *   所以只写本机 localStorage：换浏览器、换机器就是各自的默认值。
  *
  * index.html 的 <head> 里有一段同样 key 的小脚本，负责在样式表加载**之前**先把
- * data-theme / data-density 贴上 —— 否则选了浅色的人每次刷新都会先闪一帧深色。
- * 两处逻辑要一起改（key 一共就两个，写在这里做记录）。
+ * data-theme / data-density / data-nav 贴上 —— 否则选了浅色或侧栏的人每次刷新都会先闪一下。
+ * 两处逻辑要一起改（key 一共就三个，写在这里做记录）：
+ *   dws.ui.theme / dws.ui.density / dws.ui.nav
  */
-import { $ } from "./dom.js?v=91099a1e";
+import { $ } from "./dom.js?v=31477bcc";
 const THEME_KEY = "dws.ui.theme";
 const DENSITY_KEY = "dws.ui.density";
+const NAV_KEY = "dws.ui.nav";
 const LIGHT_QUERY = "(prefers-color-scheme: light)";
 function readChoice(key, fallback) {
     try {
@@ -41,6 +44,10 @@ function normalizeTheme(value) {
 function normalizeDensity(value) {
     return value === "compact" ? "compact" : "comfortable";
 }
+/** 默认左侧栏（跟设计图一致）；不认识的值一律当 left，别把导航弄没了 */
+function normalizeNav(value) {
+    return value === "top" ? "top" : "left";
+}
 /** "跟随系统"在这里落成具体的 dark / light —— CSS 只认这两个值 */
 function resolveTheme(choice) {
     if (choice !== "auto")
@@ -53,15 +60,31 @@ export function applyTheme(choice) {
 export function applyDensity(choice) {
     document.documentElement.dataset.density = choice === "compact" ? "compact" : "comfortable";
 }
+/**
+ * 导航形态只改 <html data-nav>，DOM 一行都不动。
+ * "top" 时 styles.css 会把侧栏横过来放到应用条下面（见 styles.css 里 html[data-nav="top"] 那一段）。
+ */
+export function applyNav(choice) {
+    document.documentElement.dataset.nav = choice === "top" ? "top" : "left";
+}
 export function initShell() {
+    const navSelect = $("uiNav");
     const themeSelect = $("uiTheme");
     const densitySelect = $("uiDensity");
+    const nav = normalizeNav(readChoice(NAV_KEY, "left"));
     const theme = normalizeTheme(readChoice(THEME_KEY, "dark"));
     const density = normalizeDensity(readChoice(DENSITY_KEY, "comfortable"));
+    navSelect.value = nav;
     themeSelect.value = theme;
     densitySelect.value = density;
+    applyNav(nav);
     applyTheme(theme);
     applyDensity(density);
+    navSelect.addEventListener("change", () => {
+        const choice = normalizeNav(navSelect.value);
+        writeChoice(NAV_KEY, choice);
+        applyNav(choice);
+    });
     themeSelect.addEventListener("change", () => {
         const choice = normalizeTheme(themeSelect.value);
         writeChoice(THEME_KEY, choice);

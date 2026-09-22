@@ -8,8 +8,8 @@
  *
  * 打包走浏览器直接下载（服务端流式写 zip），所以大包也不会把界面卡住。
  */
-import { api } from "./api.js?v=91099a1e";
-import { $, badge, cell, clear, el, notify } from "./dom.js?v=91099a1e";
+import { api } from "./api.js?v=31477bcc";
+import { $, badge, cell, clear, el, notify } from "./dom.js?v=31477bcc";
 /** 勾选进打包的来源（默认全选） */
 const checked = new Set();
 let overview = null;

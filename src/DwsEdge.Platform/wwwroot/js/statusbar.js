@@ -11,9 +11,9 @@
  *   2) 单个接口失败只染它自己那一个胶囊，不会把整条状态条拖红；
  *   3) 只在状态真的变化时写 DOM，避免每 5 秒无谓地动一次布局。
  */
-import { api } from "./api.js?v=91099a1e";
-import { canRead } from "./auth.js?v=91099a1e";
-import { $, gb } from "./dom.js?v=91099a1e";
+import { api } from "./api.js?v=31477bcc";
+import { canRead } from "./auth.js?v=31477bcc";
+import { $, gb } from "./dom.js?v=31477bcc";
 /** 五个胶囊的 id（顺序 = 页头从左到右） */
 const CAPSULES = [
     { id: "hostState", name: "采集宿主" },
