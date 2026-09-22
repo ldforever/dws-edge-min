@@ -4,6 +4,20 @@
 > （准备 → 部署 → 配置 → 日常操作 → 现场动作 → 故障速查 → 交付验收清单）。
 > 本文偏架构与实现细节，适合开发与二次开发。
 
+## 新接手先看这里（按顺序读）
+
+| 顺序 | 看什么 | 为什么 |
+|---|---|---|
+| 1 | **[HANDOFF.md](HANDOFF.md)** | 交接入口：现状、代码地图、常用命令、**已知坑清单**、待办、换机器/换人清单 |
+| 2 | 本文（README） | 架构与实现细节（两个进程怎么分工、契约在哪、怎么扩展） |
+| 3 | **[docs/操作手册.md](docs/操作手册.md)** | 现场怎么用：部署 → 配置 → 日常 → 故障速查 → 验收 |
+| 4 | `VERSION` + `CHANGELOG.md` | 版本号唯一来源与变更记录 |
+| 5 | `tools/` 里的脚本 | `self-check.ps1` 自检、19 个 `test-*.ps1` 回归、`make-package.ps1` 打包、`check-package.ps1` 核验、`refresh-checksums.ps1` 热修 |
+
+**开发仓库 ↔ 现场交付包**：交付包 = `runtime\`（程序 + SDK + 配置 + tools + docs）加上包根的
+`VERSION.txt` / `CHANGELOG.md` / `checksums.txt` / `交付记录.md`。包里的 `runtime\tools\` 就是本仓库
+`tools\` 的原样拷贝，所以现场能直接跑自检 / 核验脚本；两边是否一致用 `check-package.ps1` 校验。
+
 基于大华 DWS SDK 的最小可运行工程，按方案 B 拆成两个进程：
 
 ```
