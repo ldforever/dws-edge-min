@@ -13,6 +13,12 @@
 
         # 只写配置、不做校验
         ... -SkipVerify
+        （-SkipVerify 不初始化 SDK、不抢相机，所以**不要求停采集宿主**，也不会去停它；配置等宿主重启后生效）
+
+    关于采集宿主：
+        * 带 -SkipVerify（只写配置）→ 宿主在跑也照写，不动宿主；
+        * 不带 -SkipVerify（要校验）→ 校验会独占 SDK，必须加 -StopHost 让脚本自己停，
+          否则直接报错退出（退出码 1），提示"检测到采集宿主正在运行"。
 
     流程：
         1) 备份当前 cfg 为 LogisticsBase.cfg.rollback-<时间戳>（回滚点）
@@ -99,14 +105,23 @@ $before = Read-CfgState -Path $cfgPath
 $stoppedByUs = $false
 $running = @(Get-Process -Name 'DwsEdge.Host' -ErrorAction SilentlyContinue)
 if ($running.Count -gt 0) {
-    if (!$StopHost) {
-        $pids = (($running | ForEach-Object { $_.Id }) -join ', ')
-        throw ("检测到采集宿主正在运行（PID: " + $pids + "）。请先停止它，或者加 -StopHost 让脚本自动停止后再校验。")
+    $pids = (($running | ForEach-Object { $_.Id }) -join ', ')
+
+    # 只写配置（-SkipVerify）：这一步既不初始化 SDK、也不抢相机，宿主在跑没有任何影响，
+    # 所以既不停宿主也不拦 —— 配置等宿主重启后生效。现场"改完先存着"用的就是这种。
+    if ($SkipVerify) {
+        Write-Host ("检测到采集宿主正在运行（PID: " + $pids + "）：只写配置不会抢相机，本次不停止宿主；重启采集宿主后新配置生效。") -ForegroundColor Yellow
     }
-    Write-Host "停止运行中的采集宿主…" -ForegroundColor Yellow
-    $running | Stop-Process -Force
-    $stoppedByUs = $true
-    Start-Sleep -Seconds 2
+    elseif (!$StopHost) {
+        # 要校验就必须独占 SDK（校验会另起一个实例初始化相机），所以这里必须停宿主。
+        throw ("检测到采集宿主正在运行（PID: " + $pids + "）。校验要独占 SDK，请先停止它，或者加 -StopHost 让脚本自动停止后再校验；这次只想写配置，请加 -SkipVerify。")
+    }
+    else {
+        Write-Host "停止运行中的采集宿主…" -ForegroundColor Yellow
+        $running | Stop-Process -Force
+        $stoppedByUs = $true
+        Start-Sleep -Seconds 2
+    }
 }
 
 # 1) 回滚点

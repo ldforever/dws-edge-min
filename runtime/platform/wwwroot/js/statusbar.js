@@ -11,10 +11,10 @@
  *   2) 单个接口失败只染它自己那一个胶囊，不会把整条状态条拖红；
  *   3) 只在状态真的变化时写 DOM，避免每 5 秒无谓地动一次布局。
  */
-import { api } from "./api.js?v=025e0e75";
-import { canRead } from "./auth.js?v=025e0e75";
-import { $, gb } from "./dom.js?v=025e0e75";
-import { renderNavBadges } from "./navbadges.js?v=025e0e75";
+import { api } from "./api.js?v=802163b8";
+import { canRead } from "./auth.js?v=802163b8";
+import { $, gb } from "./dom.js?v=802163b8";
+import { renderNavBadges } from "./navbadges.js?v=802163b8";
 /**
  * 「宿主说了算」的共享口径 —— 判定只写一份，谁要用谁订阅。
  *

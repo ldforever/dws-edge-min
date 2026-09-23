@@ -6,11 +6,11 @@
  *     那里是原地更新那一行并把大图切到最新（读到码的图会叠绿框）；
  *   * 相机状态墙与"设备信息"页共用同一份数据源（平台推送的 camera 事件）。
  */
-import { api } from "./api.js?v=025e0e75";
-import { $, cell, clear, dash, el, gb, positionLabel } from "./dom.js?v=025e0e75";
-import { alertLabel, fmtAge, fmtRate } from "./monitor.js?v=025e0e75";
-import { initParcelView, loadParcels, upsertParcel } from "./parcelview.js?v=025e0e75";
-import { getHostVerdict, onHostVerdict } from "./statusbar.js?v=025e0e75";
+import { api } from "./api.js?v=802163b8";
+import { $, cell, clear, dash, el, gb, positionLabel } from "./dom.js?v=802163b8";
+import { alertLabel, fmtAge, fmtRate } from "./monitor.js?v=802163b8";
+import { initParcelView, loadParcels, upsertParcel } from "./parcelview.js?v=802163b8";
+import { getHostVerdict, onHostVerdict } from "./statusbar.js?v=802163b8";
 /** 最近一次统计快照：宿主结论变化时要拿它重画 KPI */
 let lastStats = null;
 /** 页面首屏拉多少条历史（平台还会通过 SSE 补发最近 20 条） */

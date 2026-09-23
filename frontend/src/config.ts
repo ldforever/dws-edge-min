@@ -147,7 +147,78 @@ function renderApplyResult(result: ApplyResult, header = ""): void {
     "----------------------------------------\n" +
     (result.output || "（没有输出）");
 
-  badge($("applyBadge"), "退出码 " + result.exitCode + " · " + result.conclusion, exitKind(result.exitCode));
+  const reason = applyReason(result);
+  const badgeNode = $("applyBadge");
+  badge(badgeNode, "退出码 " + result.exitCode + " · " + result.conclusion + (reason ? "：" + reason : ""),
+    exitKind(result.exitCode));
+  // 鼠标停在徽标上能看到完整原因（含脚本原文里那几行关键输出）
+  badgeNode.title = reason ? reason + "\n\n详见下方「应用选项与输出」" : "";
+}
+
+/**
+ * 把脚本的退出码和输出翻译成一句"人话原因"。
+ *
+ * 为什么需要它：现场只看到一个"退出码 1"是没法处理的 —— 1 可能是"宿主在跑所以脚本拒绝执行"，
+ * 也可能是"清单格式错、写完又回滚了"。这里按现场最常撞上的几种情况做映射，
+ * 认不出来就退回输出里第一行有信息量的内容（跳过"回滚点：/应用相机清单…"这类过程行）。
+ */
+function applyReason(result: ApplyResult): string {
+  const text = ((result.output ?? "") + "\n" + (result.error ?? "")).trim();
+  if (!text) {
+    return "";
+  }
+
+  const rules: { pattern: RegExp; why: string }[] = [
+    {
+      pattern: /检测到采集宿主正在运行/,
+      why: "采集宿主正在运行：这次要校验（校验会独占 SDK）。勾上「校验前停止采集宿主」，或改用「只写配置（跳过校验）」"
+    },
+    {
+      pattern: /至少指定一个要改的项/,
+      why: "没有要改的内容：触发模式没变、也没带相机清单"
+    },
+    {
+      pattern: /找不到配置文件/,
+      why: "找不到 Cfg\\LogisticsBase.cfg：确认 runtime 目录完整，或先跑 tools\\make-camera-cfg.ps1"
+    },
+    {
+      pattern: /找不到采集宿主/,
+      why: "找不到 DwsEdge.Host.exe：先跑一次 build.ps1"
+    },
+    {
+      pattern: /SDK 返回 2200/,
+      why: "SDK 返回 2200：找不到加密狗"
+    },
+    {
+      pattern: /SDK 返回 3001/,
+      why: "SDK 返回 3001：相机被别的程序占用（另一个宿主 / 大华工具还没关）"
+    },
+    {
+      pattern: /SDK 返回 3000/,
+      why: "SDK 返回 3000：没有相机连上（相机没上电 / 网段不对 / 防火墙拦了发现回包）"
+    },
+    {
+      pattern: /第\s*\d+\s*行/,
+      why: "相机清单格式有问题：看输出里点到的那一行"
+    }
+  ];
+
+  for (const rule of rules) {
+    if (rule.pattern.test(text)) {
+      return rule.why;
+    }
+  }
+
+  // 认不出来：挑第一行"像原因"的（跳过过程性输出），并去掉前面的等宽提示符号
+  const skip = /^(回滚点：|应用触发模式|应用相机清单|变更摘要|mode\s|num\s|enable|triggerMode\s|回滚)/;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/^[\s\-=]+/, "").trim();
+    if (line.length === 0 || skip.test(line)) {
+      continue;
+    }
+    return line.length > 120 ? line.slice(0, 120) + "…" : line;
+  }
+  return "";
 }
 
 function exitKind(exitCode: number): "ok" | "warn" | "err" {
@@ -207,7 +278,7 @@ async function applyConfig(): Promise<void> {
     const res = await api.applyConfig(body);
     if (res.data) {
       renderApplyResult(res.data);
-      applyBarFinish(res.data.exitCode === 0, res.data.conclusion ?? "");
+      applyBarFinish(res.data.exitCode === 0, applyReason(res.data) || (res.data.conclusion ?? ""));
     } else {
       $("applyOut").textContent = "调用失败：" + (res.message ?? "HTTP " + res.status);
       badge($("applyBadge"), "调用失败", "err");
@@ -635,7 +706,7 @@ async function applyCamerasFromEditor(): Promise<void> {
     const res = await api.applyConfig(body);
     if (res.data) {
       renderApplyResult(res.data);
-      applyBarFinish(res.data.exitCode === 0, res.data.conclusion ?? "");
+      applyBarFinish(res.data.exitCode === 0, applyReason(res.data) || (res.data.conclusion ?? ""));
     } else {
       $("applyOut").textContent = "调用失败：" + (res.message ?? "HTTP " + res.status);
       badge($("applyBadge"), "调用失败", "err");

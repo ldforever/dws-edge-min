@@ -12,7 +12,7 @@
  * 数字为 0 就留空：`.navbadge:empty { display: none }`（CSS 里），
  * 所以"没事"的时候界面上不会挂一个 0，看着像故障。
  */
-import { $ } from "./dom.js?v=025e0e75";
+import { $ } from "./dom.js?v=802163b8";
 const ALERT_LIMIT = 99;
 function set(node, count, kind, title) {
     const shown = count > ALERT_LIMIT ? ALERT_LIMIT + "+" : count > 0 ? String(count) : "";
