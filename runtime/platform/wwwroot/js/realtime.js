@@ -6,10 +6,10 @@
  *     那里是原地更新那一行并把大图切到最新（读到码的图会叠绿框）；
  *   * 相机状态墙与"设备信息"页共用同一份数据源（平台推送的 camera 事件）。
  */
-import { api } from "./api.js?v=38da8d49";
-import { $, cell, clear, dash, el, gb, positionLabel } from "./dom.js?v=38da8d49";
-import { alertLabel, fmtAge, fmtRate } from "./monitor.js?v=38da8d49";
-import { initParcelView, loadParcels, upsertParcel } from "./parcelview.js?v=38da8d49";
+import { api } from "./api.js?v=bccdd475";
+import { $, cell, clear, dash, el, gb, positionLabel } from "./dom.js?v=bccdd475";
+import { alertLabel, fmtAge, fmtRate } from "./monitor.js?v=bccdd475";
+import { initParcelView, loadParcels, upsertParcel } from "./parcelview.js?v=bccdd475";
 /** 页面首屏拉多少条历史（平台还会通过 SSE 补发最近 20 条） */
 const INITIAL_PARCELS = 50;
 /** 相机状态墙的视图选择（C2） */

@@ -4,23 +4,23 @@
  * 页面结构留在 index.html（骨架 + 文案），逻辑全在这里和各个模块里 —— 没有框架，
  * 也没有全局变量：模块之间只通过 import 通信，方便以后换壳（WebView2）或加页面。
  */
-import { api } from "./api.js?v=38da8d49";
-import { connectStream } from "./sse.js?v=38da8d49";
-import { $ } from "./dom.js?v=38da8d49";
-import { applyCameraCounters, applyMonitorStats, initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=38da8d49";
-import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=38da8d49";
-import { initConfig, refreshConfig } from "./config.js?v=38da8d49";
-import { initRules, refreshRules } from "./rules.js?v=38da8d49";
-import { initDedup, refreshDedup } from "./dedup.js?v=38da8d49";
-import { initHistory, refreshHistory } from "./history.js?v=38da8d49";
-import { initDownstream, refreshDownstream } from "./downstream.js?v=38da8d49";
-import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=38da8d49";
-import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=38da8d49";
-import { initStats, refreshStats } from "./stats.js?v=38da8d49";
-import { initDiag, refreshDiag } from "./diag.js?v=38da8d49";
-import { initStatusBar, refreshStatusBar } from "./statusbar.js?v=38da8d49";
-import { initShell } from "./shell.js?v=38da8d49";
-import { initIcons } from "./icons.js?v=38da8d49";
+import { api } from "./api.js?v=bccdd475";
+import { connectStream } from "./sse.js?v=bccdd475";
+import { $ } from "./dom.js?v=bccdd475";
+import { applyCameraCounters, applyMonitorStats, initRealtime, loadInitial, renderParcel, renderStats, upsertCamera } from "./realtime.js?v=bccdd475";
+import { initDevices, refreshDevices, scheduleDevicesRefresh } from "./devices.js?v=bccdd475";
+import { initConfig, refreshConfig } from "./config.js?v=bccdd475";
+import { initRules, refreshRules } from "./rules.js?v=bccdd475";
+import { initDedup, refreshDedup } from "./dedup.js?v=bccdd475";
+import { initHistory, refreshHistory } from "./history.js?v=bccdd475";
+import { initDownstream, refreshDownstream } from "./downstream.js?v=bccdd475";
+import { initMonitor, refreshMonitor, refreshMonitorConfig, renderAlert, renderMonitorSnapshot } from "./monitor.js?v=bccdd475";
+import { initAuth, refreshAuth, refreshAuthPanel } from "./auth.js?v=bccdd475";
+import { initStats, refreshStats } from "./stats.js?v=bccdd475";
+import { initDiag, refreshDiag } from "./diag.js?v=bccdd475";
+import { initStatusBar, refreshStatusBar } from "./statusbar.js?v=bccdd475";
+import { initShell } from "./shell.js?v=bccdd475";
+import { initIcons } from "./icons.js?v=bccdd475";
 const PAGES = ["realtime", "devices", "history", "stats", "diag", "cameras", "output", "rules", "system"];
 function showPage(name) {
     for (const page of PAGES) {

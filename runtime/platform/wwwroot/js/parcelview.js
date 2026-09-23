@@ -15,8 +15,8 @@
  *   一旦有人在列表里点了一行、或者把列表往下滚，就**暂停跟随**（这时候再自动跳会把手里的东西翻掉），
  *   点「回到最新」恢复。
  */
-import { api } from "./api.js?v=38da8d49";
-import { $, clear, el, positionLabel } from "./dom.js?v=38da8d49";
+import { api } from "./api.js?v=bccdd475";
+import { $, clear, el, positionLabel } from "./dom.js?v=bccdd475";
 /** 列表最多留多少行（再多就把最旧的从 DOM 里摘掉；平台侧保留的是最近若干条） */
 const MAX_ROWS = 200;
 /** 列表滚动位置在这个值以内，就算"在顶部"，自动恢复跟随 */

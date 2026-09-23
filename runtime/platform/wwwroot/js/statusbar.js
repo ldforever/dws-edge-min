@@ -11,10 +11,17 @@
  *   2) 单个接口失败只染它自己那一个胶囊，不会把整条状态条拖红；
  *   3) 只在状态真的变化时写 DOM，避免每 5 秒无谓地动一次布局。
  */
-import { api } from "./api.js?v=38da8d49";
-import { canRead } from "./auth.js?v=38da8d49";
-import { $, gb } from "./dom.js?v=38da8d49";
-import { renderNavBadges } from "./navbadges.js?v=38da8d49";
+import { api } from "./api.js?v=bccdd475";
+import { canRead } from "./auth.js?v=bccdd475";
+import { $, gb } from "./dom.js?v=bccdd475";
+import { renderNavBadges } from "./navbadges.js?v=bccdd475";
+/**
+ * 宿主状态文件超过这个秒数就当成"过期"。
+ * 宿主在跑的时候会一直刷新 logs\host-status.json；文件不新鲜 = 宿主已经不在了（或被冻住），
+ * 这时平台手里的相机清单很可能还是上一次会话的旧结论，不能再拿它当"在线"。
+ * 90 秒这个数跟平台侧判定状态文件过期的口径一致。
+ */
+const HOST_STATUS_STALE_SECONDS = 90;
 /** 五个胶囊的 id（顺序 = 页头从左到右） */
 const CAPSULES = [
     { id: "hostState", name: "采集宿主" },
@@ -96,27 +103,112 @@ function renderChannel(res, hostState) {
     }
     set("sbChannel", "warn", "命令通道：未就绪", title);
 }
-function renderCameras(res) {
+/**
+ * 「相机」胶囊。
+ *
+ * 为什么不能只看 `/api/devices`：
+ *   那个"在线"是平台收到的**相机状态快照**（上一次宿主上报的结果），不是"此刻 SDK 能不能发现相机"。
+ *   宿主没跑、或者 SDK 起不来（3000 没相机 / 3001 被占用 / 2200 没加密狗）时，平台收不到新的离线事件，
+ *   它会继续沿用旧结论 → 页面上亮着绿灯，而宿主那边明明在报"发现不到"。绿灯比没状态更误导：
+ *   现场会先去查网线、下游、软件，实际原因是相机根本没被 SDK 发现。
+ *
+ * 所以判定口径改成"宿主说了算"：
+ *   1) 宿主不在跑 / 正在重试 → 相机一律不报绿，按 SDK 返回码给出具体原因（红），认不出的码给黄"待确认"；
+ *   2) 宿主状态文件过期（>90 秒没刷新）→ 灰"状态过期"，因为这时连宿主状态本身都不可信了；
+ *   3) 只有宿主在跑，才用平台那份相机清单报在线数。
+ */
+function renderCameras(res, host, cameras) {
     if (!res.data) {
         set("sbCameras", "unknown", "相机：未知", res.message ?? "平台接口不可达");
         return;
     }
     const view = res.data;
+    const detail = deviceDetail(view, cameras);
+    // ---- 1) 宿主没在跑 / 正在重试：以宿主为准，不报绿 ----
+    if (!host) {
+        set("sbCameras", "unknown", "相机：状态未知", "读不到采集宿主状态，无法判断相机是否真的连上。\n" + detail);
+        return;
+    }
+    if (host.state === "retrying") {
+        const reason = sdkReason(host.code);
+        if (reason) {
+            set("sbCameras", "bad", "相机：" + reason.short, reason.long + "\n" + host.note + "\n" + detail);
+            return;
+        }
+        set("sbCameras", "warn", "相机：待确认", "采集宿主正在重试，还没确认相机能不能用。\n" + host.note + "\n" + detail);
+        return;
+    }
+    if (host.state !== "running") {
+        if (host.ageSeconds > HOST_STATUS_STALE_SECONDS) {
+            set("sbCameras", "unknown", "相机：状态过期", "宿主状态文件已经 " + Math.round(host.ageSeconds) + " 秒没更新（超过 " + HOST_STATUS_STALE_SECONDS + " 秒即视为过期）。\n" +
+                "下面这份清单是上一次会话留下的，不能当作现在的结论。\n" + detail);
+            return;
+        }
+        set("sbCameras", "unknown", "相机：宿主没在跑", host.note + "\n" + detail);
+        return;
+    }
+    // ---- 3) 宿主在跑：这时相机清单才是可信的 ----
     if (view.total === 0) {
         set("sbCameras", "unknown", "相机：未配置", "清单里没有启用的相机");
         return;
     }
     const text = "相机：" + view.online + "/" + view.total + " 在线";
-    const title = "清单 " + view.total + " 台，在线 " + view.online + " 台，离线 " + view.offline + " 台";
     if (view.online === 0) {
-        set("sbCameras", "bad", text, title);
+        set("sbCameras", "bad", text, detail);
         return;
     }
     if (view.online < view.total) {
-        set("sbCameras", "warn", text, title);
+        set("sbCameras", "warn", text, detail);
         return;
     }
-    set("sbCameras", "ok", text, title);
+    set("sbCameras", "ok", text, detail);
+}
+/** SDK 返回码 → 人话（3000 没相机 / 3001 被占用 / 2200 没加密狗） */
+function sdkReason(code) {
+    if (code === 3000) {
+        return { short: "SDK 发现不到", long: "SDK 返回 3000：没有相机连上（相机没上电 / 网段不对 / 上次会话没释放）。" };
+    }
+    if (code === 3001) {
+        return { short: "相机被占用", long: "SDK 返回 3001：相机被别的程序占用（另一个宿主 / 大华工具还没关）。" };
+    }
+    if (code === 2200) {
+        return { short: "没有加密狗", long: "SDK 返回 2200：找不到加密狗。" };
+    }
+    return null;
+}
+/** 悬停提示的公共部分：清单台数 / SDK 发现台数 / 最近一次相机数据多久以前 */
+function deviceDetail(view, cameras) {
+    const lines = [];
+    lines.push("清单 " + view.total + " 台（在线 " + view.online + "，离线 " + view.offline + "）" +
+        (view.declaredMissing > 0 ? "，其中 " + view.declaredMissing + " 台 SDK 没发现" : ""));
+    const age = freshestHeartbeatAge(cameras);
+    if (age !== null) {
+        lines.push("最近一次相机数据：" + ageText(age) + "（空闲线体上会一直变大，不作为故障判据）");
+    }
+    return lines.join("\n");
+}
+/** 所有相机里"最新那次心跳"距今多久（秒）；没有记录返回 null */
+function freshestHeartbeatAge(cameras) {
+    if (!cameras || cameras.length === 0) {
+        return null;
+    }
+    let best = null;
+    for (const camera of cameras) {
+        const age = camera.lastHeartbeatAgeSeconds;
+        if (typeof age !== "number" || age < 0) {
+            continue;
+        }
+        if (best === null || age < best) {
+            best = age;
+        }
+    }
+    return best;
+}
+function ageText(seconds) {
+    if (seconds < 90) {
+        return Math.round(seconds) + " 秒前";
+    }
+    return Math.round(seconds / 60) + " 分钟前";
 }
 function renderDownstream(res) {
     const stats = res.data?.stats ?? null;
@@ -181,17 +273,19 @@ export async function refreshStatusBar() {
         return;
     }
     // 这几个接口互不依赖：并发发，最慢的那个决定这一轮耗时
-    const [host, channel, devices, downstream, stats, monitor] = await Promise.all([
+    // monitorCameras 只用来给"相机"胶囊补一句"最近一次相机数据多久以前"，判定颜色不靠它
+    const [host, channel, devices, downstream, stats, monitor, monitorCameras] = await Promise.all([
         api.hostStatus(),
         api.hostChannel(),
         api.devices(),
         api.downstreamQuiet(),
         api.stats(),
-        api.monitorSummary()
+        api.monitorSummary(),
+        api.monitorCameras()
     ]);
     const hostState = renderHost(host);
     renderChannel(channel, hostState);
-    renderCameras(devices);
+    renderCameras(devices, host.data, monitorCameras.data);
     renderDownstream(downstream);
     renderDisk(stats);
     // T0.6：侧边栏角标复用这一轮的结果，不再单独轮一次
