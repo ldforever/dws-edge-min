@@ -74,6 +74,11 @@ export interface ParcelRecord {
   heightMm?: number;
   imageCount?: number;
   firstImagePath?: string;
+  /**
+   * 绿框：firstImagePath 这张图上要画的条码框（来自相机 SDK，归一化 0~1 坐标）。
+   * 无码包裹是空数组 —— 有图但没框。
+   */
+  imageBoxes?: ImageBox[] | null;
   /** 同一包裹被合并了几次回调 */
   updates?: number;
   /** provider 是否分阶段上报（true 时"看到 enriched 才算完整"） */
@@ -87,6 +92,14 @@ export interface ParcelRecord {
   dispatchAttempts?: number;
   dispatchedAt?: string;
   dispatchError?: string;
+}
+
+/** 绿框：图片上的一个条码框（归一化 0~1，左上角为原点） */
+export interface ImageBox {
+  /** 框里那个条码；无码时为 null */
+  code?: string | null;
+  /** [[x,y],[x,y],...] 按顺序连线（大华一条码给 5 个点、首尾重复） */
+  points: number[][];
 }
 
 /** 一台相机的状态与设备信息（GET /api/cameras、GET /api/devices 的行） */

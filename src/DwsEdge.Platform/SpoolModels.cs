@@ -59,6 +59,18 @@ namespace DwsEdge.Platform
         public int height { get; set; }
         public int bytes { get; set; }
         public string path { get; set; }
+
+        /// <summary>绿框：这张图上要画的框（归一化坐标），由采集宿主从 SDK 取回。</summary>
+        public List<SpoolBox> boxes { get; set; }
+    }
+
+    /// <summary>图片上的一个框：条码值 + 多边形顶点（归一化 0~1）。对外的 API 也会用到，所以是 public。</summary>
+    public sealed class SpoolBox
+    {
+        public string code { get; set; }
+
+        /// <summary>[[x,y],[x,y],...]，按顺序连线。</summary>
+        public List<double[]> points { get; set; }
     }
 
     /// <summary>B2：被规则丢弃的条码（现场诊断用，保留最近若干条）。</summary>
@@ -106,6 +118,13 @@ namespace DwsEdge.Platform
         public double heightMm { get; set; }
         public int imageCount { get; set; }
         public string firstImagePath { get; set; }
+
+        /// <summary>
+        /// 绿框：firstImagePath 这张图上要画的条码框（归一化坐标）。
+        /// 无码包裹是空列表 —— 有图但没框。
+        /// </summary>
+        public List<SpoolBox> imageBoxes { get; set; }
+
         public int updates { get; set; }
 
         /// <summary>provider 是否分阶段上报（true 时"看到 enriched 才算完整"）。</summary>

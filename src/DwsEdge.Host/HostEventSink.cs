@@ -93,6 +93,18 @@ namespace DwsEdge.Host
                     summary.Append("  体积=").Append(Math.Round(parcel.VolumeMm3, 0)).Append("mm3");
                 }
                 summary.Append("  图=").Append(parcel.Images.Count);
+                int boxCount = 0;
+                for (int i = 0; i < parcel.Images.Count; i++)
+                {
+                    if (parcel.Images[i].Boxes != null)
+                    {
+                        boxCount += parcel.Images[i].Boxes.Count;
+                    }
+                }
+                if (boxCount > 0)
+                {
+                    summary.Append("  框=").Append(boxCount);
+                }
                 summary.Append("  累计包裹=").Append(_parcelCount);
                 summary.Append("  累计NOREAD=").Append(_noreadCount);
 
@@ -369,7 +381,41 @@ namespace DwsEdge.Host
                   .Append(",\"width\":").Append(img.Width.ToString(CultureInfo.InvariantCulture))
                   .Append(",\"height\":").Append(img.Height.ToString(CultureInfo.InvariantCulture))
                   .Append(",\"bytes\":").Append(img.Bytes.ToString(CultureInfo.InvariantCulture))
-                  .Append(",\"path\":").Append(Quote(img.Path)).Append('}');
+                  .Append(",\"path\":").Append(Quote(img.Path))
+                  .Append(",\"boxes\":[");
+                AppendBoxes(sb, img.Boxes);
+                sb.Append("]}");
+            }
+        }
+
+        /// <summary>
+        /// 绿框：图片上要画的框（归一化坐标）。写成 {"code":"...","points":[[x,y],...]}。
+        /// 前端拿它叠 SVG 折线；没有框的图就是空数组（无码包裹就是这种）。
+        /// </summary>
+        private static void AppendBoxes(StringBuilder sb, System.Collections.Generic.List<ImageBox> boxes)
+        {
+            if (boxes == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < boxes.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(',');
+                }
+                ImageBox box = boxes[i];
+                sb.Append("{\"code\":").Append(Quote(box.Code)).Append(",\"points\":[");
+                for (int k = 0; k < box.Points.Count; k++)
+                {
+                    if (k > 0)
+                    {
+                        sb.Append(',');
+                    }
+                    sb.Append('[').Append(Number(box.Points[k].X)).Append(',').Append(Number(box.Points[k].Y)).Append(']');
+                }
+                sb.Append("]}");
             }
         }
 

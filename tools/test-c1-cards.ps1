@@ -212,23 +212,32 @@ try {
     Add-Check '追加后立刻能查到（SSE 会把它推到卡片墙最前面）' 5 @($after).Count
     Add-Check '新包裹在最前' 'C1-5-LIVE' $after[0].traceId
 
-    # ---------------------------------------------------------------- 5) 前端产物里确实有卡片墙
-    Write-Host "`n=== 5) 部署的前端产物里带卡片墙 ===" -ForegroundColor Cyan
-    $realtimeJs = Join-Path $WorkDir 'platform\wwwroot\js\realtime.js'
+    # ---------------------------------------------------------------- 5) 前端产物：大图 + 列表 + 绿框
+    #
+    # 2026-09-23 改版：过包区从"卡片墙 / 表格 二选一切换"改成"上面固定大图 + 下面限高滚动列表"，
+    # 大图上叠相机给的解码绿框。所以这一段断言跟着换 —— 断的还是"链路在不在"，
+    # 不是"界面长什么样"：视图框、列表、绿框层、跟随开关、上限。
+    Write-Host "`n=== 5) 部署的前端产物里带大图 + 列表 + 绿框 ===" -ForegroundColor Cyan
+    $parcelJs = Join-Path $WorkDir 'platform\wwwroot\js\parcelview.js'
     $indexHtml = Join-Path $WorkDir 'platform\wwwroot\index.html'
-    Add-Check 'realtime.js 存在' 'True' (Test-Path $realtimeJs)
-    if (Test-Path $realtimeJs) {
-        $js = [System.IO.File]::ReadAllText($realtimeJs)
-        Add-Check '带卡片墙容器绑定' 'True' ($js -match 'cardWall')
-        Add-Check '带卡片样式与结构（pcard）' 'True' ($js -match 'pcard')
-        Add-Check '卡片用 w=320 缩略图' 'True' ($js -match 'thumb\?w=320')
-        Add-Check '卡片墙有上限（不会无限增长）' 'True' ($js -match 'MAX_CARDS')
-        Add-Check '点缩略图看原图（链到 /api/images）' 'True' ($js -match '/api/images\?path=')
+    Add-Check 'parcelview.js 存在（大图 + 列表 + 绿框都在这里）' 'True' (Test-Path $parcelJs)
+    if (Test-Path $parcelJs) {
+        $js = [System.IO.File]::ReadAllText($parcelJs)
+        # 大图地址由 api.imageUrl() 拼（/api/images?path=... 在 api.js 里），这里断它走的是那个接口
+        Add-Check '大图走图片读取接口（api.imageUrl）' 'True' ($js -match 'imageUrl')
+        Add-Check '把 SDK 的点坐标画成折线（polyline）' 'True' ($js -match 'polyline')
+        Add-Check '归一化坐标（viewBox 0 0 1 1）' 'True' ($js -match '0 0 1 1')
+        Add-Check '线宽不随缩放变形（non-scaling-stroke）' 'True' ($js -match 'non-scaling-stroke')
+        Add-Check '框上标单号' 'True' ($js -match 'boxlabel')
+        Add-Check '列表有上限（不会无限增长）' 'True' ($js -match 'MAX_ROWS')
+        Add-Check '点行暂停跟随 + 回到最新' 'True' (($js -match 'following') -and ($js -match 'pvFollow'))
     }
     if (Test-Path $indexHtml) {
         $html = [System.IO.File]::ReadAllText($indexHtml)
-        Add-Check 'index.html 有卡片墙' 'True' ($html -match 'id="cardWall"')
-        Add-Check 'index.html 有视图切换' 'True' (($html -match 'id="viewCards"') -and ($html -match 'id="viewTable"'))
+        Add-Check 'index.html 有大图视图框' 'True' (($html -match 'id="pvViewer"') -and ($html -match 'id="pvImage"'))
+        Add-Check 'index.html 有绿框叠层' 'True' ($html -match 'id="pvBoxLayer"')
+        Add-Check 'index.html 有过包列表（限高滚动）' 'True' ($html -match 'id="pvList"')
+        Add-Check '不再有卡片/表格切换' 'False' (($html -match 'id="cardWall"') -or ($html -match 'id="viewCards"'))
     }
 }
 finally {

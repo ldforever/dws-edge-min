@@ -217,6 +217,53 @@ html[data-nav="top"] .navbadge { margin-left: 2px; }
 }
 
 /* ------------------------------------------------------------------
+   绿框：最新过包 —— 上面一张大图（当前包裹 + 条码框），下面一个限高可滚动的列表
+   ------------------------------------------------------------------ */
+.pvviewer {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 220px; max-height: 52vh; padding: 8px;
+  background: var(--surface-3); border: 1px solid var(--border); border-radius: 8px;
+  margin-bottom: 10px;
+}
+/* 贴着图片的真实显示尺寸：图缩，框跟着缩，叠框层 inset:0 正好压在图上 */
+.pvframe { position: relative; display: inline-block; max-width: 100%; }
+.pvframe img { display: block; width: auto; height: auto; max-width: 100%; max-height: calc(52vh - 16px); border-radius: 4px; }
+.boxlayer { position: absolute; inset: 0; pointer-events: none; }
+.boxsvg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.boxline { fill: none; stroke: var(--ok); stroke-width: 2; stroke-linejoin: round; }
+.boxlabel {
+  position: absolute; transform: translate(0, -100%);
+  background: rgba(0, 0, 0, .66); color: var(--ok);
+  font-family: Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.5;
+  padding: 0 5px; border-radius: 3px 3px 3px 0; white-space: nowrap;
+}
+.pvempty { color: var(--muted); font-size: 13px; padding: 28px 12px; text-align: center; }
+.pvinfo { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin-bottom: 14px; font-size: 12.5px; color: var(--muted); }
+.pvinfo .vinfo-code { font-family: Consolas, "Courier New", monospace; font-size: 15px; color: var(--accent); }
+.pvinfo .vinfo-code.noread { color: var(--orange); }
+.pvinfo .vinfo-state { color: var(--ok); }
+
+/* 过包列表：限高 + 自己的滚动条；六列固定网格，跟表头对齐 */
+.plistwrap { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.plistrow {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr) 132px 56px 80px 104px;
+  gap: 10px; align-items: center; padding: 5px 10px; font-size: 12.5px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.plistrow > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plisthead { background: var(--surface-2); color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--border); }
+.plist { max-height: 236px; overflow: auto; }
+.plist .plistrow { cursor: pointer; }
+.plist .plistrow:last-child { border-bottom: none; }
+.plist .plistrow:hover { background: var(--surface-2); }
+.plist .plistrow.sel { background: var(--accent-a33); }
+.plist .plistrow.new { animation: flash 1.2s ease-out; }
+.plist .cell-time { color: var(--muted); }
+.plist .cell-code { font-family: Consolas, "Courier New", monospace; color: var(--accent); }
+.plist .cell-code.noread { color: var(--orange); }
+.plist .cell-dev, .plist .cell-pos, .plist .cell-weight, .plist .cell-state { color: var(--muted); }
+
+/* ------------------------------------------------------------------
    T1：页头状态条（宿主 / 命令通道 / 相机 / 下游 / 图片盘）
    ------------------------------------------------------------------ */
 .statusbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }

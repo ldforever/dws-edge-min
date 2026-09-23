@@ -11,10 +11,10 @@
  *   2) 单个接口失败只染它自己那一个胶囊，不会把整条状态条拖红；
  *   3) 只在状态真的变化时写 DOM，避免每 5 秒无谓地动一次布局。
  */
-import { api } from "./api.js?v=e1f3c4b4";
-import { canRead } from "./auth.js?v=e1f3c4b4";
-import { $, gb } from "./dom.js?v=e1f3c4b4";
-import { renderNavBadges } from "./navbadges.js?v=e1f3c4b4";
+import { api } from "./api.js?v=38da8d49";
+import { canRead } from "./auth.js?v=38da8d49";
+import { $, gb } from "./dom.js?v=38da8d49";
+import { renderNavBadges } from "./navbadges.js?v=38da8d49";
 /** 五个胶囊的 id（顺序 = 页头从左到右） */
 const CAPSULES = [
     { id: "hostState", name: "采集宿主" },

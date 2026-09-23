@@ -294,17 +294,41 @@ namespace DwsEdge.Providers.Simulator
                 image.DeviceId = evt.DeviceId;
                 image.Path = path;
                 image.Format = "bmp";
-                image.Width = _width;
-                image.Height = _height;
-                image.Bytes = (int)new FileInfo(path).Length;
+            image.Width = _width;
+            image.Height = _height;
+            image.Bytes = (int)new FileInfo(path).Length;
 
-                evt.Images.Add(image);
+            // 绿框：仿真一张"条码框"，让前端和回归测试在没有相机的情况下也能跑通这条链路。
+            // 无码（NOREAD）不给框 —— 跟真机一致：拍到了图，但没读到码，自然没有框。
+            string code = evt.Codes.Count > 0 ? evt.Codes[0].Value : null;
+            if (!string.IsNullOrEmpty(code) && !code.Equals("NOREAD", StringComparison.OrdinalIgnoreCase))
+            {
+                image.Boxes = SimulatedBoxes(code);
+            }
+
+            evt.Images.Add(image);
                 _sink.OnImageSaved(image);
             }
             catch (Exception ex)
             {
                 _sink.LogError("[simulator] 生成测试图片失败", ex);
             }
+        }
+
+        /// <summary>
+        /// 仿真一个条码框：固定画在图片中间偏上（归一化坐标）。
+        /// 只是一个"形状合法的框"，用来说明链路通了；真机上坐标来自 SDK。
+        /// </summary>
+        private static List<ImageBox> SimulatedBoxes(string code)
+        {
+            ImageBox box = new ImageBox();
+            box.Code = code;
+            box.Points.Add(new ImageBoxPoint(0.32, 0.38));
+            box.Points.Add(new ImageBoxPoint(0.68, 0.38));
+            box.Points.Add(new ImageBoxPoint(0.68, 0.55));
+            box.Points.Add(new ImageBoxPoint(0.32, 0.55));
+            box.Points.Add(new ImageBoxPoint(0.32, 0.38));
+            return new List<ImageBox> { box };
         }
 
         /// <summary>生成一张带边框和斜线的 24bpp BMP，纯 BCL 实现，只为"有张图"。</summary>

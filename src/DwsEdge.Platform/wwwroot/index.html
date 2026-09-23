@@ -27,7 +27,7 @@ try {
   /* 隐私模式 / 禁用存储：用样式表里的默认深色 */
 }
 </script>
-<link rel="stylesheet" href="./app.css?v=e1f3c4b4" />
+<link rel="stylesheet" href="./app.css?v=38da8d49" />
 </head>
 <body>
 <header>
@@ -151,31 +151,37 @@ try {
     <!-- B8：相机状态告警条（有活动告警时变黄/变红，点一下到设备信息页看记录） -->
     <div id="alertBar" class="alertbar ok">相机状态监控启动中…</div>
 
-    <!-- C1：最新过包 —— 默认卡片墙（缩略图/条码/时间/相机/状态），也可切回表格 -->
+    <!-- C1 / 绿框：最新过包 —— 上面一张固定大图（当前包裹；读到码就在图上叠绿框 + 单号），
+         下面一个限高、自带滚动条的过包列表。两者同时可见，不再用"卡片/表格"切换。 -->
     <h2 class="withtoolbar">
       最新过包（实时）
       <span class="viewswitch">
         <button class="btn small" id="btnSoftTrigger" title="给正在跑的采集宿主发一次软触发（要求 triggerMode=2 软触发模式）">软触发一次</button>
-        <button class="btn small" id="viewCards">卡片</button>
-        <button class="btn small secondary" id="viewTable">表格</button>
+        <button class="btn small secondary" id="pvFollow" style="display:none">回到最新</button>
       </span>
     </h2>
 
     <div id="triggerResult" class="muted"></div>
 
-    <div id="cardEmpty" class="empty">暂无数据：点上面的「软触发一次」，或在宿主没跑时用 run.ps1 -TriggerOnce 触发一次过包。</div>
-    <div id="cardWall" class="wall"></div>
-
-    <div id="tableView" style="display:none">
-      <div id="emptyTip" class="empty">暂无数据：点上面的「软触发一次」，或在宿主没跑时用 run.ps1 -TriggerOnce 触发一次过包。</div>
-      <div class="scroll-x">
-        <table>
-          <thead>
-            <tr><th>时间</th><th>条码</th><th>相机</th><th>阶段</th><th>图片</th></tr>
-          </thead>
-          <tbody id="rows"></tbody>
-        </table>
+    <div class="pvviewerbox">
+      <div class="pvviewer" id="pvViewer">
+        <!-- pvframe 贴着图片的实际显示尺寸（图片按 max-width/max-height 缩放，框跟着一起缩），
+             叠框层 inset:0 就正好压在图上，不会因为留白而画偏 -->
+        <div class="pvframe">
+          <img id="pvImage" alt="当前包裹图片" />
+          <!-- 绿框层：采集宿主从相机 SDK 取回的条码点坐标（归一化），在这里换算成 SVG 折线 -->
+          <div class="boxlayer" id="pvBoxLayer"></div>
+        </div>
+        <div class="pvempty" id="pvEmpty">暂无数据：点上面的「软触发一次」，或在宿主没跑时用 run.ps1 -TriggerOnce 触发一次过包。</div>
       </div>
+      <div class="pvinfo" id="pvInfo">—</div>
+    </div>
+
+    <div class="plistwrap">
+      <div class="plistrow plisthead">
+        <span>时间</span><span>条码</span><span>相机</span><span>方位</span><span>重量</span><span>状态</span>
+      </div>
+      <div class="plist" id="pvList"></div>
     </div>
 
     <!-- C2：相机状态墙 —— 每台相机一格（在线/掉线次数/出码计数/心跳/告警），异常一眼能看出 -->
@@ -902,6 +908,6 @@ try {
 </main>
 </div>
 
-<script type="module" src="./js/main.js?v=e1f3c4b4"></script>
+<script type="module" src="./js/main.js?v=38da8d49"></script>
 </body>
 </html>

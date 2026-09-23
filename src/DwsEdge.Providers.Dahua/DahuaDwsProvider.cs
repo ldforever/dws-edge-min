@@ -36,6 +36,9 @@ namespace DwsEdge.Providers.Dahua
         private readonly bool _attachAllCameraCodeInfo;
         private readonly int _queueCapacity;
 
+        /// <summary>绿框坐标只记一次日志（见 LogBoxesOnce）。</summary>
+        private bool _boxLogged;
+
         private BlockingCollection<WorkItem> _queue;
         private Thread _worker;
         private LogisticsWrapper _dws;
@@ -75,13 +78,16 @@ namespace DwsEdge.Providers.Dahua
 
         #region 内部工作项
 
-        private sealed class PendingImage
-        {
-            public CapturedImage Image;
-            public ImageKind Kind;
-            public string DeviceId;
-            public string Suffix;
-        }
+    private sealed class PendingImage
+    {
+        public CapturedImage Image;
+        public ImageKind Kind;
+        public string DeviceId;
+        public string Suffix;
+
+        /// <summary>这张图上要画的条码框（绿框坐标），没有就是 null。</summary>
+        public List<ImageBox> Boxes;
+    }
 
         /// <summary>一个待处理的工作项：要么是包裹事件，要么是单相机读码事件。</summary>
         private sealed class WorkItem
@@ -314,14 +320,17 @@ namespace DwsEdge.Providers.Dahua
                     CapturedImage original = CapturedImage.From(e.OriginalImage);
                     if (original != null)
                     {
-                        PendingImage pi = new PendingImage();
-                        pi.Image = original;
-                        pi.Kind = ImageKind.Original;
-                        pi.DeviceId = e.CameraID;
-                        pi.Suffix = "ori";
-                        item.Images.Add(pi);
-                    }
-                }
+                PendingImage pi = new PendingImage();
+                pi.Image = original;
+                pi.Kind = ImageKind.Original;
+                pi.DeviceId = e.CameraID;
+                pi.Suffix = "ori";
+                // 绿框：SDK 给的条码点坐标，换算成 0~1 之后挂在图上（图是它画的，框也跟着图走）
+                pi.Boxes = BuildBoxes(e.AreaList, CodesFrom(e), original.Width, original.Height);
+                LogBoxesOnce(pi.Boxes, original.Width, original.Height);
+                item.Images.Add(pi);
+            }
+        }
 
                 if (_saveWaybill)
                 {
@@ -389,16 +398,17 @@ namespace DwsEdge.Providers.Dahua
 
                     if (_savePerCamera)
                     {
-                        CapturedImage image = CapturedImage.From(info.OriginalImage);
-                        if (image != null)
-                        {
-                            PendingImage pi = new PendingImage();
-                            pi.Image = image;
-                            pi.Kind = ImageKind.PerCamera;
-                            pi.DeviceId = info.Key;
-                            pi.Suffix = "cam";
-                            item.Images.Add(pi);
-                        }
+            CapturedImage image = CapturedImage.From(info.OriginalImage);
+                if (image != null)
+                {
+                    PendingImage pi = new PendingImage();
+                    pi.Image = image;
+                    pi.Kind = ImageKind.PerCamera;
+                    pi.DeviceId = info.Key;
+                    pi.Suffix = "cam";
+                    pi.Boxes = BuildBoxes(info.AreaList, info.CodeList, image.Width, image.Height);
+                    item.Images.Add(pi);
+                }
                     }
 
                     Enqueue(item);
@@ -629,13 +639,18 @@ namespace DwsEdge.Providers.Dahua
                 bool isJpeg = pending.Image.Type == (int)LogisticsAPIStruct.EImageType.eImageTypeJpeg;
                 int channels = pending.Image.Type == (int)LogisticsAPIStruct.EImageType.eImageTypeBGR ? 3 : 1;
 
-                ImageRef imageRef = ImageWriter.Write(pending.Image, isJpeg, channels, directory, baseName, pending.Kind, pending.DeviceId);
-                if (imageRef == null)
-                {
-                    return;
-                }
+            ImageRef imageRef = ImageWriter.Write(pending.Image, isJpeg, channels, directory, baseName, pending.Kind, pending.DeviceId);
+            if (imageRef == null)
+            {
+                return;
+            }
 
-                if (parcel != null)
+            if (pending.Boxes != null && pending.Boxes.Count > 0)
+            {
+                imageRef.Boxes = pending.Boxes;
+            }
+
+            if (parcel != null)
                 {
                     parcel.Images.Add(imageRef);
                 }
@@ -1161,6 +1176,111 @@ namespace DwsEdge.Providers.Dahua
                     _positionByDevice[deviceId] = position;
                 }
             }
+        }
+
+        /// <summary>
+        /// 回调里的条码值列表，与 SDK 给的 AreaList 一一对应（下标对齐）。
+        /// 优先用 CodeList：它和 AreaList 是同一次上报里出来的，顺序天然一致。
+        /// </summary>
+        private static List<string> CodesFrom(LogisticsCodeEventArgs e)
+        {
+            List<string> codes = new List<string>();
+            if (e.CodeList != null)
+            {
+                for (int i = 0; i < e.CodeList.Count; i++)
+                {
+                    codes.Add(e.CodeList[i]);
+                }
+                return codes;
+            }
+
+            if (e.CodesInfo != null)
+            {
+                for (int i = 0; i < e.CodesInfo.Length; i++)
+                {
+                    codes.Add(e.CodesInfo[i] == null ? null : e.CodesInfo[i].Code);
+                }
+            }
+            return codes;
+        }
+
+        /// <summary>
+        /// 把 SDK 给的条码点坐标换算成 0~1 的归一化框（大华一个条码给 5 个点、首尾重复）。
+        /// 只做换算，不改形状、不补点；换算完交给前端按显示尺寸画，图怎么缩放都不会偏。
+        /// </summary>
+        private static List<ImageBox> BuildBoxes(
+            System.Collections.Generic.List<System.Drawing.Point[]> areas, List<string> codes, int width, int height)
+        {
+            if (areas == null || areas.Count == 0 || width <= 0 || height <= 0)
+            {
+                return null;
+            }
+
+            List<ImageBox> boxes = new List<ImageBox>();
+            for (int i = 0; i < areas.Count; i++)
+            {
+                System.Drawing.Point[] area = areas[i];
+                if (area == null || area.Length == 0)
+                {
+                    continue;
+                }
+
+                ImageBox box = new ImageBox();
+                if (codes != null && i < codes.Count && !IsNoRead(codes[i]))
+                {
+                    box.Code = codes[i];
+                }
+
+                for (int k = 0; k < area.Length; k++)
+                {
+                    box.Points.Add(new ImageBoxPoint(
+                        Math.Round(Clamp01(area[k].X / (double)width), 5),
+                        Math.Round(Clamp01(area[k].Y / (double)height), 5)));
+                }
+                boxes.Add(box);
+            }
+
+            return boxes.Count > 0 ? boxes : null;
+        }
+
+        private static double Clamp01(double value)
+        {
+            if (value < 0)
+            {
+                return 0;
+            }
+            return value > 1 ? 1 : value;
+        }
+
+        /// <summary>
+        /// 第一次真的拿到条码框时打一条日志。作用有两个：
+        ///   1) 现场能一眼确认"这次回调到底有没有给框坐标"；
+        ///   2) 出问题时把这一行发回来，就能判断是 SDK 没给框、还是我们没取到。
+        /// 只打一次，不会刷日志。
+        /// </summary>
+        private void LogBoxesOnce(List<ImageBox> boxes, int width, int height)
+        {
+            if (_boxLogged || boxes == null || boxes.Count == 0)
+            {
+                return;
+            }
+            _boxLogged = true;
+
+            StringBuilder text = new StringBuilder();
+            text.Append("[greenbox] 首次拿到条码框：图=").Append(width).Append('x').Append(height);
+            text.Append(" 框数=").Append(boxes.Count);
+            text.Append(" 首个框 code=").Append(boxes[0].Code ?? "(无)");
+            text.Append(" 点=");
+            for (int i = 0; i < boxes[0].Points.Count; i++)
+            {
+                if (i > 0)
+                {
+                    text.Append(',');
+                }
+                text.Append('[').Append(boxes[0].Points[i].X.ToString(CultureInfo.InvariantCulture))
+                    .Append(',').Append(boxes[0].Points[i].Y.ToString(CultureInfo.InvariantCulture)).Append(']');
+            }
+            _sink.Log(LogLevel.Info, text.ToString());
         }
 
         private static void FillCodes(ParcelEvent evt, LogisticsCodeEventArgs e)

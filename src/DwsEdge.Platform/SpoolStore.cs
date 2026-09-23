@@ -342,13 +342,19 @@ namespace DwsEdge.Platform
                 {
                     record.imageCount += evt.images.Count;
                     _imageCount += evt.images.Count;
-                    for (int i = 0; i < evt.images.Count; i++)
+                for (int i = 0; i < evt.images.Count; i++)
+                {
+                    if (!string.IsNullOrEmpty(evt.images[i].path) && string.IsNullOrEmpty(record.firstImagePath))
                     {
-                        if (!string.IsNullOrEmpty(evt.images[i].path) && string.IsNullOrEmpty(record.firstImagePath))
+                        record.firstImagePath = evt.images[i].path;
+                        // 绿框跟着"第一张图"走：图上要画的框从宿主带过来，界面上直接叠在原图上。
+                        // 只在这张图被选为 firstImagePath 时赋值，避免后面的回调把框和图对错。
+                        if (evt.images[i].boxes != null && evt.images[i].boxes.Count > 0)
                         {
-                            record.firstImagePath = evt.images[i].path;
+                            record.imageBoxes = evt.images[i].boxes;
                         }
                     }
+                }
                 }
                 record.updates++;
 

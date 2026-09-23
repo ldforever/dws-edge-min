@@ -1,5 +1,7 @@
 ﻿using System;
 
+using System.Collections.Generic;
+
 namespace DwsEdge.Core.Model
 {
     /// <summary>
@@ -33,6 +35,12 @@ namespace DwsEdge.Core.Model
         public int Width;
         public int Height;
         public int Bytes;
+
+        /// <summary>
+        /// 这张图上要画的框（绿框）。坐标是归一化的，见 ImageBox 的说明。
+        /// 没有框就是空列表 —— 无码（noread）的包裹照样有图，只是没有框。
+        /// </summary>
+        public List<ImageBox> Boxes = new List<ImageBox>();
 
         public override string ToString()
         {
