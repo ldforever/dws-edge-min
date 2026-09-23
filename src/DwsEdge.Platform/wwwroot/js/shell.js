@@ -12,7 +12,7 @@
  * 两处逻辑要一起改（key 一共就三个，写在这里做记录）：
  *   dws.ui.theme / dws.ui.density / dws.ui.nav
  */
-import { $ } from "./dom.js?v=bccdd475";
+import { $ } from "./dom.js?v=025e0e75";
 const THEME_KEY = "dws.ui.theme";
 const DENSITY_KEY = "dws.ui.density";
 const NAV_KEY = "dws.ui.nav";

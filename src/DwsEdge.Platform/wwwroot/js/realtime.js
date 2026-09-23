@@ -6,10 +6,13 @@
  *     那里是原地更新那一行并把大图切到最新（读到码的图会叠绿框）；
  *   * 相机状态墙与"设备信息"页共用同一份数据源（平台推送的 camera 事件）。
  */
-import { api } from "./api.js?v=bccdd475";
-import { $, cell, clear, dash, el, gb, positionLabel } from "./dom.js?v=bccdd475";
-import { alertLabel, fmtAge, fmtRate } from "./monitor.js?v=bccdd475";
-import { initParcelView, loadParcels, upsertParcel } from "./parcelview.js?v=bccdd475";
+import { api } from "./api.js?v=025e0e75";
+import { $, cell, clear, dash, el, gb, positionLabel } from "./dom.js?v=025e0e75";
+import { alertLabel, fmtAge, fmtRate } from "./monitor.js?v=025e0e75";
+import { initParcelView, loadParcels, upsertParcel } from "./parcelview.js?v=025e0e75";
+import { getHostVerdict, onHostVerdict } from "./statusbar.js?v=025e0e75";
+/** 最近一次统计快照：宿主结论变化时要拿它重画 KPI */
+let lastStats = null;
 /** 页面首屏拉多少条历史（平台还会通过 SSE 补发最近 20 条） */
 const INITIAL_PARCELS = 50;
 /** 相机状态墙的视图选择（C2） */
@@ -41,6 +44,14 @@ export function initRealtime() {
         savedCam = ""; // 隐私模式/壳里可能不让用 localStorage，忽略即可
     }
     setCamView(savedCam === "table" ? "table" : "cards");
+    // 宿主结论一变（比如从"宿主没在跑"变成"SDK 发现不到"），KPI 和相机状态墙要跟着重画，
+    // 否则它们会继续拿着平台那份旧快照显示"在线"。
+    onHostVerdict(() => {
+        if (lastStats)
+            renderStats(lastStats);
+        renderCameras();
+        renderCameraWall();
+    });
 }
 /**
  * A4：软触发一次。
@@ -101,10 +112,11 @@ function setCamView(view) {
     }
 }
 export function renderStats(s) {
+    lastStats = s;
     $("kpiParcels").textContent = String(s.parcels ?? 0);
     $("kpiRate").textContent = ((s.readRate ?? 0) * 100).toFixed(1) + "%";
     $("kpiNoread").textContent = String(s.noread ?? 0);
-    $("kpiCameras").textContent = (s.camerasOnline ?? 0) + " / " + (s.camerasTotal ?? 0);
+    renderCameraKpi(s);
     $("foot").textContent =
         // 事件/重复事件是"本次运行"的计数（进程内），包裹相关的计数是从历史恢复的累计值，
         // 标签上区分开，避免"重复事件 0 但合并包裹 3"看起来自相矛盾。
@@ -199,6 +211,21 @@ export function statusText(c) {
         return "未发现";
     return c.online ? "在线" : "离线";
 }
+/**
+ * 表格里那一格的状态文案：宿主结论不可信时，不沿用快照的"在线"。
+ * （墙和表格用同一个口径，避免同一个页面上两种说法。）
+ */
+function cameraStatusWord(c) {
+    const v = getHostVerdict();
+    return v.camerasReliable ? statusText(c) : v.label;
+}
+function cameraStatusClass(c) {
+    const v = getHostVerdict();
+    if (!v.camerasReliable) {
+        return v.kind === "bad" ? "noread" : "warnText";
+    }
+    return c.online ? "" : "noread";
+}
 function renderCameras() {
     const list = Array.from(cameras.values()).sort((a, b) => {
         const pa = a.positionOrder ?? 99;
@@ -215,7 +242,7 @@ function renderCameras() {
             tr.className = "offline";
         tr.appendChild(cell(positionLabel(c.position)));
         tr.appendChild(cell(c.declaredLabel ?? c.deviceId, "code"));
-        tr.appendChild(cell(statusText(c), c.online ? "" : "noread"));
+        tr.appendChild(cell(cameraStatusWord(c), cameraStatusClass(c)));
         tr.appendChild(cell(c.model));
         tr.appendChild(cell(c.serialNumber));
         tr.appendChild(cell(c.offlineCount ?? 0));
@@ -245,6 +272,31 @@ function numberBox(value, label, className) {
     return box;
 }
 /**
+ * KPI「相机在线 / 总数」。
+ *
+ * `/api/stats` 里的 camerasOnline 和页头那份清单同源 —— 都是上一次宿主上报的快照，
+ * 宿主没在跑或 SDK 起不来时会一直是"在线"。所以这里用同一份宿主结论（见 statusbar.ts 顶部）：
+ * 不可信时不报数字，直接说原因，并把卡片染成对应颜色。
+ */
+function renderCameraKpi(s) {
+    const value = $("kpiCameras");
+    const card = value.parentElement;
+    const v = getHostVerdict();
+    if (v.camerasReliable) {
+        value.textContent = (s.camerasOnline ?? 0) + " / " + (s.camerasTotal ?? 0);
+        if (card) {
+            card.className = "card";
+            card.title = "";
+        }
+        return;
+    }
+    value.textContent = v.label;
+    if (card) {
+        card.className = "card " + (v.kind === "ok" ? "warn" : v.kind);
+        card.title = v.note;
+    }
+}
+/**
  * C2 相机状态墙的一格：方位 + 相机 + 在线状态 + 出码数 + 掉线次数 + 心跳 + 在线率 + 告警徽标。
  * 数据是两路合起来的：相机基础状态（type=camera / /api/cameras）+ 监控指标（type=monitor）+ 计数（type=camera-count）。
  */
@@ -254,15 +306,22 @@ function cameraCell(c) {
     const missing = c.discovered === false;
     const offline = missing || !c.online;
     const critical = alerts.some((a) => a.severity === "critical");
-    const root = el("div", undefined, "camcell " + (missing ? "missing" : offline ? "offline" : "online") +
-        (alerts.length > 0 ? (critical ? " alarm" : " warn") : ""));
+    const v = getHostVerdict();
+    // 宿主不在跑/正在重试时，这一格不该继续说"在线"：统一显示宿主给的原因
+    const stateClass = !v.camerasReliable
+        ? (v.kind === "bad" ? "offline" : "missing")
+        : (missing ? "missing" : offline ? "offline" : "online");
+    const alarmClass = alerts.length > 0 ? (critical ? " alarm" : " warn") : "";
+    const root = el("div", undefined, "camcell " + stateClass + alarmClass);
     root.dataset.camera = c.deviceId;
     root.dataset.codeCount = String(c.codeCount ?? 0);
-    root.title = "点击查看这台相机的详情（设备信息页）";
+    root.title = v.camerasReliable
+        ? "点击查看这台相机的详情（设备信息页）"
+        : v.note + "\n（这一格的在线状态来自上一次会话，不能当作现在的结论）\n点击查看详情";
     const head = el("div", undefined, "camhead");
     head.appendChild(el("span", positionLabel(c.position), "campos"));
     head.appendChild(el("span", c.declaredLabel ?? c.deviceId, "camname code"));
-    head.appendChild(el("span", missing ? "未发现" : c.online ? "在线" : "离线", "camstate"));
+    head.appendChild(el("span", v.camerasReliable ? (missing ? "未发现" : c.online ? "在线" : "离线") : v.label, "camstate"));
     root.appendChild(head);
     const nums = el("div", undefined, "camnums");
     nums.appendChild(numberBox(String(c.codeCount ?? 0), "出码", "big"));
@@ -305,9 +364,15 @@ function renderCameraWall() {
     const online = list.filter((c) => c.online && c.discovered !== false).length;
     const codes = list.reduce((sum, c) => sum + (c.codeCount ?? 0), 0);
     const bad = list.filter((c) => cameraProblem(c, monitorStats.get(c.deviceId)?.alerts ?? []) !== null).length;
-    camWallSummaryEl.textContent = list.length > 0
+    const v = getHostVerdict();
+    if (list.length === 0) {
+        camWallSummaryEl.textContent = "";
+        return;
+    }
+    // 宿主结论不可信时，别汇总出一个"在线 N / N"来骗人；直接说原因，并注明数据是上一次会话的
+    camWallSummaryEl.textContent = v.camerasReliable
         ? "在线 " + online + " / " + list.length + "　累计出码 " + codes + "　异常 " + bad + " 台"
-        : "";
+        : "相机状态：" + v.label + "（下面各格是上一次会话的在线状态）　累计出码 " + codes;
 }
 export async function loadInitial() {
     const parcels = await api.parcels(INITIAL_PARCELS);

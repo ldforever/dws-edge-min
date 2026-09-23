@@ -11,17 +11,96 @@
  *   2) 单个接口失败只染它自己那一个胶囊，不会把整条状态条拖红；
  *   3) 只在状态真的变化时写 DOM，避免每 5 秒无谓地动一次布局。
  */
-import { api } from "./api.js?v=bccdd475";
-import { canRead } from "./auth.js?v=bccdd475";
-import { $, gb } from "./dom.js?v=bccdd475";
-import { renderNavBadges } from "./navbadges.js?v=bccdd475";
+import { api } from "./api.js?v=025e0e75";
+import { canRead } from "./auth.js?v=025e0e75";
+import { $, gb } from "./dom.js?v=025e0e75";
+import { renderNavBadges } from "./navbadges.js?v=025e0e75";
 /**
- * 宿主状态文件超过这个秒数就当成"过期"。
- * 宿主在跑的时候会一直刷新 logs\host-status.json；文件不新鲜 = 宿主已经不在了（或被冻住），
- * 这时平台手里的相机清单很可能还是上一次会话的旧结论，不能再拿它当"在线"。
- * 90 秒这个数跟平台侧判定状态文件过期的口径一致。
+ * 「宿主说了算」的共享口径 —— 判定只写一份，谁要用谁订阅。
+ *
+ * 为什么要有它：页头状态条、实时页 KPI、相机状态墙都在回答同一个问题 ——
+ * **这些相机现在到底能不能用？** 而平台侧那份相机清单（/api/devices、/api/cameras、/api/stats）
+ * 是"上一次宿主上报的结果"：宿主没在跑、或 SDK 起不来（3000/3001/2200）时它不会更新，
+ * 于是三处都跟着显示"在线"。判定分散写必然判出三个结论，所以放在这里统一。
+ *
+ * 判定顺序：读不到宿主状态 → 未知；宿主在重试（认得出返回码给红，认不出给黄）；
+ * 宿主没在跑（状态文件过期说"过期"，否则说"没在跑"）；只有宿主在跑才认平台那份相机清单。
  */
-const HOST_STATUS_STALE_SECONDS = 90;
+export const HOST_STATUS_STALE_SECONDS = 90;
+let verdict = {
+    kind: "unknown",
+    label: "待确认",
+    note: "还没读到采集宿主状态",
+    camerasReliable: false,
+    host: null
+};
+const verdictListeners = new Set();
+/** 发布新结论：状态条每 5 秒刷一次就喂一次，订阅方（实时页）跟着重画 */
+export function setHostVerdict(next) {
+    verdict = next;
+    for (const listener of Array.from(verdictListeners)) {
+        listener(verdict);
+    }
+}
+export function getHostVerdict() {
+    return verdict;
+}
+export function onHostVerdict(listener) {
+    verdictListeners.add(listener);
+}
+/** SDK 返回码 → 人话（3000 没相机 / 3001 被占用 / 2200 没加密狗） */
+export function sdkReason(code) {
+    if (code === 3000) {
+        return "SDK 返回 3000：没有相机连上（相机没上电 / 网段不对 / 上次会话没释放）";
+    }
+    if (code === 3001) {
+        return "SDK 返回 3001：相机被别的程序占用（另一个宿主 / 大华工具还没关）";
+    }
+    if (code === 2200) {
+        return "SDK 返回 2200：找不到加密狗";
+    }
+    return null;
+}
+/** 从宿主状态算出结论（纯函数，方便以后加断言） */
+export function verdictFromHost(host) {
+    if (!host) {
+        return {
+            kind: "unknown",
+            label: "状态未知",
+            note: "读不到采集宿主状态，无法判断相机是不是真的连上了",
+            camerasReliable: false,
+            host: null
+        };
+    }
+    if (host.state === "retrying") {
+        const reason = sdkReason(host.code);
+        if (reason) {
+            const short = host.code === 3000 ? "SDK 发现不到" : host.code === 3001 ? "相机被占用" : "没有加密狗";
+            return { kind: "bad", label: short, note: reason + "\n" + host.note, camerasReliable: false, host };
+        }
+        return {
+            kind: "warn",
+            label: "待确认",
+            note: "采集宿主正在重试，还没确认相机能不能用\n" + host.note,
+            camerasReliable: false,
+            host
+        };
+    }
+    if (host.state !== "running") {
+        if (host.ageSeconds > HOST_STATUS_STALE_SECONDS) {
+            return {
+                kind: "unknown",
+                label: "状态过期",
+                note: "宿主状态文件已经 " + Math.round(host.ageSeconds) + " 秒没更新（超过 " +
+                    HOST_STATUS_STALE_SECONDS + " 秒即视为过期）；下面这份清单是上一次会话留下的，不能当作现在的结论",
+                camerasReliable: false,
+                host
+            };
+        }
+        return { kind: "unknown", label: "宿主没在跑", note: host.note, camerasReliable: false, host };
+    }
+    return { kind: "ok", label: "在线", note: host.note, camerasReliable: true, host };
+}
 /** 五个胶囊的 id（顺序 = 页头从左到右） */
 const CAPSULES = [
     { id: "hostState", name: "采集宿主" },
@@ -103,51 +182,22 @@ function renderChannel(res, hostState) {
     }
     set("sbChannel", "warn", "命令通道：未就绪", title);
 }
-/**
- * 「相机」胶囊。
- *
- * 为什么不能只看 `/api/devices`：
- *   那个"在线"是平台收到的**相机状态快照**（上一次宿主上报的结果），不是"此刻 SDK 能不能发现相机"。
- *   宿主没跑、或者 SDK 起不来（3000 没相机 / 3001 被占用 / 2200 没加密狗）时，平台收不到新的离线事件，
- *   它会继续沿用旧结论 → 页面上亮着绿灯，而宿主那边明明在报"发现不到"。绿灯比没状态更误导：
- *   现场会先去查网线、下游、软件，实际原因是相机根本没被 SDK 发现。
- *
- * 所以判定口径改成"宿主说了算"：
- *   1) 宿主不在跑 / 正在重试 → 相机一律不报绿，按 SDK 返回码给出具体原因（红），认不出的码给黄"待确认"；
- *   2) 宿主状态文件过期（>90 秒没刷新）→ 灰"状态过期"，因为这时连宿主状态本身都不可信了；
- *   3) 只有宿主在跑，才用平台那份相机清单报在线数。
- */
+/** 「相机」胶囊：判定口径见文件顶部那份 HostVerdict（三处共用同一份结论） */
 function renderCameras(res, host, cameras) {
+    const current = verdictFromHost(host);
+    setHostVerdict(current); // 实时页的 KPI 与相机状态墙订阅它，保证三处口径一致
     if (!res.data) {
         set("sbCameras", "unknown", "相机：未知", res.message ?? "平台接口不可达");
         return;
     }
     const view = res.data;
     const detail = deviceDetail(view, cameras);
-    // ---- 1) 宿主没在跑 / 正在重试：以宿主为准，不报绿 ----
-    if (!host) {
-        set("sbCameras", "unknown", "相机：状态未知", "读不到采集宿主状态，无法判断相机是否真的连上。\n" + detail);
+    // 宿主不在跑 / 正在重试：一律不报绿，按 SDK 返回码说具体原因
+    if (!current.camerasReliable) {
+        set("sbCameras", current.kind === "ok" ? "unknown" : current.kind, "相机：" + current.label, current.note + "\n" + detail);
         return;
     }
-    if (host.state === "retrying") {
-        const reason = sdkReason(host.code);
-        if (reason) {
-            set("sbCameras", "bad", "相机：" + reason.short, reason.long + "\n" + host.note + "\n" + detail);
-            return;
-        }
-        set("sbCameras", "warn", "相机：待确认", "采集宿主正在重试，还没确认相机能不能用。\n" + host.note + "\n" + detail);
-        return;
-    }
-    if (host.state !== "running") {
-        if (host.ageSeconds > HOST_STATUS_STALE_SECONDS) {
-            set("sbCameras", "unknown", "相机：状态过期", "宿主状态文件已经 " + Math.round(host.ageSeconds) + " 秒没更新（超过 " + HOST_STATUS_STALE_SECONDS + " 秒即视为过期）。\n" +
-                "下面这份清单是上一次会话留下的，不能当作现在的结论。\n" + detail);
-            return;
-        }
-        set("sbCameras", "unknown", "相机：宿主没在跑", host.note + "\n" + detail);
-        return;
-    }
-    // ---- 3) 宿主在跑：这时相机清单才是可信的 ----
+    // 宿主在跑：这时平台那份相机清单才是可信的
     if (view.total === 0) {
         set("sbCameras", "unknown", "相机：未配置", "清单里没有启用的相机");
         return;
@@ -162,19 +212,6 @@ function renderCameras(res, host, cameras) {
         return;
     }
     set("sbCameras", "ok", text, detail);
-}
-/** SDK 返回码 → 人话（3000 没相机 / 3001 被占用 / 2200 没加密狗） */
-function sdkReason(code) {
-    if (code === 3000) {
-        return { short: "SDK 发现不到", long: "SDK 返回 3000：没有相机连上（相机没上电 / 网段不对 / 上次会话没释放）。" };
-    }
-    if (code === 3001) {
-        return { short: "相机被占用", long: "SDK 返回 3001：相机被别的程序占用（另一个宿主 / 大华工具还没关）。" };
-    }
-    if (code === 2200) {
-        return { short: "没有加密狗", long: "SDK 返回 2200：找不到加密狗。" };
-    }
-    return null;
 }
 /** 悬停提示的公共部分：清单台数 / SDK 发现台数 / 最近一次相机数据多久以前 */
 function deviceDetail(view, cameras) {
@@ -270,6 +307,8 @@ export async function refreshStatusBar() {
         }
         // T0.6：导航角标也跟着清空，别留着上一次的旧数字
         renderNavBadges(null, null);
+        // 未登录时也把结论置成"未知"，别让实时页拿上一次的"可信"继续显示在线
+        setHostVerdict(verdictFromHost(null));
         return;
     }
     // 这几个接口互不依赖：并发发，最慢的那个决定这一轮耗时
